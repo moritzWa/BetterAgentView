@@ -146,6 +146,7 @@ struct LaunchJob {
     model: Option<String>,
     prompt: String,
     cwd: Option<PathBuf>,
+    host: Option<String>,
     known_session_ids: BTreeSet<String>,
     selection_at_launch: Option<SelectionKey>,
 }
@@ -274,6 +275,7 @@ pub fn run_dashboard(
     theme_preference: ThemePreference,
     color_scheme: ColorScheme,
     mouse_hover: bool,
+    ssh_targets: crate::adapters::SshTargetList,
 ) -> Result<()> {
     let dashboard_started = Instant::now();
     let mut first_draw_logged = false;
@@ -398,6 +400,7 @@ pub fn run_dashboard(
         crate::perf_log::event("last_harness_cleanup_failed", format_args!("{error:#}"));
     }
     app.do_not_remember = last_harness.policy().clone();
+    app.ssh_targets = ssh_targets;
     app.remembered_models = last_harness.models().into_iter().collect();
     app.launch_model = app.remembered_models.get(&app.launch_provider).cloned();
     if let Ok(links) = crate::session_tree::ParentLinks::load_default() {
@@ -1540,13 +1543,21 @@ pub fn run_dashboard(
                                 model,
                                 prompt,
                                 cwd,
+                                host,
                             } => {
                                 if let Err(error) = last_harness.save(&provider) {
                                     app.set_notice(format!(
                                         "failed to remember harness: {error:#}"
                                     ));
                                 }
-                                match control.launch_presentation(&provider) {
+                                // A remote launch always hands the terminal
+                                // to the provider's TUI on that host.
+                                let presentation = if host.is_some() {
+                                    Ok(LaunchPresentation::Foreground)
+                                } else {
+                                    control.launch_presentation(&provider)
+                                };
+                                match presentation {
                                     Ok(LaunchPresentation::Foreground) => {
                                         app.set_notice(format!(
                                             "starting {} native session…",
@@ -1560,6 +1571,7 @@ pub fn run_dashboard(
                                             model,
                                             prompt,
                                             cwd,
+                                            host,
                                             control,
                                         )
                                     }
@@ -1583,6 +1595,7 @@ pub fn run_dashboard(
                                                 model,
                                                 prompt,
                                                 cwd,
+                                                host,
                                                 known_session_ids,
                                                 selection_at_launch: app.selection.clone(),
                                             },
@@ -2085,12 +2098,14 @@ fn schedule_launch(control: ControlHub, job: LaunchJob, sender: mpsc::Sender<Lau
     let operation_model = job.model.clone();
     let operation_prompt = job.prompt.clone();
     let operation_cwd = job.cwd.clone();
+    let operation_host = job.host.clone();
     schedule_launch_job(job, sender, move || {
         control.launch_with(
             operation_provider,
             operation_model,
             operation_prompt,
             operation_cwd,
+            operation_host,
         )
     });
 }
@@ -2139,6 +2154,7 @@ fn dispatch_foreground_launch<T: DashboardTerminal, C: DashboardControl>(
     model: Option<String>,
     prompt: String,
     cwd: Option<PathBuf>,
+    host: Option<String>,
     control: &C,
 ) -> ActionEffect {
     let known_session_ids = provider_session_ids(app, &provider);
@@ -2148,7 +2164,7 @@ fn dispatch_foreground_launch<T: DashboardTerminal, C: DashboardControl>(
     }
     let retry_model = model.clone();
     let retry_prompt = prompt.clone();
-    let result = control.launch_foreground_session(provider.clone(), model, prompt, cwd);
+    let result = control.launch_foreground_session(provider.clone(), model, prompt, cwd, host);
     let resume = terminal.resume_dashboard();
     match (result, resume) {
         (Ok(outcome), Ok(())) => {
@@ -3057,6 +3073,7 @@ trait DashboardControl {
         model: Option<String>,
         prompt: String,
         cwd: Option<PathBuf>,
+        host: Option<String>,
     ) -> Result<ControlOutcome>;
     fn launch_foreground_session(
         &self,
@@ -3064,8 +3081,9 @@ trait DashboardControl {
         model: Option<String>,
         prompt: String,
         cwd: Option<PathBuf>,
+        host: Option<String>,
     ) -> Result<ControlOutcome> {
-        self.launch_session(provider, model, prompt, cwd)
+        self.launch_session(provider, model, prompt, cwd, host)
     }
     fn authenticate_provider(&self, provider: &Provider) -> Result<ControlOutcome> {
         Err(anyhow!(
@@ -3124,8 +3142,9 @@ impl DashboardControl for ControlHub {
         model: Option<String>,
         prompt: String,
         cwd: Option<PathBuf>,
+        host: Option<String>,
     ) -> Result<ControlOutcome> {
-        self.launch_with(provider, model, prompt, cwd)
+        self.launch_with(provider, model, prompt, cwd, host)
     }
 
     fn launch_foreground_session(
@@ -3134,8 +3153,9 @@ impl DashboardControl for ControlHub {
         model: Option<String>,
         prompt: String,
         cwd: Option<PathBuf>,
+        host: Option<String>,
     ) -> Result<ControlOutcome> {
-        self.launch_foreground_with(provider, model, prompt, cwd)
+        self.launch_foreground_with(provider, model, prompt, cwd, host)
     }
 
     fn authenticate_provider(&self, provider: &Provider) -> Result<ControlOutcome> {
@@ -3197,6 +3217,10 @@ fn dispatch_action<T: DashboardTerminal, C: DashboardControl>(
         AppAction::SetCompletedVisibility { include_completed } => ActionEffect {
             refresh: true,
             completed_visibility: Some(include_completed),
+            ..ActionEffect::default()
+        },
+        AppAction::RemoteHostsChanged => ActionEffect {
+            refresh: true,
             ..ActionEffect::default()
         },
         AppAction::LoadModels { provider } => ActionEffect {
@@ -3318,13 +3342,14 @@ fn dispatch_action<T: DashboardTerminal, C: DashboardControl>(
             model,
             prompt,
             cwd,
+            host,
         } => {
             if app.work_only && !cwd.as_ref().is_some_and(|path| app.scope_allows(path)) {
                 app.set_notice("choose a work folder before starting a session");
                 return ActionEffect::default();
             }
             let known_session_ids = provider_session_ids(app, &provider);
-            let result = control.launch_session(provider.clone(), model, prompt, cwd);
+            let result = control.launch_session(provider.clone(), model, prompt, cwd, host);
             match result {
                 Ok(outcome) => {
                     app.set_notice(outcome.message);
@@ -3406,6 +3431,7 @@ fn handle_action_legacy<T: DashboardTerminal, C: DashboardControl>(
         AppAction::None
         | AppAction::Quit
         | AppAction::SetCompletedVisibility { .. }
+        | AppAction::RemoteHostsChanged
         | AppAction::LoadModels { .. }
         | AppAction::Authenticate { .. }
         | AppAction::SetupProvider { .. }
@@ -4978,6 +5004,7 @@ mod tests {
                 model: None,
                 prompt: "ship".into(),
                 cwd: None,
+                    host: None,
             }]
         );
 
@@ -5003,6 +5030,7 @@ mod tests {
                 model: None,
                 prompt: "one\ntwo".into(),
                 cwd: None,
+                    host: None,
             }]
         );
     }
@@ -5161,6 +5189,7 @@ mod tests {
                 model: None,
                 prompt: "ship".into(),
                 cwd: None,
+                host: None,
             }
         );
     }
@@ -5643,6 +5672,7 @@ mod tests {
             _model: Option<String>,
             prompt: String,
             _cwd: Option<PathBuf>,
+            _host: Option<String>,
         ) -> Result<ControlOutcome> {
             let mut outcome = self.invoke("launch", prompt)?;
             outcome.provider_session_hint = self.launch_hint.map(str::to_owned);
@@ -5984,6 +6014,7 @@ mod tests {
                 model: None,
                 prompt: "build".into(),
                 cwd: None,
+                host: None,
             },
             AppAction::Reply {
                 session_id: "worker".into(),
@@ -6046,6 +6077,7 @@ mod tests {
                 model: Some("openai/gpt-5".into()),
                 prompt: "build".into(),
                 cwd: None,
+                host: None,
             },
             &control,
         );
@@ -6131,6 +6163,7 @@ mod tests {
                 model: None,
                 prompt: "build".into(),
                 cwd: None,
+                host: None,
                 known_session_ids: BTreeSet::from(["pi:host:old".into()]),
                 selection_at_launch: None,
             },
@@ -6484,6 +6517,7 @@ mod tests {
                     model: None,
                     prompt: "x".into(),
                     cwd: None,
+                host: None,
                 },
                 "launch failed",
             ),
