@@ -118,7 +118,7 @@ pub struct LaunchReport {
     pub prompt_accepted: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ManagedOpenCodeSession {
     pub id: String,
     pub cwd: PathBuf,
