@@ -1003,8 +1003,25 @@ impl ControlHub {
     pub fn open(&self, session: &AgentSession) -> Result<ControlOutcome> {
         PREVIEW_GENERATION.fetch_add(1, Ordering::SeqCst);
         self.ensure_provider_io()?;
-        if let Runtime::Ssh { .. } = &session.runtime {
-            let command = remote_open_command(session, &self.ssh_bin)?;
+        if let Runtime::Ssh { host: _ } = &session.runtime {
+            if session.provider == Provider::OpenCode {
+                // Prefer the host's agentview attach; hosts running an older
+                // agentview reject the subcommand with clap's exit code 2 and
+                // the direct TUI is used instead.
+                let attach = remote_open_command(session, &self.ssh_bin, true);
+                let outcome = match attach {
+                    Ok(command) => run_interactive(command, session),
+                    Err(error) => Err(error),
+                };
+                return match outcome {
+                    Err(error) if is_remote_attach_fallback_error(&error) => {
+                        let command = remote_open_command(session, &self.ssh_bin, false)?;
+                        run_interactive(command, session)
+                    }
+                    other => other,
+                };
+            }
+            let command = remote_open_command(session, &self.ssh_bin, false)?;
             return run_interactive(command, session);
         }
         let controller = self.controller(&session.provider)?;
@@ -2295,7 +2312,11 @@ fn short_claude_id(provider_session_id: &str) -> String {
 /// PATH augmentation discovery uses, the working directory is restored first,
 /// and every value is quoted because ssh joins the remote command into one
 /// shell line.
-fn remote_open_command(session: &AgentSession, ssh_bin: &str) -> Result<Command> {
+fn remote_open_command(
+    session: &AgentSession,
+    ssh_bin: &str,
+    prefer_agentview: bool,
+) -> Result<Command> {
     let Runtime::Ssh { host } = &session.runtime else {
         bail!("session is not on a remote SSH host");
     };
@@ -2323,6 +2344,19 @@ fn remote_open_command(session: &AgentSession, ssh_bin: &str) -> Result<Command>
                 )
             }
         }
+        // Attaching through the host's own agentview keeps the TUI on the
+        // supervisor's server, so turns typed there stay visible to managed
+        // discovery; a direct TUI would run on its own server instance.
+        Provider::OpenCode if prefer_agentview => (
+            "agentview",
+            vec![
+                "opencode".to_string(),
+                "attach".to_string(),
+                remote_shell_quote(&session.provider_session_id),
+                "--cwd".to_string(),
+                remote_shell_quote(&session.cwd.display().to_string()),
+            ],
+        ),
         Provider::OpenCode => (
             "opencode",
             vec![
@@ -2473,6 +2507,12 @@ fn remote_launch_command(
 /// Quote one token for the remote shell that ssh hands the command to.
 fn remote_shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+/// Clap rejects an unknown subcommand with exit status 2, which is the one
+/// recoverable way an older remote agentview refuses `opencode attach`.
+fn is_remote_attach_fallback_error(error: &anyhow::Error) -> bool {
+    error.to_string().contains("exited with status 2")
 }
 
 /// The SSH command that reads one OpenCode session's transcript on a remote
@@ -3705,7 +3745,7 @@ exit 0
     #[test]
     fn remote_open_attaches_a_live_claude_session_over_ssh() {
         let command =
-            remote_open_command(&remote_session(Provider::Claude, Some("working")), "ssh")
+            remote_open_command(&remote_session(Provider::Claude, Some("working")), "ssh", false)
                 .unwrap();
         assert_eq!(command.get_program().to_string_lossy(), "ssh");
         assert_eq!(
@@ -3732,6 +3772,7 @@ exit 0
                 Some(crate::adapters::claude_history::HISTORY_RAW_STATE),
             ),
             "ssh",
+            false,
         )
         .unwrap();
         let last = command_argv(&command).pop().unwrap();
@@ -3747,14 +3788,22 @@ exit 0
     fn remote_open_resumes_opencode_and_codex_sessions() {
         let session_id = "11111111-2222-3333-4444-555555555555";
         let opencode =
-            remote_open_command(&remote_session(Provider::OpenCode, None), "ssh").unwrap();
+            remote_open_command(&remote_session(Provider::OpenCode, None), "ssh", true).unwrap();
         assert_eq!(
             command_argv(&opencode).pop().unwrap(),
+            remote_command_line(&format!(
+                "cd '/home/bpang/my work' && agentview opencode attach '{session_id}' --cwd '/home/bpang/my work'"
+            ))
+        );
+        let plain =
+            remote_open_command(&remote_session(Provider::OpenCode, None), "ssh", false).unwrap();
+        assert_eq!(
+            command_argv(&plain).pop().unwrap(),
             remote_command_line(&format!(
                 "cd '/home/bpang/my work' && opencode --session '{session_id}'"
             ))
         );
-        let codex = remote_open_command(&remote_session(Provider::Codex, None), "ssh").unwrap();
+        let codex = remote_open_command(&remote_session(Provider::Codex, None), "ssh", false).unwrap();
         assert_eq!(
             command_argv(&codex).pop().unwrap(),
             remote_command_line(&format!(
@@ -3765,7 +3814,7 @@ exit 0
 
     #[test]
     fn remote_open_refuses_unsupported_providers() {
-        let error = remote_open_command(&remote_session(Provider::Terminal, None), "ssh")
+        let error = remote_open_command(&remote_session(Provider::Terminal, None), "ssh", false)
             .unwrap_err();
         assert!(
             error.to_string().contains("not supported"),
