@@ -125,6 +125,11 @@ and released versions are intended to follow Semantic Versioning.
 
 - An OpenCode session's age now follows its latest real message. A model or
   agent switch used to bump it, so several sessions could all read "6 hours".
+- `space` on a remote OpenCode row fetches the session's full transcript for
+  Peek from the host over SSH. The export lands in a temp file first because
+  `opencode export` truncates a piped export at 64 KiB, and a bounded tail of
+  larger exports is salvaged message by message.
+
 - `agentview opencode launch "task" --cwd DIR [--model M]` starts one managed
   OpenCode session in the background through the supervisor's own server and
   prints it as JSON — the same launch path the dashboard composer uses.
