@@ -600,6 +600,7 @@ impl VoiceHost for DashboardHost {
             None,
             task.to_owned(),
             Some(cwd.to_owned()),
+            None,
         )?;
         match outcome.provider_session_hint {
             Some(id) => Ok(format!("opencode:host:{id}")),
