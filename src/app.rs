@@ -6956,12 +6956,22 @@ mod tests {
         for character in created.display().to_string().chars() {
             app.push_input(character);
         }
-        assert_eq!(app.directory_choices().first(), Some(&created));
+        assert_eq!(
+            app.directory_choices().first(),
+            Some(&DirectoryChoice {
+                label: display_directory(&created, None),
+                path: created.clone(),
+                host: None,
+            })
+        );
         assert!(!created.exists());
         app.activate();
 
         assert!(created.is_dir());
-        assert_eq!(app.launch_directory(), Some(created));
+        assert_eq!(
+            app.launch_directory(),
+            Some(LaunchDirectory::Local(created))
+        );
     }
 
     #[test]
