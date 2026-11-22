@@ -288,7 +288,7 @@ fn needs_you_because(session: &AgentSession) -> Option<String> {
                 "it asked a question in OpenCode and waits for the answer there"
             }
             Some("permission requested") => "it waits for a permission to be approved in OpenCode",
-            _ => "its last message ends on a question for the developer",
+            _ => "its last reply needs the developer's answer, approval or action",
         }
         .to_owned(),
     )

@@ -267,18 +267,55 @@ and `--all` remains accepted for compatibility. External history is
 limited to 100 records per provider by default, with a warning when more exist.
 The Show-more row pages only the already discovered window.
 
-### Needs input versus done
+### Completion labels
 
-Most providers report an idle session as completed or as waiting at its prompt
-without saying whether the agent asked something. When an OpenRouter key is set
-in `OPENROUTER_API_KEY` or `~/.config/agentview/openrouter-api-key`, the
-dashboard sends the transcript tail of each session that went idle in the last
-24 hours to a small model once per turn. A turn that waits on the user moves to
-Needs input; a finished one stays Completed. Permission and question prompts are
-already known and are never sent. `AGENTVIEW_TURN_CLASSIFIER_MODEL` overrides
-the default `google/gemini-2.5-flash-lite`, and `AGENTVIEW_TURN_CLASSIFIER=off`
-disables it. The terminal tab title shows the same counts, for example
-`2 need input · 1 working · 3 done · betteragentview`.
+Provider idle signals alone do not prove completion:
+
+- **Idle:** completion is unclear or has not been assessed.
+- **Task done:** the latest request finished, but the workstream remains open or
+  still has user follow-through, such as loading or reviewing delivered changes.
+- **Project done:** the agreed workstream is wrapped up, with no work, follow-up,
+  review or decision left. This means the session's workstream, not the entire repository.
+- **Needs input:** the agent is waiting for a human answer, approval, review or
+  action before it can proceed. Usage instructions after delivery are not a blocker.
+
+With an OpenRouter key, the dashboard classifies newly idle sessions from the
+last 24 hours. The default is `typesafe/jev-1.14` through OpenRouter's Decisions
+API. The app-specific `~/.config/agentview/openrouter-api-key` takes precedence
+over `OPENROUTER_API_KEY`; XDG config/state locations are respected.
+`AGENTVIEW_TURN_CLASSIFIER_MODEL` selects another **Decisions** model, not a chat
+model. `AGENTVIEW_TURN_CLASSIFIER=off` disables the model.
+
+One request asks two independent questions over the same evidence: whether the
+agent is blocked on the user, and what scope of work is finished. A human blocker
+takes precedence over either completion label.
+
+For OpenCode and Claude transcript history, evidence contains the initial user request and the last two
+user/final-assistant exchanges, capped at about 4,000 characters in total.
+Reasoning, commentary, tools, logs, synthetic messages and system instructions
+are excluded. Other adapters can supply a cached assistant reply; without safe
+message evidence, their native state stays unchanged. No raw inspection transcript
+is sent as a fallback.
+
+Verdicts are saved per exchange and reused across restarts, including when a
+session becomes older than 24 hours. New user activity, replies, model changes
+and background-work changes invalidate the cache. Permission requests, native
+questions and failed turns remain authoritative. Running work stays Working;
+deferred follow-ups stay Scheduled. A reminder or active descendant prevents
+Project done. Classifications never hide, archive or close a session.
+
+Voice uses `task_done`, `project_done`, `needs_you` and `idle` separately. A task
+completion watch accepts either completion category, but Idle alone does not
+confirm an answer. The mobile bridge retains legacy `status: done` for idle
+compatibility and adds `completion: task_done | project_done | unconfirmed`.
+
+The replay script is `scripts/eval-completion.py`. Its checked-in 18-case fixture
+mixes constructed edge cases with adapted replies. On November 22, 2026, that
+fixture plus eight actual bounded AgentView exchanges gave Jev 26/26 matching
+labels, Perplexity Decider v1.3 free 24/26, and Luna Decisions 25/26. Jev's median
+was 157 ms and average cost was about $0.000034 per request (813 input tokens).
+These small, developer-labeled replays are not production accuracy estimates.
+No model is treated as proof that a deployment or task succeeded.
 
 ### Timing log
 

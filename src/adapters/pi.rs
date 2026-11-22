@@ -684,6 +684,8 @@ fn grant_managed_capabilities(session: &mut AgentSession, managed: &ManagedPiSes
             session.capabilities.insert(Capability::Reply);
         }
         SessionState::Completed
+        | SessionState::TaskDone
+        | SessionState::ProjectDone
         | SessionState::ReadyForReview
         | SessionState::Unknown
         | SessionState::Scheduled => {

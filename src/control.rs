@@ -257,6 +257,21 @@ pub trait ProviderController: Send + Sync {
         bail!("{} history reading is unavailable", self.provider().label())
     }
 
+    fn completion_context(&self, session: &AgentSession) -> Result<String> {
+        if let Some(messages) = crate::last_message::completion_for(&session.id) {
+            return Ok(messages);
+        }
+        let reply = crate::last_message::get(&session.id)
+            .context("message-only completion evidence is unavailable")?;
+        Ok(crate::completion::evidence(
+            "",
+            &[crate::adapters::opencode_db::SessionTurn {
+                it: reply,
+                ..Default::default()
+            }],
+        ))
+    }
+
     /// Stop the running turn, rewind to before the last message sent, and send
     /// `text` in its place.
     fn edit_last_message(&self, _session: &AgentSession, _text: &str) -> Result<ControlOutcome> {
@@ -812,6 +827,12 @@ impl ControlHub {
         self.ensure_provider_io()?;
         self.controller(&session.provider)?
             .recent_turns(session, turns)
+    }
+
+    pub fn completion_context(&self, session: &AgentSession) -> Result<String> {
+        self.ensure_provider_io()?;
+        self.controller(&session.provider)?
+            .completion_context(session)
     }
 
     pub fn running_shells(

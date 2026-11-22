@@ -539,6 +539,10 @@ impl ProviderController for OpenCodeController {
         super::opencode_db::recent_turns(&self.executable, &session.provider_session_id, turns)
     }
 
+    fn completion_context(&self, session: &AgentSession) -> Result<String> {
+        super::opencode_db::completion_context(&self.executable, &session.provider_session_id)
+    }
+
     fn edit_last_message(&self, session: &AgentSession, text: &str) -> Result<ControlOutcome> {
         let owned = self.require_owned(session)?;
         self.supervisor
@@ -2323,7 +2327,11 @@ fn grant_managed_capabilities(session: &mut AgentSession, managed: &ManagedOpenC
             session.capabilities.insert(Capability::Reply);
             session.capabilities.insert(Capability::Interrupt);
         }
-        SessionState::Completed | SessionState::ReadyForReview | SessionState::Scheduled => {
+        SessionState::Completed
+        | SessionState::TaskDone
+        | SessionState::ProjectDone
+        | SessionState::ReadyForReview
+        | SessionState::Scheduled => {
             session.capabilities.insert(Capability::Reply);
         }
         SessionState::NeedsInput if managed.raw_state == "turn failed" => {

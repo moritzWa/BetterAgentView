@@ -59,3 +59,4 @@ pub(crate) mod test_support {
     }
 }
 pub mod bridge;
+pub mod completion;
