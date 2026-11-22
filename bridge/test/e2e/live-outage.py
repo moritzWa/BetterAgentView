@@ -159,8 +159,13 @@ sys.exit(r.returncode)
                 matched = False
                 while time.monotonic() < deadline:
                     assert process.poll() is None, 'Connector exited'
-                    if verify(during) and completed_pass(result['restored_at']):
+                    # This is a live chat: progress messages and monitor notices
+                    # can append text after the drop snapshot. Compare the latest
+                    # complete local projection, not a prefix the cloud has passed.
+                    current = projection(config, session)
+                    if verify(current) and completed_pass(result['restored_at']):
                         matched = True
+                        result['verified_message_count'] = current[1]
                         break
                     time.sleep(3)
                 result['recovered_text_hash_match'] = matched

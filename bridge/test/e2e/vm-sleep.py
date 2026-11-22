@@ -62,7 +62,7 @@ def main():
         run('ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(root/'sshkey'))
         run('cua', 'sb', 'exec', SPACE, '--', f'mkdir -m 700 {GUEST}', stdout=subprocess.DEVNULL)
         for source, dest in [
-            (Path.home()/'.local/share/opencode-v2/bin/native/agentview', 'agentview'),
+            (Path(os.environ.get('AGENTVIEW_TEST_BRIDGE_BIN', str(Path.home()/'.local/share/opencode-v2/bin/native/agentview'))), 'agentview'),
             (HERE/'vm-sleep-fixture.py', 'fixture.py'),
             (root/'cert.pem', 'cert.pem'), (root/'sshkey.pub', 'sshkey.pub')]:
             run('cua', 'sb', 'cp', str(source), SPACE+':'+GUEST+'/'+dest, stdout=subprocess.DEVNULL)
