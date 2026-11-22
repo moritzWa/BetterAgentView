@@ -3,30 +3,6 @@
 version = 3
 
 [[package]]
-name = "betteragentview"
-version = "0.3.0"
-dependencies = [
- "anyhow",
- "clap",
- "crossterm",
- "getrandom",
- "libc",
- "md-5",
- "pretty_assertions",
- "ratatui",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tungstenite",
- "unicode-segmentation",
- "url",
- "vt100",
- "windows-sys 0.52.0",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -105,6 +81,30 @@ name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
+
+[[package]]
+name = "betteragentview"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crossterm",
+ "getrandom",
+ "libc",
+ "md-5",
+ "pretty_assertions",
+ "ratatui",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tungstenite",
+ "unicode-segmentation",
+ "url",
+ "vt100",
+ "windows-sys 0.52.0",
+]
 
 [[package]]
 name = "bitflags"
