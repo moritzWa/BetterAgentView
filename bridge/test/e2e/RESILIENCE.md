@@ -46,3 +46,8 @@ a ChatGPT mobile-client test.
   but history was still behind after 92.44 seconds. The successful poll woke the
   loop without bypassing its idle timer. The fix requests one immediate sync
   after a failed polling cycle recovers.
+- With that fix, the same idle test passed. All 56 visible messages matched the
+  real cloud copy, and the complete sync pass finished within 69.11 seconds of
+  restoring transport. No restart or mobile activity triggered the catch-up.
+- The candidate binary also passed the VM pause/resume test. It logged the
+  sleep gap and completed a fresh sync 9.10 seconds after resume began.
