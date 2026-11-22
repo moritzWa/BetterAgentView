@@ -503,8 +503,10 @@ mod tests {
         let body = session_request(&Settings::default(), "", "offer");
         assert!(body["session"].get("wake_policy").is_none());
         assert!(body["session"].get("idle_timeout_s").is_none());
-        let mut settings = Settings::default();
-        settings.standby_seconds = 20;
+        let mut settings = Settings {
+            standby_seconds: 20,
+            ..Settings::default()
+        };
         let body = session_request(&settings, "", "offer");
         assert_eq!(body["session"]["wake_policy"]["type"], "speech");
         assert_eq!(body["session"]["idle_timeout_s"], 20);

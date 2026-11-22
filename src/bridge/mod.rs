@@ -20,7 +20,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
 };
 use std::time::Duration;
@@ -958,49 +958,61 @@ pub fn run(dir: &Path) -> Result<()> {
     let queue_dir = dir.to_owned();
     let active_until = Arc::new(AtomicU64::new(0));
     let activity = active_until.clone();
+    let reconnect_sync = Arc::new(AtomicBool::new(false));
+    let request_sync = reconnect_sync.clone();
     // The cloud wakes the poll thread the moment someone reads history. Waking
     // the sync loop from it saves up to a full tick on the first read after idle.
     let (wake, woken) = std::sync::mpsc::channel::<()>();
-    std::thread::spawn(move || loop {
-        let result = (|| -> Result<()> {
-            let config = load(&queue_dir)?;
-            let credential = token(&config)?;
-            let poll = http::request(
-                &config.endpoint,
-                "/v1/connector/poll",
-                Some(&credential),
-                Some(&json!({})),
-                35,
-            )?;
-            activity.store(
-                poll["active_until"].as_u64().unwrap_or(0),
-                Ordering::Relaxed,
-            );
-            let _ = wake.send(());
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_millis() as u64;
-            // Delivery and the session-state publish are independent. A failed
-            // delivery must not leave the phone reading a stale state.
-            let delivery = (|| -> Result<()> {
-                if poll["pending"] == true {
-                    while deliver_unless_busy(&queue_dir)? {}
-                    while start_unless_busy(&queue_dir)? {}
+    std::thread::spawn(move || {
+        let mut retrying = false;
+        loop {
+            let result = (|| -> Result<()> {
+                let config = load(&queue_dir)?;
+                let credential = token(&config)?;
+                let poll = http::request(
+                    &config.endpoint,
+                    "/v1/connector/poll",
+                    Some(&credential),
+                    Some(&json!({})),
+                    35,
+                )?;
+                // A recovered connection must catch history up even when the phone
+                // is idle. A plain wake alone does not bypass the 15-minute timer.
+                if retrying {
+                    request_sync.store(true, Ordering::Relaxed);
+                    retrying = false;
                 }
-                Ok(())
+                activity.store(
+                    poll["active_until"].as_u64().unwrap_or(0),
+                    Ordering::Relaxed,
+                );
+                let _ = wake.send(());
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_millis() as u64;
+                // Delivery and the session-state publish are independent. A failed
+                // delivery must not leave the phone reading a stale state.
+                let delivery = (|| -> Result<()> {
+                    if poll["pending"] == true {
+                        while deliver_unless_busy(&queue_dir)? {}
+                        while start_unless_busy(&queue_dir)? {}
+                    }
+                    Ok(())
+                })();
+                if poll["active_until"].as_u64().unwrap_or(0) > now {
+                    if let Err(error) = publish_runtime(&queue_dir, &config, &credential) {
+                        log_unavailable("runtime", &error);
+                    }
+                }
+                delivery
             })();
-            if poll["active_until"].as_u64().unwrap_or(0) > now {
-                if let Err(error) = publish_runtime(&queue_dir, &config, &credential) {
-                    log_unavailable("runtime", &error);
+            match result {
+                Ok(()) => log_recovered("delivery"),
+                Err(error) => {
+                    retrying = true;
+                    log_unavailable("delivery", &error);
+                    std::thread::sleep(Duration::from_secs(10));
                 }
-            }
-            delivery
-        })();
-        match result {
-            Ok(()) => log_recovered("delivery"),
-            Err(error) => {
-                log_unavailable("delivery", &error);
-                std::thread::sleep(Duration::from_secs(10));
             }
         }
     });
@@ -1010,6 +1022,7 @@ pub fn run(dir: &Path) -> Result<()> {
     let mut force_sync = false;
     let mut previous_tick = (std::time::SystemTime::now(), std::time::Instant::now());
     loop {
+        force_sync |= reconnect_sync.swap(false, Ordering::Relaxed);
         // The idle timer below stops counting while the Mac sleeps. A wall clock that
         // ran ahead of it means we just woke up: sync now instead of waiting out
         // the rest of the interval.
