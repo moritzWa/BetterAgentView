@@ -236,10 +236,14 @@ points at a particular browser.
   `OPENAI_API_KEY` or `XAI_API_KEY` (or the `AGENTVIEW_` versions) in the
   environment win. `betteragentview voice --set-key` reads a key from stdin, so
   `op read ... | betteragentview voice --set-key --provider grok` works.
-- GPT-Live bills about 5 cents a minute while a call is open, silence included,
-  plus the backend model's tokens (pennies). Starting a call bills 15 seconds up
-  front, credited against the running time. A call ends itself after 10
-  minutes of silence with nothing watched, and after 60 minutes in all.
+- GPT-Live (`gpt-live-1.1`) bills about 5 cents a minute while it is listening
+  and speaking, plus the backend model's tokens (pennies). With `standby_seconds`
+  set (off by default, see Settings) it goes on **standby** after that many quiet
+  seconds: the call stays open, and billing drops to about 2 cents a minute until
+  you speak again. Starting a call
+  bills 15 seconds up front, credited against the running time. A call ends
+  itself after 10 minutes of silence with nothing watched, and after 60 minutes
+  in all.
 - Nothing is stored at OpenAI: the session is created with `store: false`.
   OpenAI keeps abuse-monitoring logs for 30 days unless the organisation has
   Zero Data Retention. Organisation admins can see usage and cost per project
@@ -259,6 +263,8 @@ points at a particular browser.
   "xai_reasoning": "none",
   "speed": 1.0,
   "voice": "meridian",
+  "live_model": "gpt-live-1.1",
+  "standby_seconds": 0,
   "backend_model": "gpt-6-luna",
   "reasoning_effort": "low",
   "service_tier": "priority",
@@ -275,7 +281,12 @@ points at a particular browser.
 Grok voice (`rex`, `leo`, `sal`, `orion` and `atlas` are male; `GET
 https://api.x.ai/v1/tts/voices` lists them all); `xai_reasoning` is `none` or
 `high`; `speed` is Grok's 0.7 to 1.5. `voice` is any GPT-Live voice name (`meridian` is a male, North American
-voice). On the backend, picking a tool takes about a second on every model
+voice). `live_model` is `gpt-live-1.1` or `gpt-live-1`. `standby_seconds` (5 to
+60, 0 for never, the default) is how long GPT-Live waits without a word, spoken
+or heard, before it pauses itself. Speaking wakes it with no words lost. The
+catch: a paused GPT-Live does not speak what agentview tells it, such as "it
+finished" for a watched session. That is kept and said the next time you speak,
+so leave it off if you rely on being told. On the backend, picking a tool takes about a second on every model
 tried, so a bigger model buys quality, not speed.
 
 ## When something goes wrong

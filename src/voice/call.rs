@@ -296,14 +296,21 @@ pub fn session_request(settings: &Settings, notes: &str, sdp: &str) -> Value {
     if let Some(tier) = &settings.service_tier {
         responses["service_tier"] = json!(tier);
     }
+    let mut session = json!({
+        "model": settings.live_model,
+        "instructions": format!("{}\n\nStatus notes:\n{notes}", include_str!("talker.md")),
+        "audio": {"output": {"voice": settings.voice}},
+        "delegation": {"type": "responses", "responses": responses},
+        "store": false,
+    });
+    // Standby: GPT-Live pauses itself after this many quiet seconds and wakes
+    // when someone speaks. The connection stays, and so does the history.
+    if settings.standby_seconds > 0 {
+        session["wake_policy"] = json!({"type": "speech"});
+        session["idle_timeout_s"] = json!(settings.standby_seconds.clamp(5, 60));
+    }
     json!({
-        "session": {
-            "model": "gpt-live-1",
-            "instructions": format!("{}\n\nStatus notes:\n{notes}", include_str!("talker.md")),
-            "audio": {"output": {"voice": settings.voice}},
-            "delegation": {"type": "responses", "responses": responses},
-            "store": false,
-        },
+        "session": session,
         "transport": {"type": "webrtc", "sdp": sdp},
     })
 }
@@ -492,9 +499,27 @@ mod tests {
     }
 
     #[test]
+    fn standby_is_off_until_asked_for_and_then_in_whole_seconds_inside_what_openai_accepts() {
+        let body = session_request(&Settings::default(), "", "offer");
+        assert!(body["session"].get("wake_policy").is_none());
+        assert!(body["session"].get("idle_timeout_s").is_none());
+        let mut settings = Settings::default();
+        settings.standby_seconds = 20;
+        let body = session_request(&settings, "", "offer");
+        assert_eq!(body["session"]["wake_policy"]["type"], "speech");
+        assert_eq!(body["session"]["idle_timeout_s"], 20);
+        settings.standby_seconds = 600;
+        let body = session_request(&settings, "", "offer");
+        assert_eq!(body["session"]["idle_timeout_s"], 60);
+        settings.standby_seconds = 1;
+        let body = session_request(&settings, "", "offer");
+        assert_eq!(body["session"]["idle_timeout_s"], 5);
+    }
+
+    #[test]
     fn the_session_request_carries_the_tools_the_voice_and_no_storage() {
         let body = session_request(&Settings::default(), "2 recent sessions", "v=0 offer");
-        assert_eq!(body["session"]["model"], "gpt-live-1");
+        assert_eq!(body["session"]["model"], "gpt-live-1.1");
         assert_eq!(body["session"]["audio"]["output"]["voice"], "meridian");
         assert_eq!(body["session"]["store"], false);
         assert_eq!(body["session"]["delegation"]["type"], "responses");
