@@ -996,27 +996,44 @@ pub fn run(dir: &Path) -> Result<()> {
             }
             delivery
         })();
-        if let Err(error) = result {
-            log_unavailable("delivery", &error);
-            std::thread::sleep(Duration::from_secs(10));
+        match result {
+            Ok(()) => log_recovered("delivery"),
+            Err(error) => {
+                log_unavailable("delivery", &error);
+                std::thread::sleep(Duration::from_secs(10));
+            }
         }
     });
     let mut last_sync = std::time::Instant::now() - Duration::from_secs(900);
     let mut unhealthy_since: Option<std::time::Instant> = None;
     let mut last_alert: Option<std::time::Instant> = None;
+    let mut force_sync = false;
+    let mut previous_tick = (std::time::SystemTime::now(), std::time::Instant::now());
     loop {
+        // The idle timer below stops counting while the Mac sleeps. A wall clock that
+        // ran ahead of it means we just woke up: sync now instead of waiting out
+        // the rest of the interval.
+        let tick = (std::time::SystemTime::now(), std::time::Instant::now());
+        let wall = tick.0.duration_since(previous_tick.0).unwrap_or_default();
+        if slept_between(wall, tick.1.duration_since(previous_tick.1)) {
+            eprintln!("bridge woke after {}s asleep; syncing", wall.as_secs());
+            force_sync = true;
+        }
+        previous_tick = tick;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_millis() as u64;
         // Idle backfill every 15 minutes lets Neon's five-minute autosuspend
         // actually take effect. Active mobile use requests near-live checks.
-        if active_until.load(Ordering::Relaxed) <= now
+        if !force_sync
+            && active_until.load(Ordering::Relaxed) <= now
             && last_sync.elapsed() < Duration::from_secs(900)
         {
             let _ = woken.recv_timeout(Duration::from_secs(5));
             continue;
         }
         while woken.try_recv().is_ok() {}
+        force_sync = false;
         let outcome = sync_once(dir);
         let healthy = outcome.is_ok() && read_health(dir).failing.is_empty();
         let offline = outcome
@@ -1037,6 +1054,7 @@ pub fn run(dir: &Path) -> Result<()> {
         match outcome {
             Ok(n) => {
                 last_sync = std::time::Instant::now();
+                log_recovered("sync");
                 if n > 0 {
                     eprintln!("bridge synced {n} history batches");
                 }
@@ -1057,6 +1075,9 @@ pub fn run(dir: &Path) -> Result<()> {
     }
 }
 
+/// Wall-clock age after which `status` calls the last pass stale. A Mac that
+/// slept will read stale until it wakes and syncs.
+const STALE_AFTER_SECS: u64 = 30 * 60;
 const STUCK_ALERT_AFTER: Duration = Duration::from_secs(30 * 60);
 const STUCK_ALERT_EVERY: Duration = Duration::from_secs(6 * 3600);
 
@@ -1109,16 +1130,106 @@ fn runtime_stage(chain: &str) -> Option<&'static str> {
     .find(|stage| chain.contains(&format!("runtime snapshot: {stage}")))
 }
 
+/// The curl exit code from a transport failure (6 DNS, 7 connect, 28 timeout, 35 TLS).
+fn curl_code(chain: &str) -> Option<i32> {
+    let rest = chain.split("(curl ").nth(1)?;
+    rest.split(')').next()?.trim().parse().ok()
+}
+
+struct Outage {
+    kind: &'static str,
+    since: u64,
+    last_logged: u64,
+    suppressed: u32,
+}
+
+const OUTAGE_REPEAT_SECS: u64 = 300;
+
+static OUTAGES: std::sync::Mutex<std::collections::BTreeMap<String, Outage>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// True when this failure should be printed: the first one, a change of kind, or
+/// a repeat after five minutes. The rest are counted, not printed.
+fn outage_failed(
+    outages: &mut std::collections::BTreeMap<String, Outage>,
+    channel: &str,
+    kind: &'static str,
+    now: u64,
+) -> Option<(u64, u32)> {
+    match outages.get_mut(channel) {
+        None => {
+            outages.insert(
+                channel.to_owned(),
+                Outage {
+                    kind,
+                    since: now,
+                    last_logged: now,
+                    suppressed: 0,
+                },
+            );
+            Some((0, 0))
+        }
+        Some(o) if o.kind != kind || now.saturating_sub(o.last_logged) >= OUTAGE_REPEAT_SECS => {
+            let suppressed = std::mem::take(&mut o.suppressed);
+            o.kind = kind;
+            o.last_logged = now;
+            Some((now.saturating_sub(o.since), suppressed))
+        }
+        Some(o) => {
+            o.suppressed += 1;
+            None
+        }
+    }
+}
+
+/// How long the channel was failing, if it was.
+fn outage_recovered(
+    outages: &mut std::collections::BTreeMap<String, Outage>,
+    channel: &str,
+    now: u64,
+) -> Option<u64> {
+    outages.remove(channel).map(|o| now.saturating_sub(o.since))
+}
+
+fn log_recovered(channel: &str) {
+    let now = now_secs();
+    let lasted = OUTAGES
+        .lock()
+        .ok()
+        .and_then(|mut outages| outage_recovered(&mut outages, channel, now));
+    if let Some(secs) = lasted.filter(|secs| *secs >= 10) {
+        eprintln!("bridge {channel} recovered after {secs}s time={now}");
+    }
+}
+
+/// True when the machine slept or stalled: the wall clock moved on while the
+/// monotonic clock, which stops during sleep, did not.
+fn slept_between(wall: Duration, monotonic: Duration) -> bool {
+    wall > monotonic + Duration::from_secs(30)
+}
+
 fn log_unavailable(channel: &str, error: &anyhow::Error) {
-    // The whole cause chain decides the kind. Only the kind and a fixed stage name
-    // are printed: the text can contain paths, SQL, headers or prompt content.
+    // The whole cause chain decides the kind. Only the kind, a fixed stage name and
+    // a curl exit code are printed: the text can contain paths, SQL, headers or
+    // prompt content.
     let chain = format!("{error:#}");
     let kind = error_kind(&chain);
+    let now = now_secs();
+    let print = OUTAGES
+        .lock()
+        .ok()
+        .and_then(|mut outages| outage_failed(&mut outages, channel, kind, now));
+    let Some((failing_for, repeats)) = print else {
+        return;
+    };
     let stage = runtime_stage(&chain).map_or(String::new(), |stage| format!(" stage={stage}"));
-    eprintln!(
-        "bridge {channel} unavailable kind={kind}{stage} time={}; retrying",
-        now_secs()
-    );
+    let curl = curl_code(&chain).map_or(String::new(), |code| format!(" curl={code}"));
+    let since = if failing_for > 0 {
+        format!(" failing_for={failing_for}s repeats={repeats}")
+    } else {
+        String::new()
+    };
+    eprintln!("bridge {channel} unavailable kind={kind}{stage}{curl}{since} time={now}; retrying");
 }
 
 /// Compares each local projection with the cloud copy. Prints no message text.
@@ -1210,8 +1321,9 @@ pub fn status(dir: &Path) -> Result<Value> {
             .db
             .query_row("SELECT count(*) FROM pending", [], |r| r.get(0))?,
     );
+    let age = (health.last_pass_at > 0).then(|| now_secs().saturating_sub(health.last_pass_at));
     Ok(
-        json!({"paired":true,"endpoint":config.endpoint,"sessions":sessions,"messages":messages,"pending_batches":pending,"device_id":config.device_id,"database_epoch":config.database_epoch,"last_fully_synced":health.last_ok,"last_pass_at":health.last_pass_at,"last_pass_ms":health.last_pass_ms,"scanned_sessions":health.scanned,"stuck_sessions":health.failing,"held_batches_for":journal.held_sessions()?}),
+        json!({"paired":true,"endpoint":config.endpoint,"sessions":sessions,"messages":messages,"pending_batches":pending,"device_id":config.device_id,"database_epoch":config.database_epoch,"last_fully_synced":health.last_ok,"last_pass_at":health.last_pass_at,"last_pass_age_seconds":age,"stale":age.map_or(true, |age| age > STALE_AFTER_SECS),"last_pass_ms":health.last_pass_ms,"scanned_sessions":health.scanned,"stuck_sessions":health.failing,"held_batches_for":journal.held_sessions()?}),
     )
 }
 

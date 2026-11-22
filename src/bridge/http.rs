@@ -60,7 +60,10 @@ pub fn request(
         .join()
         .map_err(|_| anyhow::anyhow!("bridge response reader failed"))??;
     if !status.success() {
-        bail!("bridge network request failed");
+        bail!(
+            "bridge network request failed (curl {})",
+            status.code().unwrap_or(-1)
+        );
     }
     let text = String::from_utf8(bytes).context("invalid bridge response encoding")?;
     let (json, status) = text

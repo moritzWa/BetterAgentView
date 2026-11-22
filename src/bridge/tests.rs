@@ -477,6 +477,51 @@ fn a_busy_lock_is_skipped_quietly_and_failures_name_their_stage() {
 }
 
 #[test]
+fn a_transport_failure_reports_its_curl_code_and_stays_a_network_error() {
+    let chain = "bridge network request failed (curl 28)";
+    assert_eq!(curl_code(chain), Some(28));
+    assert_eq!(error_kind(chain), "network");
+    assert_eq!(curl_code("bridge HTTP 503"), None);
+}
+
+#[test]
+fn a_repeated_outage_prints_once_then_summarizes_and_reports_recovery() {
+    let mut outages = std::collections::BTreeMap::new();
+    assert_eq!(
+        outage_failed(&mut outages, "sync", "network", 1000),
+        Some((0, 0))
+    );
+    for second in [1010, 1100, 1299] {
+        assert_eq!(outage_failed(&mut outages, "sync", "network", second), None);
+    }
+    // A different channel is tracked on its own.
+    assert_eq!(
+        outage_failed(&mut outages, "delivery", "network", 1050),
+        Some((0, 0))
+    );
+    // A new kind prints at once, a repeat prints after five minutes.
+    assert_eq!(
+        outage_failed(&mut outages, "sync", "timeout", 1300),
+        Some((300, 3))
+    );
+    assert_eq!(outage_failed(&mut outages, "sync", "timeout", 1400), None);
+    assert_eq!(
+        outage_failed(&mut outages, "sync", "timeout", 1600),
+        Some((600, 1))
+    );
+    assert_eq!(outage_recovered(&mut outages, "sync", 1700), Some(700));
+    assert_eq!(outage_recovered(&mut outages, "sync", 1701), None);
+}
+
+#[test]
+fn a_wall_clock_that_outran_the_monotonic_clock_means_the_mac_slept() {
+    let secs = Duration::from_secs;
+    assert!(!slept_between(secs(5), secs(5)));
+    assert!(!slept_between(secs(34), secs(5)));
+    assert!(slept_between(secs(3000), secs(5)));
+}
+
+#[test]
 fn the_projection_hash_ignores_the_cursor_and_notices_any_text_change() {
     let state = json!({"title":"T","archived":false,"deleted":false,"visible_before":null});
     let message = |text: &str| Message {
