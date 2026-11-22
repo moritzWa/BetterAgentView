@@ -31,6 +31,7 @@ struct Transcript {
     title: Option<String>,
     first_prompt: Option<String>,
     last_prompt: Option<String>,
+    completion: Option<String>,
 }
 
 /// Parsed transcripts by path, kept while their size and write time are
@@ -127,7 +128,7 @@ fn read_transcript(path: &Path, len: u64) -> Option<Transcript> {
     let mut file = File::open(path).ok()?;
     let head = read_lines(&mut file, 0, HEAD_BYTES.min(len), len)?;
     let tail_start = len.saturating_sub(TAIL_BYTES);
-    let tail = if tail_start < HEAD_BYTES.min(len) {
+    let tail = if len <= HEAD_BYTES {
         head.clone()
     } else {
         read_lines(&mut file, tail_start, len - tail_start, len)?
@@ -158,6 +159,7 @@ fn read_transcript(path: &Path, len: u64) -> Option<Transcript> {
     // A transcript without a prompt is a session closed before its first
     // message.
     first_prompt.as_ref().or(last_prompt.as_ref())?;
+    let completion = completion_messages(first_prompt.as_deref().unwrap_or_default(), &tail);
     Some(Transcript {
         cwd: cwd?,
         background,
@@ -167,7 +169,40 @@ fn read_transcript(path: &Path, len: u64) -> Option<Transcript> {
             .filter(|title| !title.trim().is_empty()),
         first_prompt,
         last_prompt,
+        completion,
     })
+}
+
+fn completion_messages(scope: &str, records: &[Value]) -> Option<String> {
+    use super::opencode_db::SessionTurn;
+    let mut turns: Vec<SessionTurn> = Vec::new();
+    for record in records {
+        if let Some(prompt) = typed_prompt(record) {
+            turns.push(SessionTurn {
+                you: prompt,
+                ..Default::default()
+            });
+        } else if record["type"] == "assistant" {
+            let parts = record.pointer("/message/content")?.as_array()?;
+            if parts.iter().any(|part| part["type"] == "tool_use") {
+                continue;
+            }
+            let text = parts
+                .iter()
+                .filter(|part| part["type"] == "text")
+                .filter_map(|part| part["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !text.is_empty() {
+                if turns.is_empty() {
+                    turns.push(SessionTurn::default());
+                }
+                turns.last_mut()?.it = text;
+            }
+        }
+    }
+    turns.last().filter(|turn| !turn.it.is_empty())?;
+    Some(crate::completion::evidence(scope, &turns))
 }
 
 /// The JSON records among `length` bytes at `start`, minus a line cut off at
@@ -221,6 +256,10 @@ fn session(
     created: Option<SystemTime>,
     modified: SystemTime,
 ) -> AgentSession {
+    crate::last_message::remember_completion(
+        &format!("claude:host:{id}"),
+        transcript.completion.clone(),
+    );
     let name = transcript
         .title
         .clone()
@@ -288,6 +327,27 @@ mod tests {
             "type": "user", "cwd": "/work/repo", "sessionId": "s",
             "message": {"role": "user", "content": text}
         })
+    }
+
+    #[test]
+    fn completion_excludes_thinking_tools_injected_context_and_pending_user_turns() {
+        let records = vec![
+            user("Finish the feature"),
+            serde_json::json!({"type":"assistant","message":{"content":[
+                {"type":"thinking","thinking":"PRIVATE"}, {"type":"text","text":"PROGRESS"},
+                {"type":"tool_use","name":"shell","input":{"command":"SECRET"}}]}}),
+            serde_json::json!({"type":"user","isMeta":true,"message":{"content":"INJECTED"}}),
+            serde_json::json!({"type":"assistant","message":{"content":[
+                {"type":"thinking","thinking":"PRIVATE"}, {"type":"text","text":"Finished the requested task"}]}}),
+        ];
+        let evidence = completion_messages("Finish the feature", &records).unwrap();
+        for noise in ["PRIVATE", "PROGRESS", "SECRET", "INJECTED"] {
+            assert!(!evidence.contains(noise));
+        }
+        assert!(evidence.contains("Finished the requested task"));
+        let mut pending = records;
+        pending.push(user("Now add another feature"));
+        assert!(completion_messages("Finish the feature", &pending).is_none());
     }
 
     #[test]

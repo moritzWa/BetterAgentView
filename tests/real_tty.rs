@@ -1530,7 +1530,7 @@ fn terminal_harness_backgrounds_resumes_stops_then_deletes_in_a_real_pty() {
         "Terminal stopped, retained, and armed for delete",
         |screen| {
             screen.contains("release shell")
-                && screen.contains("Completed")
+                && screen.contains("Idle")
                 && screen.contains("ctrl+x again to delete")
         },
     );
@@ -2243,7 +2243,7 @@ fn completed_history_is_visible_by_default_and_stays_responsive() {
     let startup = Instant::now();
 
     let screen = app.wait_for("default bounded completed history", |screen| {
-        screen.contains("Completed")
+        screen.contains("Idle")
             && screen.contains("completed-session-0000")
             && screen.contains("completed-session-0022")
             && screen.contains("Show 23 more · 977 hidden")
@@ -2305,10 +2305,46 @@ fn completed_history_is_visible_by_default_and_stays_responsive() {
     app.send(b"/completed show");
     app.send(ENTER);
     app.wait_for("in-dashboard completed history restore", |screen| {
-        screen.contains("Completed")
+        screen.contains("Idle")
             && screen.contains("completed-session-0000")
             && screen.contains("Show 23 more · 977 hidden")
     });
+    app.exit_cleanly();
+}
+
+#[test]
+fn task_project_and_unassessed_idle_are_distinct_in_the_real_dashboard() {
+    let _serial = serialize_real_tty_test();
+    let mut app = PtyApp::spawn_configured(160, 40, |command, _home| {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/completion-sessions.json");
+        command.args([
+            "--fixture",
+            fixture.to_str().unwrap(),
+            "--no-host-providers",
+            "--theme",
+            "light",
+        ]);
+    });
+    let screen = app.wait_for(
+        "distinct completion categories without hiding the workstream",
+        |screen| {
+            [
+                "Task done",
+                "Project done",
+                "Idle",
+                "Needs input",
+                "Working",
+                "Scheduled",
+                "wrapped-up-workstream",
+                "finished-request",
+                "unassessed-session",
+            ]
+            .iter()
+            .all(|label| screen.contains(label))
+        },
+    );
+    assert_lines_fit(&screen, 160);
     app.exit_cleanly();
 }
 

@@ -13,6 +13,7 @@ use std::time::UNIX_EPOCH;
 pub(super) struct RuntimeStatus {
     session_id: String,
     status: &'static str,
+    completion: &'static str,
     reason: Option<&'static str>,
     updated_at: u64,
     can_message: bool,
@@ -44,7 +45,8 @@ pub(super) fn project(session: &AgentSession) -> RuntimeStatus {
         SessionState::Working => "working",
         SessionState::NeedsInput => "needs_you",
         SessionState::Scheduled => "scheduled",
-        SessionState::ReadyForReview | SessionState::Completed => "done",
+        SessionState::ReadyForReview => "needs_you",
+        SessionState::Completed | SessionState::TaskDone | SessionState::ProjectDone => "done",
         SessionState::Unknown => "unknown",
     };
     let reason = if session.state == SessionState::NeedsInput {
@@ -65,6 +67,11 @@ pub(super) fn project(session: &AgentSession) -> RuntimeStatus {
     RuntimeStatus {
         session_id: session.provider_session_id.clone(),
         status,
+        completion: match session.state {
+            SessionState::TaskDone => "task_done",
+            SessionState::ProjectDone => "project_done",
+            _ => "unconfirmed",
+        },
         reason,
         updated_at: session
             .updated_at

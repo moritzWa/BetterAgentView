@@ -586,11 +586,18 @@ impl Tools {
                 .get(&id)
                 .is_some_and(|sent| *sent >= info.updated_ms);
             out["answer_ready"] = json!(
-                info.state == SessionState::Completed && !awaiting_new_reply && latest_has_reply
+                info.state.task_finished()
+                    && !info.busy()
+                    && !awaiting_new_reply
+                    && latest_has_reply
             );
             if info.busy() || awaiting_new_reply {
                 out["still_working"] =
                     json!("the requested reply is not confirmed complete; this content may be stale or unfinished. Wait for done before reporting it as the answer");
+            }
+            if info.state == SessionState::Completed {
+                out["completion_note"] =
+                    json!("idle is not proof of completion; the task verdict is not confirmed");
             }
         }
         if kept.is_empty() {
@@ -752,7 +759,11 @@ impl Tools {
             .get(id)
             .is_some_and(|at| now.saturating_sub(*at) < SETTLE_MS);
         match (info, until) {
-            (Some(info), Until::Done) if !info.busy() && !just_given_work => {
+            (Some(info), Until::Done)
+                if !info.busy()
+                    && !just_given_work
+                    && (info.state.task_finished() || info.needs_you()) =>
+            {
                 return json!({"already": true, "note": format!("it is already {}", info.state_word())});
             }
             (Some(info), Until::NeedsYou) if info.needs_you() => {
@@ -924,7 +935,15 @@ impl Tools {
                         && !busy
                         && !info.tail.is_empty()
                         && info.tail != watch.tail;
-                    (watch.was_busy && !busy) || never_seen_busy || answered_between_looks
+                    let settled =
+                        (watch.was_busy && !busy) || never_seen_busy || answered_between_looks;
+                    let new_blocker = info.needs_you()
+                        && (info.tail != watch.tail || info.updated_ms > watch.registered);
+                    new_blocker
+                        || (settled
+                            && (info.state.task_finished()
+                                || info.needs_you()
+                                || now.saturating_sub(watch.registered) >= 30_000))
                 }
                 Until::NeedsYou => info.needs_you(),
             };
@@ -935,10 +954,22 @@ impl Tools {
                     format!(" It ends: {}", info.tail)
                 };
                 let line = match (watch.until, info.state) {
-                    (Until::NeedsYou, _) | (_, SessionState::NeedsInput) => {
+                    (Until::NeedsYou, _)
+                    | (_, SessionState::NeedsInput | SessionState::ReadyForReview) => {
                         format!("\"{}\" now needs the developer.{said}", info.title)
                     }
-                    _ => format!("\"{}\" finished.{said}", info.title),
+                    (_, SessionState::TaskDone) => format!(
+                        "\"{}\" finished the task; the workstream is still open.{said}",
+                        info.title
+                    ),
+                    (_, SessionState::ProjectDone) => format!(
+                        "\"{}\" finished the project; nothing remains to review or decide.{said}",
+                        info.title
+                    ),
+                    _ => format!(
+                        "\"{}\" is no longer busy; completion is not confirmed.{said}",
+                        info.title
+                    ),
                 };
                 self.seen.lock().unwrap().told(&info.id, &info.tail);
                 self.known.lock().unwrap().record(info);
@@ -1317,7 +1348,7 @@ mod tests {
             "opencode:host:c",
             "voice notes",
             "misc",
-            SessionState::Completed,
+            SessionState::TaskDone,
         ));
         let (_, tools) = tools(infos);
         let result = tools.run("read_session", &json!({"id": "voice"}));
@@ -1372,7 +1403,7 @@ mod tests {
     #[test]
     fn latest_exchange_is_explicit_and_reread_even_when_done_preview_is_stale() {
         let (host, tools) = tools(two());
-        host.infos.lock().unwrap()[0].state = SessionState::Completed;
+        host.infos.lock().unwrap()[0].state = SessionState::TaskDone;
         tools.run("list_sessions", &json!({}));
         let question = "restore the good/bad ideas wording";
         *host.turns.lock().unwrap() = Some(vec![Turn {
@@ -1481,7 +1512,7 @@ mod tests {
     #[test]
     fn reading_after_send_marks_the_old_reply_unready_until_a_new_completed_snapshot() {
         let (host, tools, clock) = timed(two());
-        host.infos.lock().unwrap()[0].state = SessionState::Completed;
+        host.infos.lock().unwrap()[0].state = SessionState::TaskDone;
         tools.run("list_sessions", &json!({}));
         tools.run(
             "send_message",
@@ -1499,7 +1530,7 @@ mod tests {
         assert!(tools.poll().spoken.is_empty());
         {
             let mut infos = host.infos.lock().unwrap();
-            infos[0].state = SessionState::Completed;
+            infos[0].state = SessionState::TaskDone;
             infos[0].updated_ms = clock.load(std::sync::atomic::Ordering::SeqCst) + 1000;
         }
         assert!(!tools.poll().spoken.is_empty());
@@ -1669,7 +1700,7 @@ mod tests {
                 &format!("extra{n}"),
                 &format!("extra{n}"),
                 "misc",
-                SessionState::Completed,
+                SessionState::TaskDone,
             ));
         }
         let (_, tools) = tools(infos);
@@ -1717,7 +1748,7 @@ mod tests {
                 &format!("opencode:host:x{n}"),
                 "filler",
                 "misc",
-                SessionState::Completed,
+                SessionState::TaskDone,
             ));
         }
         infos[1].last_user_ms = 0;
@@ -1761,7 +1792,7 @@ mod tests {
             "opencode:host:c",
             "other",
             "agentview-wt",
-            SessionState::Completed,
+            SessionState::TaskDone,
         ));
         let (host, tools) = tools(infos);
         let exact = tools.run("start_session", &json!({"folder": "ARCA", "task": "look"}));
@@ -1793,7 +1824,7 @@ mod tests {
                 &format!("opencode:host:x{n}"),
                 "filler",
                 "misc",
-                SessionState::Completed,
+                SessionState::TaskDone,
             ));
         }
         // The on-screen one is very old, so it is not "recent".
@@ -1904,7 +1935,7 @@ mod tests {
         assert!(tools.poll().spoken.is_empty());
         {
             let mut infos = host.infos.lock().unwrap();
-            infos[1].state = SessionState::Completed;
+            infos[1].state = SessionState::TaskDone;
             infos[1].tail = "Merged.".into();
         }
         let polled = tools.poll();
@@ -1931,7 +1962,7 @@ mod tests {
             "opencode:host:a",
             "haiku",
             "f",
-            SessionState::Completed,
+            SessionState::TaskDone,
         )]);
         tools.run("list_sessions", &json!({}));
         tools.run("send_message", &json!({"id": "s1", "text": "one more"}));
@@ -1943,7 +1974,7 @@ mod tests {
         assert!(tools.poll().spoken.is_empty());
         {
             let mut infos = host.infos.lock().unwrap();
-            infos[0].state = SessionState::Completed;
+            infos[0].state = SessionState::TaskDone;
             infos[0].tail = "Wrote it.".into();
         }
         let polled = tools.poll();
@@ -1957,7 +1988,7 @@ mod tests {
             "opencode:host:a",
             "haiku",
             "f",
-            SessionState::Completed,
+            SessionState::TaskDone,
         )]);
         tools.run("list_sessions", &json!({}));
         tools.run("send_message", &json!({"id": "s1", "text": "quick"}));
@@ -1973,12 +2004,51 @@ mod tests {
             "opencode:host:a",
             "t",
             "f",
-            SessionState::Completed,
+            SessionState::TaskDone,
         )]);
         tools.run("list_sessions", &json!({}));
         let result = tools.run("watch_session", &json!({"id": "s1"}));
         assert_eq!(result["already"], true);
         assert!(!tools.watching());
+    }
+
+    #[test]
+    fn unassessed_idle_is_not_a_finished_answer_or_a_finished_watch() {
+        let (host, tools) = tools(vec![info(
+            "opencode:host:a",
+            "t",
+            "f",
+            SessionState::Working,
+        )]);
+        tools.run("list_sessions", &json!({}));
+        tools.run("watch_session", &json!({"id":"s1"}));
+        host.infos.lock().unwrap()[0].state = SessionState::Completed;
+        assert!(tools.poll().spoken.is_empty());
+        assert!(tools.watching());
+        let read = tools.run("read_session", &json!({"id":"s1"}));
+        assert_eq!(read["state"], "idle");
+        assert_eq!(read["answer_ready"], false);
+        host.infos.lock().unwrap()[0].state = SessionState::ProjectDone;
+        let said = tools.poll().spoken;
+        assert_eq!(said.len(), 1);
+        assert!(said[0].contains("finished the project"));
+        assert!(!tools.watching());
+    }
+
+    #[test]
+    fn a_new_human_blocker_is_announced_even_while_a_background_job_runs() {
+        let (host, tools) = tools(two());
+        tools.run("list_sessions", &json!({}));
+        tools.run("watch_session", &json!({"id":"s2"}));
+        {
+            let mut infos = host.infos.lock().unwrap();
+            infos[1].state = SessionState::NeedsInput;
+            infos[1].tail = "I need your approval to deploy.".into();
+            infos[1].doing = Some("CI is still running".into());
+        }
+        let said = tools.poll().spoken;
+        assert_eq!(said.len(), 1);
+        assert!(said[0].contains("needs the developer"));
     }
 
     #[test]
@@ -2056,7 +2126,7 @@ mod tests {
                     &format!("opencode:host:{n}"),
                     &format!("session {n}"),
                     "arca",
-                    SessionState::Completed,
+                    SessionState::TaskDone,
                 )
             })
             .collect();
@@ -2176,7 +2246,7 @@ mod tests {
         assert!(tools.poll().spoken.is_empty());
         {
             let mut infos = host.infos.lock().unwrap();
-            infos[0].state = SessionState::Completed;
+            infos[0].state = SessionState::TaskDone;
             infos[0].tail = "All set.".into();
         }
         let polled = tools.poll();
@@ -2207,7 +2277,7 @@ mod tests {
     #[test]
     fn work_that_finished_between_two_looks_is_still_announced() {
         let (host, tools, clock) = timed(two());
-        host.infos.lock().unwrap()[0].state = SessionState::Completed;
+        host.infos.lock().unwrap()[0].state = SessionState::TaskDone;
         host.infos.lock().unwrap()[0].tail = "Old answer.".into();
         tools.run("list_sessions", &json!({}));
         tools.run("send_message", &json!({"id": "s1", "text": "again"}));
@@ -2260,7 +2330,7 @@ mod tests {
     #[test]
     fn a_session_the_call_is_not_about_starting_work_stays_unmentioned() {
         let mut infos = two();
-        infos[1].state = SessionState::Completed;
+        infos[1].state = SessionState::TaskDone;
         let (host, tools) = tools(infos);
         tools.set_viewing(Some("opencode:host:a".into()));
         tools.prime();

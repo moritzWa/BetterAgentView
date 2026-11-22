@@ -58,7 +58,10 @@ own interface.
 
 ## Features
 
-- **Grouped by status:** waiting for input, working, completed. The harness is
+- **Task done versus project done:** distinguish a finished request from a wrapped-up
+  workstream with nothing left to review or decide. A small message-only decision
+  model labels idle sessions; uncertain or unassessed ones stay Idle. [Details](docs/cli.md#completion-labels).
+- **Grouped by status:** waiting for input, working, task done, project done. The harness is
   shown on every row.
 - **Jump in and back out** of a native session while its work keeps running.
 - **Hide personal chats with one shortcut.** Switch to work-only browsing,
@@ -86,7 +89,7 @@ own interface.
   (`Ctrl+Y` to expand). `/defer` puts a session away; `/keep` brings it back
   without cancelling its reminder. Sending a new message also brings it back.
 - **Available apps aren't ongoing work.** Mark preview servers as services so
-  the session still shows Done or Needs input, rather than Background.
+  the session keeps its normal status, rather than Background.
 - **Start in any folder** with `/cd` or `Ctrl+O` (`Cmd+O` in terminals that
   forward it, like Ghostty and kitty). Multi-line tasks and pastes
   stay one draft. A long paste shows as `[Pasted ~12 lines]` and `Ctrl+V`

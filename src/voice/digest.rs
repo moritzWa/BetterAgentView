@@ -59,7 +59,10 @@ impl Info {
     }
 
     pub fn needs_you(&self) -> bool {
-        self.state == SessionState::NeedsInput
+        matches!(
+            self.state,
+            SessionState::NeedsInput | SessionState::ReadyForReview
+        )
     }
 
     pub fn folder(&self) -> String {
@@ -74,7 +77,10 @@ impl Info {
             SessionState::Working => "working",
             SessionState::Scheduled => "scheduled",
             SessionState::NeedsInput => "needs_you",
-            SessionState::Completed | SessionState::ReadyForReview => "done",
+            SessionState::Completed => "idle",
+            SessionState::ReadyForReview => "needs_you",
+            SessionState::TaskDone => "task_done",
+            SessionState::ProjectDone => "project_done",
             SessionState::Unknown => "unknown",
         }
     }
@@ -273,7 +279,8 @@ impl Known {
                         && matches!(
                             info.state,
                             SessionState::NeedsInput
-                                | SessionState::Completed
+                                | SessionState::TaskDone
+                                | SessionState::ProjectDone
                                 | SessionState::ReadyForReview
                         ) =>
                 {
@@ -296,7 +303,7 @@ impl Known {
     }
 }
 
-fn describe(info: &Info, before: Option<SessionState>) -> String {
+fn describe(info: &Info, _before: Option<SessionState>) -> String {
     let said = if info.tail.is_empty() {
         String::new()
     } else {
@@ -307,12 +314,15 @@ fn describe(info: &Info, before: Option<SessionState>) -> String {
         SessionState::Working => format!("\"{title}\" started working."),
         SessionState::Scheduled => format!("\"{title}\" is scheduled to resume later."),
         SessionState::NeedsInput => format!("\"{title}\" now needs the developer.{said}"),
-        SessionState::Completed | SessionState::ReadyForReview => {
-            if before == Some(SessionState::Working) || before.is_none() {
-                format!("\"{title}\" finished.{said}")
-            } else {
-                format!("\"{title}\" is done.{said}")
-            }
+        SessionState::TaskDone => {
+            format!("\"{title}\" finished the task; the workstream is still open.{said}")
+        }
+        SessionState::ProjectDone => {
+            format!("\"{title}\" finished the project; nothing remains to review or decide.{said}")
+        }
+        SessionState::ReadyForReview => format!("\"{title}\" needs review.{said}"),
+        SessionState::Completed => {
+            format!("\"{title}\" is idle; completion is not confirmed.{said}")
         }
         SessionState::Unknown => format!("\"{title}\" changed state."),
     }
@@ -556,7 +566,7 @@ mod tests {
             Seen::default().row(&one, "s1", NOW)["needs_you_because"],
             "its last turn failed"
         );
-        one.state = SessionState::Completed;
+        one.state = SessionState::TaskDone;
         assert!(Seen::default()
             .row(&one, "s1", NOW)
             .get("needs_you_because")
@@ -580,7 +590,7 @@ mod tests {
         let mut one = info("a", SessionState::Working, 1);
         assert!(known.changes(&[one.clone()]).is_empty());
         assert!(known.changes(&[one.clone()]).is_empty());
-        one.state = SessionState::Completed;
+        one.state = SessionState::TaskDone;
         one.tail = "Merged.".into();
         let changes = known.changes(&[one.clone()]);
         assert_eq!(changes.len(), 1);
@@ -590,6 +600,29 @@ mod tests {
         assert!(known.changes(&[one])[0]
             .text
             .contains("needs the developer"));
+    }
+
+    #[test]
+    fn voice_distinguishes_task_project_review_and_unassessed_idle() {
+        let mut known = Known::default();
+        let mut one = info("completion", SessionState::Working, 1);
+        known.record(&one);
+        one.state = SessionState::Completed;
+        assert_eq!(one.state_word(), "idle");
+        assert!(known.changes(&[one.clone()]).is_empty());
+        one.state = SessionState::TaskDone;
+        assert_eq!(one.state_word(), "task_done");
+        assert!(known.changes(&[one.clone()])[0]
+            .text
+            .contains("workstream is still open"));
+        one.state = SessionState::ProjectDone;
+        assert_eq!(one.state_word(), "project_done");
+        assert!(known.changes(&[one.clone()])[0]
+            .text
+            .contains("nothing remains"));
+        one.state = SessionState::ReadyForReview;
+        assert!(one.needs_you());
+        assert_eq!(one.state_word(), "needs_you");
     }
 
     #[test]

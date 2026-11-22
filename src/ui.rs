@@ -143,13 +143,14 @@ fn fade_rgb(color: Color, default: Color) -> (u8, u8, u8) {
 /// Terminal tab title, such as `2 need input · 1 working · 3 done · agentview`.
 pub fn terminal_title(app: &App) -> String {
     let counts = [
-        (app.session_count(SessionState::NeedsInput), "need input"),
-        (app.session_count(SessionState::Working), "working"),
         (
-            app.session_count(SessionState::ReadyForReview)
-                + app.session_count(SessionState::Completed),
-            "done",
+            app.session_count(SessionState::NeedsInput)
+                + app.session_count(SessionState::ReadyForReview),
+            "need input",
         ),
+        (app.session_count(SessionState::Working), "working"),
+        (app.session_count(SessionState::TaskDone), "task done"),
+        (app.session_count(SessionState::ProjectDone), "project done"),
     ];
     let mut parts = counts
         .into_iter()
@@ -3037,6 +3038,8 @@ fn state_symbol(state: SessionState, live_animation_visible: bool) -> &'static s
         SessionState::Working if live_animation_visible => "✳",
         SessionState::Working => "·",
         SessionState::Completed => "•",
+        SessionState::TaskDone => "•",
+        SessionState::ProjectDone => "✓",
         SessionState::Scheduled => "•",
         SessionState::Unknown => "?",
     }
@@ -3046,7 +3049,9 @@ fn state_color(state: SessionState) -> Color {
     match state {
         SessionState::ReadyForReview | SessionState::NeedsInput => palette().attention,
         SessionState::Working => palette().fg,
-        SessionState::Completed => palette().complete,
+        SessionState::Completed => palette().dim,
+        SessionState::TaskDone => palette().complete,
+        SessionState::ProjectDone => palette().dim,
         SessionState::Scheduled => palette().fg,
         SessionState::Unknown => palette().dim,
     }
@@ -3057,7 +3062,9 @@ fn short_state(state: SessionState) -> &'static str {
         SessionState::ReadyForReview => "Review",
         SessionState::NeedsInput => "Needs input",
         SessionState::Working => "Working",
-        SessionState::Completed => "Done",
+        SessionState::Completed => "Idle",
+        SessionState::TaskDone => "Task done",
+        SessionState::ProjectDone => "Project done",
         SessionState::Scheduled => "Scheduled",
         SessionState::Unknown => "Unknown",
     }
@@ -3284,7 +3291,7 @@ mod tests {
         assert!(rendered.contains("Ready for review"));
         assert!(rendered.contains("Needs input"));
         assert!(rendered.contains("Working"));
-        assert!(rendered.contains("Completed"));
+        assert!(rendered.contains("Idle"));
         assert!(rendered.contains("describe a task · /help for commands"));
         assert!(!rendered.contains("awaiting"));
     }
@@ -3296,13 +3303,14 @@ mod tests {
                 session("review", SessionState::ReadyForReview),
                 session("blocked", SessionState::NeedsInput),
                 session("asks", SessionState::NeedsInput),
-                session("done", SessionState::Completed),
+                session("done", SessionState::TaskDone),
+                session("wrapped", SessionState::ProjectDone),
             ],
             warnings: vec![],
         });
         assert_eq!(
             terminal_title(&app),
-            "2 need input · 2 done · BetterAgentView"
+            "3 need input · 1 task done · 1 project done · BetterAgentView"
         );
         assert_eq!(
             terminal_title(&App::new(SessionSnapshot::default())),
@@ -3939,14 +3947,16 @@ mod tests {
             .iter()
             .map(|span| span.content.to_string())
             .collect();
-        assert!(quiet.contains("Done"), "{quiet}");
+        assert!(quiet.contains("Idle"), "{quiet}");
     }
 
     #[test]
     fn directory_row_colors_the_state_label_and_keeps_the_harness_quiet() {
         for (state, label, color) in [
             (SessionState::NeedsInput, "Needs input", palette().attention),
-            (SessionState::Completed, "Done", palette().complete),
+            (SessionState::Completed, "Idle", palette().dim),
+            (SessionState::TaskDone, "Task done", palette().complete),
+            (SessionState::ProjectDone, "Project done", palette().dim),
             (SessionState::Working, "Working", palette().fg),
         ] {
             let item = session("worker", state);

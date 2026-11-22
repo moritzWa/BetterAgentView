@@ -96,6 +96,26 @@ pub fn get(session_id: &str) -> Option<String> {
     tails().lock().ok()?.get(session_id).cloned()
 }
 
+fn completion_messages() -> &'static Mutex<HashMap<String, String>> {
+    static MESSAGES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    MESSAGES.get_or_init(Default::default)
+}
+
+/// Only adapters that explicitly select user/final text may populate this cache.
+pub fn remember_completion(session_id: &str, messages: Option<String>) {
+    if let Ok(mut cache) = completion_messages().lock() {
+        if let Some(messages) = messages {
+            cache.insert(session_id.into(), messages);
+        } else {
+            cache.remove(session_id);
+        }
+    }
+}
+
+pub fn completion_for(session_id: &str) -> Option<String> {
+    completion_messages().lock().ok()?.get(session_id).cloned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

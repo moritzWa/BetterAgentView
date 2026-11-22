@@ -2180,7 +2180,7 @@ mod tests {
         }
         {
             let mut infos = rig.host.infos.lock().unwrap();
-            infos[1].state = SessionState::Completed;
+            infos[1].state = SessionState::TaskDone;
             infos[1].tail = "Merged.".into();
         }
         let spoken = (0..40).find_map(|_| {

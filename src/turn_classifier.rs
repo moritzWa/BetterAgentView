@@ -1,10 +1,10 @@
-//! Separates finished turns from turns that wait on the user.
+//! Separates task completion, workstream completion, and human blockers.
 //!
 //! Providers report an idle session either as completed or as waiting at its
 //! prompt, without saying whether the agent's last message asked for anything.
-//! When an OpenRouter key is configured, the transcript tail of each recently
-//! idle session is labelled once by a small hosted model. The verdict is cached
-//! until the session's summary changes, so a turn costs at most one request.
+//! When an OpenRouter key is configured, bounded message-only evidence from a
+//! recently idle session is labelled once by a Decisions model. No inspection
+//! transcript, reasoning, tool output or system prompt reaches the model.
 //! Verdicts are kept on disk so a restarted dashboard shows them at once.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -18,51 +18,34 @@ use std::time::{Duration, SystemTime};
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 
 use crate::control::ControlHub;
 use crate::domain::{AgentSession, Capability, Provider, SessionSnapshot, SessionState};
 
-const DEFAULT_MODEL: &str = "google/gemini-2.5-flash-lite";
-const ENDPOINT: &str = "https://openrouter.ai/api/v1/chat/completions";
+use crate::completion::{DEFAULT_MODEL, ENDPOINT};
 /// Older idle sessions keep their provider state rather than spending requests.
 const RECENT: Duration = Duration::from_secs(24 * 60 * 60);
 const MAX_IN_FLIGHT: usize = 4;
-const TAIL_CHARS: usize = 2_000;
 /// `raw_state` of a session the model, rather than the provider, judged to be
 /// asking. Unlike a permission or question prompt it is a soft call, so a
 /// manager whose sub-sessions are still running reads as waiting on them.
 pub const ASKED_IN_MESSAGE: &str = "asked in last message";
 
-const SYSTEM_PROMPT: &str =
-    "You label a coding agent's latest turn. Only the agent's final message counts; earlier \
-messages, including the user's, are context. Reply with exactly one word.\n\
-INPUT: the agent's last message waits on the user: it asks a question, asks for a choice, \
-approval, credentials, or clarification, or says it is blocked.\n\
-DONE: the agent finished or reported results without needing anything; optional offers \
-like 'let me know if you want more' are DONE. So is waiting on its own background job, CI run \
-or scheduled check.";
-
-/// Added for a session whose background work is still running: it carries on
-/// by itself when that ends, so only a real blocker is INPUT.
-const HELD_NOTE: &str =
-    "\nThis agent still has a background job running and will carry on by itself when it ends, \
-so it is not blocked: answer INPUT only if the message asks something it cannot proceed without. \
-Offers, options to stop early, cost notes and status are DONE.";
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Verdict {
     NeedsInput,
     Done,
+    ProjectDone,
+    Unclear,
 }
 
-type Inspect = dyn Fn(&AgentSession) -> Result<String> + Send + Sync;
-/// The transcript tail, and whether background work is still running.
+type ReadMessages = dyn Fn(&AgentSession) -> Result<String> + Send + Sync;
+/// Bounded message-only evidence, and whether background work is still running.
 type Ask = dyn Fn(&str, bool) -> Result<Verdict> + Send + Sync;
 
 #[derive(Clone)]
 pub struct TurnClassifier {
-    inspect: Arc<Inspect>,
+    read_messages: Arc<ReadMessages>,
     ask: Arc<Ask>,
     cache: Arc<Mutex<Cache>>,
     store: Option<Arc<PathBuf>>,
@@ -88,11 +71,11 @@ struct Labelled {
 
 impl TurnClassifier {
     pub fn new(
-        inspect: impl Fn(&AgentSession) -> Result<String> + Send + Sync + 'static,
+        read_messages: impl Fn(&AgentSession) -> Result<String> + Send + Sync + 'static,
         ask: impl Fn(&str, bool) -> Result<Verdict> + Send + Sync + 'static,
     ) -> Self {
         Self {
-            inspect: Arc::new(inspect),
+            read_messages: Arc::new(read_messages),
             ask: Arc::new(ask),
             cache: Arc::new(Mutex::new(Cache::default())),
             store: None,
@@ -124,7 +107,7 @@ impl TurnClassifier {
             .unwrap_or_else(|| DEFAULT_MODEL.into());
         let control = control.clone();
         let classifier = Self::new(
-            move |session| control.inspect(session),
+            move |session| control.completion_context(session),
             move |tail, held| ask_openrouter(&key, &model, tail, held),
         );
         Some(match default_store_path() {
@@ -159,7 +142,9 @@ impl TurnClassifier {
                 }
                 _ if cache.in_flight.contains(&session.id)
                     || cache.failed.get(&session.id) == Some(&turn) => {}
-                _ if cache.in_flight.len() + pending.len() < MAX_IN_FLIGHT => {
+                _ if session.age(now).is_some_and(|age| age <= RECENT)
+                    && cache.in_flight.len() + pending.len() < MAX_IN_FLIGHT =>
+                {
                     pending.push((session.clone(), turn, is_held));
                 }
                 _ => {}
@@ -168,19 +153,19 @@ impl TurnClassifier {
         if let Some(error) = &cache.last_error {
             snapshot
                 .warnings
-                .push(format!("needs-input classifier: {error}"));
+                .push(format!("completion classifier: {error}"));
         }
         for (session, _, _) in &pending {
             cache.in_flight.insert(session.id.clone());
         }
         drop(cache);
+        protect_project_done(snapshot);
 
         for (session, turn, is_held) in pending {
             let classifier = self.clone();
             thread::spawn(move || {
-                let result = crate::last_message::get(&session.id)
-                    .map_or_else(|| (classifier.inspect)(&session), Ok)
-                    .and_then(|transcript| (classifier.ask)(tail(&transcript, TAIL_CHARS), is_held))
+                let result = (classifier.read_messages)(&session)
+                    .and_then(|messages| (classifier.ask)(&messages, is_held))
                     .map(|verdict| Labelled {
                         turn,
                         verdict,
@@ -235,31 +220,20 @@ fn held(session: &AgentSession) -> bool {
         .is_some_and(|raw| raw.starts_with("background: ") || raw == "background work")
 }
 
-/// Whether the last message asks the user something. A hold stays visible
-/// unless it does: the classifier sometimes labels a status ("I'm checking
-/// every few minutes") as waiting on the user, and that must not hide the shell.
-fn message_asks(session: &AgentSession) -> bool {
-    let text = crate::last_message::facts_for(&session.id)
-        .map(|facts| facts.tail)
-        .filter(|tail| !tail.trim().is_empty())
-        .or_else(|| crate::last_message::get(&session.id))
-        .unwrap_or_else(|| session.summary.clone());
-    text.contains('?')
-}
-
 /// Idle sessions whose provider cannot tell a finished turn from a question.
 /// Permission and question prompts are already known to need input.
-fn eligible(session: &AgentSession, now: SystemTime) -> bool {
+fn eligible(session: &AgentSession, _now: SystemTime) -> bool {
     let idle = match session.state {
-        SessionState::Completed => true,
+        SessionState::Completed | SessionState::TaskDone | SessionState::ProjectDone => true,
         SessionState::NeedsInput => session.raw_state.as_deref() == Some("waiting at prompt"),
         _ => held(session),
     };
     idle && session.provider != Provider::Terminal
-        && (session.capabilities.contains(&Capability::Inspect)
-            || crate::last_message::get(&session.id).is_some())
+        && ((session.provider == Provider::OpenCode
+            && session.capabilities.contains(&Capability::Inspect))
+            || crate::last_message::get(&session.id).is_some()
+            || crate::last_message::completion_for(&session.id).is_some())
         && !session.summary.trim().is_empty()
-        && session.age(now).is_some_and(|age| age <= RECENT)
 }
 
 /// Reuse the dashboard's exact cached turn judgements without starting another
@@ -290,25 +264,67 @@ fn apply_saved_at(snapshot: &mut SessionSnapshot, path: &Path) -> BTreeSet<Strin
             assessed.insert(session.id.clone());
         }
     }
+    protect_project_done(snapshot);
     assessed
 }
 
+/// A parent's prose cannot finish live work or attention in its descendants.
+fn protect_project_done(snapshot: &mut SessionSnapshot) {
+    let Ok(parents) = crate::session_tree::ParentLinks::load_default() else {
+        return;
+    };
+    protect_project_done_with_links(snapshot, parents.links());
+}
+
+fn protect_project_done_with_links(
+    snapshot: &mut SessionSnapshot,
+    parents: &std::collections::HashMap<String, String>,
+) {
+    let mut blocked = BTreeSet::new();
+    for child in &snapshot.sessions {
+        if !matches!(
+            child.state,
+            SessionState::Working
+                | SessionState::NeedsInput
+                | SessionState::ReadyForReview
+                | SessionState::Scheduled
+        ) {
+            continue;
+        }
+        let Some(mut id) = crate::session_tree::raw_opencode_id(&child.id) else {
+            continue;
+        };
+        for _ in 0..64 {
+            let Some(parent) = parents.get(id) else {
+                break;
+            };
+            if !blocked.insert(parent.clone()) {
+                break;
+            }
+            id = parent;
+        }
+    }
+    for session in &mut snapshot.sessions {
+        if session.state == SessionState::ProjectDone
+            && crate::session_tree::raw_opencode_id(&session.id)
+                .is_some_and(|id| blocked.contains(id))
+        {
+            session.state = SessionState::TaskDone;
+        }
+    }
+}
+
 fn apply_verdict(session: &mut AgentSession, verdict: Verdict) {
-    if verdict == Verdict::NeedsInput && session.state == SessionState::Completed {
+    if verdict == Verdict::NeedsInput && session.state.is_idle() {
         session.raw_state = Some(ASKED_IN_MESSAGE.into());
     }
     session.state = match (verdict, held(session)) {
-        (Verdict::NeedsInput, true) if !message_asks(session) => {
-            if session.is_scheduled() {
-                SessionState::Scheduled
-            } else {
-                SessionState::Working
-            }
-        }
         (Verdict::NeedsInput, _) => SessionState::NeedsInput,
-        (Verdict::Done, true) if session.is_scheduled() => SessionState::Scheduled,
-        (Verdict::Done, true) => SessionState::Working,
-        (Verdict::Done, false) => SessionState::Completed,
+        (_, true) if session.is_scheduled() => SessionState::Scheduled,
+        (_, true) => SessionState::Working,
+        (Verdict::ProjectDone, false) if session.wake.is_none() => SessionState::ProjectDone,
+        (Verdict::ProjectDone | Verdict::Done, false) => SessionState::TaskDone,
+        (Verdict::Unclear, false) => SessionState::Completed,
     };
 }
 
@@ -320,18 +336,31 @@ fn apply_verdict(session: &mut AgentSession, verdict: Verdict) {
 /// between Rust releases.
 fn turn_hash(session: &AgentSession, held: bool) -> u64 {
     let reply = crate::last_message::get(&session.id).unwrap_or_default();
-    let activity = match (reply.is_empty(), session.updated_at) {
-        (true, Some(at)) => at
+    let facts = crate::last_message::facts_for(&session.id).unwrap_or_default();
+    let messages = crate::last_message::completion_for(&session.id).unwrap_or_default();
+    let activity = match session.updated_at {
+        Some(at) => at
             .duration_since(SystemTime::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_secs()),
+            .map_or(0, |elapsed| elapsed.as_millis() as u64),
         _ => 0,
     };
     session
         .summary
         .bytes()
+        .filter(|_| reply.is_empty() && facts.tail.is_empty())
         .chain([0])
         .chain(reply.bytes())
-        .chain(activity.to_le_bytes().into_iter().filter(|_| activity != 0))
+        .chain(facts.tail.bytes())
+        .chain(messages.bytes())
+        .chain(facts.last_user_ms.to_le_bytes())
+        .chain(activity.to_le_bytes())
+        .chain(b"message-only-completion-v3".iter().copied())
+        .chain(
+            std::env::var("AGENTVIEW_TURN_CLASSIFIER_MODEL")
+                .unwrap_or_else(|_| DEFAULT_MODEL.into())
+                .bytes(),
+        )
+        .chain([u8::from(session.wake.is_some())])
         .chain([1].into_iter().filter(|_| held))
         .fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
             (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
@@ -353,17 +382,12 @@ fn default_store_path() -> Option<PathBuf> {
     Some(state_home.join("agentview/turn-verdicts.json"))
 }
 
-/// Verdicts for turns young enough to still be classified; older ones would
-/// never be looked up again.
+/// Exact-turn verdicts remain useful after a session leaves the new-request window.
 fn read_store(path: &Path) -> BTreeMap<String, Labelled> {
-    let cutoff = now_ms().saturating_sub(RECENT.as_millis() as u64);
     std::fs::read(path)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<BTreeMap<String, Labelled>>(&bytes).ok())
         .unwrap_or_default()
-        .into_iter()
-        .filter(|(_, labelled)| labelled.labelled_at_ms >= cutoff)
-        .collect()
 }
 
 /// Merge one verdict into the file, which other dashboards may be writing too.
@@ -375,53 +399,20 @@ fn record_in_store(path: &Path, session_id: &str, labelled: Labelled) -> Result<
     crate::fs_util::write_private_json(path, &verdicts)
 }
 
-fn tail(text: &str, max_chars: usize) -> &str {
-    let text = text.trim_end();
-    match max_chars
-        .checked_sub(1)
-        .and_then(|last| text.char_indices().rev().nth(last))
-    {
-        Some((index, _)) => &text[index..],
-        None => text,
-    }
-}
-
 fn openrouter_api_key() -> Option<String> {
-    if let Some(key) = std::env::var("OPENROUTER_API_KEY")
-        .ok()
-        .filter(|key| !key.trim().is_empty())
-    {
-        return Some(key.trim().to_owned());
-    }
     let config_home = crate::fs_util::xdg_home("XDG_CONFIG_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-    let key = std::fs::read_to_string(config_home.join("agentview/openrouter-api-key")).ok()?;
-    let key = key.trim();
-    (!key.is_empty()).then(|| key.to_owned())
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")));
+    // An app-specific key wins over unrelated credentials inherited by a terminal.
+    config_home
+        .and_then(|root| std::fs::read_to_string(root.join("agentview/openrouter-api-key")).ok())
+        .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+        .map(|key| key.trim().to_owned())
+        .filter(|key| !key.is_empty())
 }
 
-fn ask_openrouter(key: &str, model: &str, transcript_tail: &str, held: bool) -> Result<Verdict> {
-    let system = if held {
-        format!("{SYSTEM_PROMPT}{HELD_NOTE}")
-    } else {
-        SYSTEM_PROMPT.to_owned()
-    };
-    let body = json!({
-        "model": model,
-        "temperature": 0,
-        "max_tokens": 16,
-        "reasoning": { "enabled": false },
-        "messages": [
-            { "role": "system", "content": system },
-            {
-                "role": "user",
-                "content": format!(
-                    "Agent transcript tail:\n<<<\n{transcript_tail}\n>>>\nDoes the agent wait on the user? Answer INPUT or DONE."
-                ),
-            },
-        ],
-    });
+fn ask_openrouter(key: &str, model: &str, messages: &str, held: bool) -> Result<Verdict> {
+    let body = crate::completion::request(model, messages, held)?;
     // The key travels on stdin so it never appears in the process list.
     let config = format!(
         "url = \"{ENDPOINT}\"\nheader = \"Authorization: Bearer {}\"\nheader = \"Content-Type: application/json\"\nheader = \"X-Title: agentview\"\ndata-binary = \"{}\"\n",
@@ -454,32 +445,11 @@ fn ask_openrouter(key: &str, model: &str, transcript_tail: &str, held: bool) -> 
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }
-    parse_verdict(&output.stdout)
+    crate::completion::parse(&output.stdout)
 }
 
 fn curl_quote(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-fn parse_verdict(response: &[u8]) -> Result<Verdict> {
-    let response: Value =
-        serde_json::from_slice(response).context("OpenRouter returned invalid JSON")?;
-    if let Some(error) = response.pointer("/error/message").and_then(Value::as_str) {
-        bail!("OpenRouter: {error}");
-    }
-    let answer = response
-        .pointer("/choices/0/message/content")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_uppercase();
-    if answer.starts_with("INPUT") {
-        Ok(Verdict::NeedsInput)
-    } else if answer.starts_with("DONE") {
-        Ok(Verdict::Done)
-    } else {
-        bail!("unexpected classifier answer {answer:?}")
-    }
 }
 
 #[cfg(test)]
@@ -488,6 +458,166 @@ mod tests {
 
     use super::*;
     use crate::domain::{Runtime, SessionKind};
+
+    #[test]
+    fn project_completion_never_overrides_holds_wakes_or_native_blockers() {
+        for state in [SessionState::Working, SessionState::Scheduled] {
+            let mut session = idle("pending", state, "background: shell: test", "Finished");
+            apply_verdict(&mut session, Verdict::ProjectDone);
+            assert_eq!(session.state, state);
+        }
+        let mut session = idle("wake", SessionState::Completed, "idle", "Finished");
+        session.wake = Some(crate::holds::Wake {
+            label: "tomorrow".into(),
+            text: "check deploy".into(),
+            due_ms: u64::MAX,
+            deferred_at_ms: None,
+        });
+        apply_verdict(&mut session, Verdict::ProjectDone);
+        assert_eq!(session.state, SessionState::TaskDone);
+        for raw in [
+            "permission requested",
+            "question asked",
+            "turn failed",
+            "turn interrupted",
+        ] {
+            assert!(!eligible(
+                &idle("blocked", SessionState::NeedsInput, raw, "Finished"),
+                SystemTime::now()
+            ));
+        }
+    }
+
+    #[test]
+    fn required_human_action_without_a_question_mark_survives_a_hold() {
+        let mut session = idle(
+            "approval",
+            SessionState::Working,
+            "background: CI",
+            "I need your approval to deploy.",
+        );
+        apply_verdict(&mut session, Verdict::NeedsInput);
+        assert_eq!(session.state, SessionState::NeedsInput);
+    }
+
+    #[test]
+    fn descendants_with_work_or_attention_prevent_project_done() {
+        for state in [
+            SessionState::Working,
+            SessionState::NeedsInput,
+            SessionState::ReadyForReview,
+            SessionState::Scheduled,
+        ] {
+            let mut snapshot = snapshot(vec![
+                idle(
+                    "opencode:host:parent",
+                    SessionState::ProjectDone,
+                    "idle",
+                    "Finished",
+                ),
+                idle("opencode:host:child", state, "busy", "Still open"),
+            ]);
+            protect_project_done_with_links(
+                &mut snapshot,
+                &std::collections::HashMap::from([("child".into(), "parent".into())]),
+            );
+            assert_eq!(snapshot.sessions[0].state, SessionState::TaskDone);
+        }
+    }
+
+    #[test]
+    fn saved_completion_is_invalidated_by_new_user_activity_even_if_reply_is_unchanged() {
+        let session = idle(
+            "completion-reopen",
+            SessionState::Completed,
+            "idle",
+            "All done",
+        );
+        crate::last_message::remember_facts(&session.id, 1, "All done");
+        let before = turn_hash(&session, false);
+        crate::last_message::remember_facts(&session.id, 2, "All done");
+        assert_ne!(before, turn_hash(&session, false));
+    }
+
+    #[test]
+    fn changing_the_display_summary_does_not_spend_another_request_for_the_same_message() {
+        let mut session = idle(
+            "completion-title",
+            SessionState::Completed,
+            "idle",
+            "old title",
+        );
+        crate::last_message::remember(&session.id, "Task finished.");
+        let before = turn_hash(&session, false);
+        session.summary = "new title".into();
+        assert_eq!(before, turn_hash(&session, false));
+    }
+
+    #[test]
+    #[ignore = "explicit live Decisions probe: real message-only history, no writes to provider data"]
+    fn live_completion_reads_actual_messages_and_applies_the_expected_verdict() {
+        let executable = std::env::var("AGENTVIEW_COMPLETION_PROBE_BIN")
+            .unwrap_or_else(|_| "opencode-dev".into());
+        let id = std::env::var("AGENTVIEW_COMPLETION_PROBE_SESSION")
+            .expect("set a known completed session ID");
+        let evidence = crate::adapters::opencode_db::completion_context(&executable, &id).unwrap();
+        if let Ok(path) = std::env::var("AGENTVIEW_COMPLETION_PROBE_OUTPUT") {
+            std::fs::write(path, &evidence).unwrap();
+        }
+        assert!(evidence.chars().count() < 4300);
+        let verdict = ask_openrouter(
+            &openrouter_api_key().expect("OpenRouter key"),
+            DEFAULT_MODEL,
+            &evidence,
+            false,
+        )
+        .unwrap();
+        let expected = match std::env::var("AGENTVIEW_COMPLETION_PROBE_EXPECTED")
+            .expect("set expected verdict for this real session")
+            .as_str()
+        {
+            "project_done" => Verdict::ProjectDone,
+            "task_done" => Verdict::Done,
+            "needs_input" => Verdict::NeedsInput,
+            "unclear" => Verdict::Unclear,
+            _ => panic!("unknown expected verdict"),
+        };
+        assert_eq!(verdict, expected);
+        let mut session = idle("probe", SessionState::Completed, "idle", "probe");
+        apply_verdict(&mut session, verdict);
+        assert_eq!(
+            session.state,
+            match expected {
+                Verdict::ProjectDone => SessionState::ProjectDone,
+                Verdict::Done => SessionState::TaskDone,
+                Verdict::NeedsInput => SessionState::NeedsInput,
+                Verdict::Unclear => SessionState::Completed,
+            }
+        );
+    }
+
+    #[test]
+    fn unclear_stays_idle_and_completed_verdicts_survive_restart_beyond_one_day() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("verdicts.json");
+        let mut session = idle("old-project", SessionState::Completed, "idle", "All done");
+        apply_verdict(&mut session, Verdict::Unclear);
+        assert_eq!(session.state, SessionState::Completed);
+        session.updated_at = Some(SystemTime::now() - Duration::from_secs(172_800));
+        record_in_store(
+            &path,
+            &session.id,
+            Labelled {
+                turn: turn_hash(&session, false),
+                verdict: Verdict::ProjectDone,
+                labelled_at_ms: now_ms() - 172_800_000,
+            },
+        )
+        .unwrap();
+        let mut snapshot = snapshot(vec![session]);
+        apply_saved_at(&mut snapshot, &path);
+        assert_eq!(snapshot.sessions[0].state, SessionState::ProjectDone);
+    }
 
     fn idle(id: &str, state: SessionState, raw_state: &str, summary: &str) -> AgentSession {
         // Snapshots of unchanged test turns share their activity timestamp.
@@ -650,7 +780,7 @@ mod tests {
                 states,
                 [
                     SessionState::NeedsInput,
-                    SessionState::Completed,
+                    SessionState::TaskDone,
                     SessionState::NeedsInput,
                 ]
             );
@@ -719,7 +849,7 @@ mod tests {
         classifier.wait_for_idle();
         let mut shown = turn(1_000);
         classifier.apply(&mut shown);
-        assert_eq!(shown.sessions[0].state, SessionState::Completed);
+        assert_eq!(shown.sessions[0].state, SessionState::TaskDone);
         assert_eq!(asked.load(Ordering::SeqCst), 2);
     }
 
@@ -761,10 +891,10 @@ mod tests {
     }
 
     #[test]
-    fn a_held_status_the_model_calls_input_stays_background() {
+    fn an_automatic_followup_stays_background() {
         let classifier = TurnClassifier::new(
             |session| Ok(session.summary.clone()),
-            |_, _| Ok(Verdict::NeedsInput),
+            |_, _| Ok(Verdict::Done),
         );
         let session = idle(
             "poll",
@@ -823,7 +953,7 @@ mod tests {
     #[test]
     fn a_recorded_last_message_is_labelled_without_transcript_access() {
         let classifier = TurnClassifier::new(
-            |_| bail!("no transcript access"),
+            |session| crate::last_message::get(&session.id).context("no cached reply"),
             |tail, _held| {
                 Ok(if tail.ends_with("Which branch?") {
                     Verdict::NeedsInput
@@ -847,29 +977,6 @@ mod tests {
         classifier.apply(&mut shown);
         assert_eq!(shown.sessions[0].state, SessionState::NeedsInput);
         assert!(shown.warnings.is_empty());
-    }
-
-    #[test]
-    fn tail_keeps_the_end_on_a_character_boundary() {
-        assert_eq!(tail("héllo wörld", 5), "wörld");
-        assert_eq!(tail("short", 50), "short");
-    }
-
-    #[test]
-    fn answers_and_errors_are_parsed() {
-        let answer = |text: &str| {
-            parse_verdict(
-                json!({ "choices": [{ "message": { "content": text } }] })
-                    .to_string()
-                    .as_bytes(),
-            )
-            .ok()
-        };
-        assert_eq!(answer(" input\n"), Some(Verdict::NeedsInput));
-        assert_eq!(answer("DONE."), Some(Verdict::Done));
-        assert_eq!(answer("maybe"), None);
-        let error = parse_verdict(br#"{"error":{"message":"bad key"}}"#).unwrap_err();
-        assert!(error.to_string().contains("bad key"));
     }
 
     #[test]

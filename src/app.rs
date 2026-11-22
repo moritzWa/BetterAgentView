@@ -4058,7 +4058,7 @@ fn default_migration_name(name: &str, target: &str) -> String {
 }
 
 pub(crate) fn is_active_session_state(state: SessionState) -> bool {
-    state != SessionState::Completed
+    !state.is_idle()
 }
 
 fn normalize_provider_name(value: &str) -> String {
@@ -5961,7 +5961,7 @@ mod tests {
                 .iter()
                 .map(|group| group.label.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Ready for review", "Needs input", "Working", "Completed"]
+            vec!["Ready for review", "Needs input", "Working", "Idle"]
         );
 
         app.set_filter("summary working");
@@ -6104,7 +6104,7 @@ mod tests {
                 .iter()
                 .map(|group| group.label.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Paused", "Needs input", "Completed"]
+            vec!["Paused", "Needs input", "Idle"]
         );
     }
 

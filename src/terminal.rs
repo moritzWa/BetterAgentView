@@ -26,7 +26,7 @@ use crate::app::{
     SelectionKey, SESSION_PAGE_SIZE,
 };
 use crate::control::{ControlHub, ControlOutcome, LaunchPresentation, RestorableSession};
-use crate::domain::{AgentSession, Capability, Provider, SessionSnapshot, SessionState};
+use crate::domain::{AgentSession, Capability, Provider, SessionSnapshot};
 use crate::hidden::HiddenSessions;
 use crate::migration::{MigrationClient, MigrationOutcome, MigrationRegistry, MigrationRequest};
 use crate::theme::{ColorScheme, SchemeWatcher, ThemePreference};
@@ -544,18 +544,14 @@ pub fn run_dashboard(
                             session.provider == pending.provider
                                 && session.provider_session_id == pending.provider_session_id
                         }) {
-                            if launched.state == SessionState::Completed
-                                && !current_request.include_completed
-                            {
+                            if launched.state.is_idle() && !current_request.include_completed {
                                 current_request.include_completed = true;
                                 app.reveal_completed_after_launch();
                             }
                         }
                     }
                     if !current_request.include_completed {
-                        snapshot
-                            .sessions
-                            .retain(|session| session.state != SessionState::Completed);
+                        snapshot.sessions.retain(|session| !session.state.is_idle());
                     }
                     if !current_request.include_interactive {
                         snapshot.sessions.retain(|session| {
@@ -1580,9 +1576,7 @@ pub fn run_dashboard(
                             app.set_completed_visibility(include_completed);
                             if !include_completed {
                                 let mut snapshot = app.snapshot.clone();
-                                snapshot.sessions.retain(|session| {
-                                    session.state != crate::domain::SessionState::Completed
-                                });
+                                snapshot.sessions.retain(|session| !session.state.is_idle());
                                 app.replace_snapshot(snapshot);
                             }
                         }

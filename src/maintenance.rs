@@ -3,7 +3,7 @@ use std::time::SystemTime;
 
 use serde::Serialize;
 
-use crate::domain::{AgentSession, Capability, Provider, SessionSnapshot, SessionState};
+use crate::domain::{AgentSession, Capability, Provider, SessionSnapshot};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ArchiveItem {
@@ -70,10 +70,10 @@ pub fn plan_completed_archive(
     let completed_seen = snapshot
         .sessions
         .iter()
-        .filter(|session| session.state == SessionState::Completed)
+        .filter(|session| session.state.is_idle())
         .count();
     let scoped = snapshot.sessions.iter().filter(|session| {
-        session.state == SessionState::Completed
+        session.state.is_idle()
             && cwd
                 .map(|root| session.cwd.starts_with(root))
                 .unwrap_or(true)
@@ -139,7 +139,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::domain::{Runtime, SessionKind};
+    use crate::domain::{Runtime, SessionKind, SessionState};
 
     fn session(id: &str, state: SessionState, updated_days: u64, archive: bool) -> AgentSession {
         let mut capabilities = BTreeSet::new();
