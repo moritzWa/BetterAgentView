@@ -283,6 +283,7 @@ impl Tools {
             "close_session" => self.close(args),
             "send_draft" => self.send_draft(args),
             "watch_session" => self.watch(args),
+            "keep_listening" => Ok(json!({"ok": true})),
             "end_call" => Ok(
                 json!({"ok": true, "note": "the call ends in a few seconds: say a short goodbye"}),
             ),
@@ -2217,6 +2218,12 @@ mod tests {
         let polled = tools.poll();
         assert_eq!(polled.spoken.len(), 1);
         assert!(polled.spoken[0].contains("New answer."));
+    }
+
+    #[test]
+    fn keep_listening_does_nothing_and_adds_no_context() {
+        let (_host, tools) = tools(two());
+        assert_eq!(tools.run("keep_listening", &json!({})), json!({"ok": true}));
     }
 
     #[test]

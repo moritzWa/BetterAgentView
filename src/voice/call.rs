@@ -247,6 +247,12 @@ pub fn is_registered_watch(name: &str, result: &Value) -> bool {
     name == "watch_session" && result.get("watching").and_then(Value::as_bool) == Some(true)
 }
 
+/// A call that leaves the voice nothing to say: Grok must not be asked to
+/// respond to it, or it fills the turn with a placeholder and says it aloud.
+pub fn needs_no_reply(name: &str, result: &Value) -> bool {
+    name == "keep_listening" || is_registered_watch(name, result)
+}
+
 /// Something the voice should say, in its own words.
 pub fn commentary(text: &str) -> Value {
     json!({"type": "session.commentary.append", "event_id": event_id("say"), "delegation_id": null, "content": clip(text)})
@@ -321,6 +327,13 @@ mod tests {
         assert!(is_registered_watch("watch_session", &waiting));
         assert!(!is_registered_watch("watch_session", &already));
         assert!(!is_registered_watch("send_message", &waiting));
+    }
+
+    #[test]
+    fn keeping_listening_and_a_waiting_watch_need_no_reply() {
+        assert!(needs_no_reply("keep_listening", &json!({"ok": true})));
+        assert!(needs_no_reply("watch_session", &json!({"watching": true})));
+        assert!(!needs_no_reply("send_message", &json!({"ok": true})));
     }
 
     #[test]

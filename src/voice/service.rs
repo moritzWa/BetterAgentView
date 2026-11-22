@@ -1089,7 +1089,7 @@ impl Inner {
                             let _ =
                                 outgoing.send(json!({"type": "send", "event": event}).to_string());
                         };
-                        let mut registered_watches_only = true;
+                        let mut nothing_to_say = true;
                         for call_ in &calls {
                             let args: Value =
                                 serde_json::from_str(&call_.arguments).unwrap_or(Value::Null);
@@ -1109,13 +1109,12 @@ impl Inner {
                                     "result": result.to_string(),
                                 }),
                             );
-                            registered_watches_only &=
-                                call::is_registered_watch(&call_.name, &result);
+                            nothing_to_say &= call::needs_no_reply(&call_.name, &result);
                             send(call::function_output(&call_.call_id, &result));
                         }
                         // Grok fills a turn it has nothing to say in with a
                         // placeholder like "(no response)", and says it aloud.
-                        if !(provider == Provider::Xai && registered_watches_only) {
+                        if !(provider == Provider::Xai && nothing_to_say) {
                             send(call::continue_response());
                         }
                         if calls.iter().any(|call| call.name == "end_call") {
@@ -1799,6 +1798,46 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("semantic search"));
+    }
+
+    #[test]
+    fn a_grok_turn_that_only_keeps_listening_gets_no_reply_request() {
+        let rig = rig(grok(), Some("xai-test"));
+        let (id, inbox) = page(&rig);
+        say(
+            &rig,
+            id,
+            json!({"type": "hello", "ready": true, "hidden": true}),
+        );
+        rig.service.toggle();
+        say(&rig, id, json!({"type": "offer", "provider": "xai"}));
+        for event in [
+            json!({"type": "session.updated"}),
+            json!({"type": "response.created"}),
+            json!({"type": "response.function_call_arguments.done", "call_id": "c1", "name": "keep_listening", "arguments": "{}"}),
+            json!({"type": "response.done"}),
+        ] {
+            say(&rig, id, json!({"type": "event", "event": event}));
+        }
+        let mut seen = Vec::new();
+        until(|| {
+            seen.extend(
+                inbox
+                    .try_iter()
+                    .filter_map(|m| serde_json::from_str::<Value>(&m).ok()),
+            );
+            seen.iter().any(|m| m["event"]["item"]["call_id"] == "c1")
+        });
+        thread::sleep(Duration::from_millis(400));
+        seen.extend(
+            inbox
+                .try_iter()
+                .filter_map(|m| serde_json::from_str::<Value>(&m).ok()),
+        );
+        assert!(
+            !seen.iter().any(|m| m["event"]["type"] == "response.create"),
+            "Grok would say the silence aloud"
+        );
     }
 
     #[test]

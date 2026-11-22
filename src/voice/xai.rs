@@ -20,11 +20,26 @@ pub fn realtime_url(settings: &Settings, conversation: Option<&str>) -> String {
     url
 }
 
+/// Grok answers every committed turn, and a model that is told to say nothing
+/// describes the silence aloud ("(Silence ...)"). This is the way to say nothing:
+/// a call with no spoken reply, which the relay does not follow with a response.
+fn keep_listening() -> Value {
+    json!({
+        "type": "function",
+        "name": "keep_listening",
+        "description": "Call this when the developer's last words are unfinished: they trail off or end on \"um\", \"uh\", \"and\", \"so\", \"like\", or stop mid-sentence. Say nothing with it. It returns nothing; the developer is still talking.",
+        "parameters": {"type": "object", "properties": {}, "additionalProperties": false},
+    })
+}
+
 /// The first `session.update`: voice, prompt with the status notes, tools,
 /// no reasoning (it keeps the voice fast), server-side turn detection.
 pub fn session_update(settings: &Settings, notes: &str) -> Value {
-    let tools: Value =
+    let mut tools: Value =
         serde_json::from_str(include_str!("tools.json")).expect("tools.json is valid");
+    if let Some(list) = tools.as_array_mut() {
+        list.push(keep_listening());
+    }
     json!({
         "type": "session.update",
         "session": {
@@ -258,6 +273,7 @@ mod tests {
             .map(|tool| tool["name"].as_str().unwrap())
             .collect();
         assert!(names.contains(&"send_message") && names.contains(&"search_history"));
+        assert_eq!(names.last(), Some(&"keep_listening"));
         assert!(session["instructions"]
             .as_str()
             .unwrap()
@@ -265,18 +281,16 @@ mod tests {
     }
 
     #[test]
-    fn the_grok_prompt_requires_silence_for_unfinished_thoughts() {
+    fn unfinished_thoughts_are_met_with_a_tool_call_not_a_description_of_silence() {
         let update = session_update(&Settings::default(), "Sessions: none.");
         let instructions = update["session"]["instructions"].as_str().unwrap();
-        assert!(
-            instructions.contains("Speak only when you have something substantive to contribute.")
-        );
+        // Telling Grok to say nothing makes it say "(Silence ...)" aloud; it
+        // needs something to do instead.
         assert!(instructions.contains(
-            "When the developer pauses, trails off, or leaves a sentence unfinished, stay silent"
+            "When their last words are unfinished, call keep_listening and do not speak."
         ));
-        assert!(instructions.contains(
-            "NEVER say \"sounds like you're mid-thought\", \"go ahead\", or similar filler acknowledgments."
-        ));
+        assert!(!instructions.to_lowercase().contains("silent"));
+        assert!(!instructions.to_lowercase().contains("silence"));
     }
 
     #[test]
