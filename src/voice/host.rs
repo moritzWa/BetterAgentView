@@ -210,14 +210,7 @@ impl DashboardHost {
 
     fn messageable(&self, id: &str) -> Result<AgentSession> {
         let mut session = self.controllable(id)?;
-        if session.capabilities.contains(&Capability::Reply)
-            || session.provider != Provider::OpenCode
-            || session.runtime != Runtime::Host
-            || matches!(
-                session.raw_state.as_deref(),
-                Some("question asked" | "permission requested")
-            )
-        {
+        if !needs_adoption(&session) {
             return Ok(session);
         }
         self.control.adopt(&RestorableSession {
@@ -233,6 +226,24 @@ impl DashboardHost {
         self.refresh();
         Ok(session)
     }
+}
+
+/// A listed OpenCode row without `Reply` that `messageable` adopts before a send.
+fn needs_adoption(session: &AgentSession) -> bool {
+    !session.capabilities.contains(&Capability::Reply)
+        && session.provider == Provider::OpenCode
+        && session.runtime == Runtime::Host
+        && !matches!(
+            session.raw_state.as_deref(),
+            Some("question asked" | "permission requested")
+        )
+}
+
+/// Whether `send_message` to this row goes through: it has `Reply`, or
+/// `messageable` adopts it first. A row not owned by Agent View lacks `Reply`
+/// until then, so the capability alone would flag it as unmessageable.
+fn can_message(session: &AgentSession) -> bool {
+    session.capabilities.contains(&Capability::Reply) || needs_adoption(session)
 }
 
 /// The provider's reason, in words the voice can say.
@@ -320,7 +331,7 @@ impl VoiceHost for DashboardHost {
                     subagents,
                     paused: paused.contains_key(&session.id),
                     top_level: !parents.contains_key(&session.provider_session_id),
-                    can_message: session.capabilities.contains(&Capability::Reply),
+                    can_message: can_message(session),
                     why: needs_you_because(session),
                 }
             })
@@ -750,6 +761,27 @@ mod tests {
         let error = host.send("opencode:host:ses_a", "yes").unwrap_err();
         assert!(format!("{error:#}").contains("reply authority was not granted"));
         assert!(fake.adopted.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn rows_that_a_send_would_adopt_are_not_flagged_unmessageable() {
+        for state in [
+            SessionState::NeedsInput,
+            SessionState::Working,
+            SessionState::Completed,
+        ] {
+            let host = host_with(controller(false), &[external_row("ses_a", state, None)]);
+            assert!(host.infos()[0].can_message, "{state:?}");
+        }
+        let blocked = host_with(
+            controller(false),
+            &[external_row(
+                "ses_a",
+                SessionState::NeedsInput,
+                Some("question asked"),
+            )],
+        );
+        assert!(!blocked.infos()[0].can_message);
     }
 
     #[test]
