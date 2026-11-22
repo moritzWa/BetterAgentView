@@ -246,6 +246,34 @@ fn can_message(session: &AgentSession) -> bool {
     session.capabilities.contains(&Capability::Reply) || needs_adoption(session)
 }
 
+/// Whether the dashboard puts this row in its Scheduled section: scheduled,
+/// and no descendant needs the person or is running.
+fn scheduled_only(
+    session: &AgentSession,
+    sessions: &[AgentSession],
+    parents: &HashMap<String, String>,
+) -> bool {
+    if !session.is_scheduled() {
+        return false;
+    }
+    !sessions.iter().any(|child| {
+        if child.state != SessionState::NeedsInput && child.state != SessionState::Working {
+            return false;
+        }
+        let mut raw = &child.provider_session_id;
+        for _ in 0..64 {
+            let Some(parent) = parents.get(raw) else {
+                return false;
+            };
+            if *parent == session.provider_session_id {
+                return true;
+            }
+            raw = parent;
+        }
+        false
+    })
+}
+
 /// The provider's reason, in words the voice can say.
 fn needs_you_because(session: &AgentSession) -> Option<String> {
     if session.state != SessionState::NeedsInput {
@@ -330,6 +358,7 @@ impl VoiceHost for DashboardHost {
                     }),
                     subagents,
                     paused: paused.contains_key(&session.id),
+                    scheduled: scheduled_only(session, &sessions, &parents),
                     top_level: !parents.contains_key(&session.provider_session_id),
                     can_message: can_message(session),
                     why: needs_you_because(session),
@@ -720,6 +749,26 @@ mod tests {
             replies: Mutex::default(),
             adopt_fails,
         })
+    }
+
+    #[test]
+    fn a_scheduled_session_is_put_away_unless_a_descendant_needs_attention() {
+        let parent = external_row("ses_parent", SessionState::Scheduled, None);
+        let child = external_row("ses_child", SessionState::Scheduled, None);
+        let mut grandchild = external_row("ses_grand", SessionState::Completed, None);
+        let links = HashMap::from([
+            ("ses_child".to_owned(), "ses_parent".to_owned()),
+            ("ses_grand".to_owned(), "ses_child".to_owned()),
+        ]);
+        let mut rows = vec![parent.clone(), child.clone(), grandchild.clone()];
+        assert!(scheduled_only(&parent, &rows, &links));
+        assert!(!scheduled_only(&grandchild, &rows, &links));
+        for state in [SessionState::Working, SessionState::NeedsInput] {
+            grandchild.state = state;
+            rows[2] = grandchild.clone();
+            assert!(!scheduled_only(&parent, &rows, &links), "{state:?}");
+            assert!(!scheduled_only(&child, &rows, &links), "{state:?}");
+        }
     }
 
     #[test]

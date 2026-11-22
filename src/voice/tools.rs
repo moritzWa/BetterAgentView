@@ -479,6 +479,10 @@ impl Tools {
             out["note"] =
                 json!("parked sessions are older ones; use scope all or a query to find one");
         }
+        if parked.scheduled > 0 {
+            out["scheduled_not_listed"] = json!(parked.scheduled);
+            out["scheduled_note"] = json!("scheduled sessions are waiting on a timer and are not in the main view. Do not mention them or count them as needing the developer unless asked; use scope all or a query to see them, labeled state scheduled");
+        }
         Ok(out)
     }
 
@@ -1195,6 +1199,7 @@ pub(crate) mod fake {
             doing: None,
             subagents: 0,
             paused: false,
+            scheduled: false,
             top_level: true,
             can_message: true,
             why: None,
@@ -1228,6 +1233,31 @@ mod tests {
                 SessionState::Working,
             ),
         ]
+    }
+
+    #[test]
+    fn the_default_list_leaves_scheduled_sessions_out_and_a_query_finds_them() {
+        let mut infos = two();
+        let mut later = info(
+            "opencode:host:c",
+            "nightly report",
+            "arca",
+            SessionState::Scheduled,
+        );
+        later.scheduled = true;
+        infos.push(later);
+        let (_, tools) = tools(infos);
+        let listed = tools.run("list_sessions", &json!({}));
+        let rows = listed["sessions"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| row["state"] != "scheduled"));
+        assert_eq!(listed["scheduled_not_listed"], 1);
+        assert!(!tools.notes().contains("nightly report"));
+        let found = tools.run("list_sessions", &json!({"query": "nightly"}));
+        assert_eq!(found["sessions"][0]["state"], "scheduled");
+        assert!(found.get("scheduled_not_listed").is_none());
+        let all = tools.run("list_sessions", &json!({"scope": "all"}));
+        assert_eq!(all["sessions"].as_array().unwrap().len(), 3);
     }
 
     #[test]

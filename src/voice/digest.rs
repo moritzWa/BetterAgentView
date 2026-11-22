@@ -33,6 +33,9 @@ pub struct Info {
     pub doing: Option<String>,
     pub subagents: usize,
     pub paused: bool,
+    /// Put away in the dashboard's Scheduled section: waiting on a timer, with
+    /// no child that needs the person or is running.
+    pub scheduled: bool,
     /// Not a session another session started.
     pub top_level: bool,
     pub can_message: bool,
@@ -82,15 +85,22 @@ impl Info {
 pub struct Parked {
     pub count: usize,
     pub needing_you: usize,
+    /// Sessions in the dashboard's Scheduled section, left out of the main list.
+    pub scheduled: usize,
 }
 
 /// The sessions the person is working in: the most recent by their own last
 /// message, plus busy or waiting ones they touched in the last day. Paused
-/// sessions and ones another session started are left out.
+/// sessions, scheduled ones (the dashboard's Scheduled section) and ones
+/// another session started are left out.
 pub fn recent(infos: &[Info], now_ms: u64) -> (Vec<&Info>, Parked) {
+    let scheduled = infos
+        .iter()
+        .filter(|info| info.top_level && !info.paused && info.scheduled)
+        .count();
     let mut candidates: Vec<&Info> = infos
         .iter()
-        .filter(|info| info.top_level && !info.paused)
+        .filter(|info| info.top_level && !info.paused && !info.scheduled)
         .collect();
     candidates.sort_by(|a, b| b.human_ms().cmp(&a.human_ms()).then(a.id.cmp(&b.id)));
     let mut shown: Vec<&Info> = candidates.iter().take(RECENT_BASE).copied().collect();
@@ -110,6 +120,7 @@ pub fn recent(infos: &[Info], now_ms: u64) -> (Vec<&Info>, Parked) {
     let parked = Parked {
         count: parked.len(),
         needing_you: parked.iter().filter(|info| info.needs_you()).count(),
+        scheduled,
     };
     (shown, parked)
 }
@@ -310,10 +321,11 @@ fn describe(info: &Info, before: Option<SessionState>) -> String {
 /// The status notes the talker starts with.
 pub fn notes(infos: &[Info], now_ms: u64) -> String {
     let (shown, parked) = recent(infos, now_ms);
-    if shown.is_empty() {
-        return "There are no recent sessions.".into();
-    }
-    let mut lines = vec![format!("{} recent sessions:", shown.len())];
+    let mut lines = if shown.is_empty() {
+        vec!["There are no recent sessions.".to_owned()]
+    } else {
+        vec![format!("{} recent sessions:", shown.len())]
+    };
     for info in shown {
         lines.push(format!(
             "- \"{}\" ({}): {}{}",
@@ -335,6 +347,12 @@ pub fn notes(infos: &[Info], now_ms: u64) -> String {
             } else {
                 String::new()
             }
+        ));
+    }
+    if parked.scheduled > 0 {
+        lines.push(format!(
+            "Scheduled to resume later, not in the main view: {}. Leave them out of any overview or \"what needs me\" answer; name them only when asked about scheduled sessions.",
+            parked.scheduled
         ));
     }
     lines.join("\n")
@@ -359,6 +377,7 @@ mod tests {
             doing: None,
             subagents: 0,
             paused: false,
+            scheduled: false,
             top_level: true,
             can_message: true,
             why: None,
@@ -379,7 +398,8 @@ mod tests {
             parked,
             Parked {
                 count: 4,
-                needing_you: 0
+                needing_you: 0,
+                scheduled: 0
             }
         );
     }
@@ -408,8 +428,57 @@ mod tests {
             parked,
             Parked {
                 count: 1,
-                needing_you: 1
+                needing_you: 1,
+                scheduled: 0
             }
+        );
+    }
+
+    #[test]
+    fn scheduled_sessions_leave_the_main_list_but_are_counted() {
+        let mut later = info("later", SessionState::Scheduled, 0);
+        later.scheduled = true;
+        let mut child = info("child", SessionState::Scheduled, 0);
+        child.scheduled = true;
+        child.top_level = false;
+        let infos = vec![
+            later.clone(),
+            child,
+            info("keep", SessionState::NeedsInput, 1),
+        ];
+        let (shown, parked) = recent(&infos, NOW);
+        assert_eq!(
+            shown
+                .iter()
+                .map(|info| info.id.as_str())
+                .collect::<Vec<_>>(),
+            ["keep"]
+        );
+        assert_eq!(parked.scheduled, 1);
+        assert_eq!(parked.count, 0);
+        let notes = notes(&infos, NOW);
+        assert!(!notes.contains("title later"), "{notes}");
+        assert!(
+            notes.contains("Scheduled to resume later, not in the main view: 1"),
+            "{notes}"
+        );
+        // A search still finds it, labeled by its state.
+        let found = search(&infos, Some("later"));
+        assert_eq!(found[0].state_word(), "scheduled");
+    }
+
+    #[test]
+    fn only_scheduled_sessions_still_give_a_status_note() {
+        let mut later = info("later", SessionState::Scheduled, 0);
+        later.scheduled = true;
+        let notes = notes(&[later], NOW);
+        assert!(
+            notes.starts_with("There are no recent sessions."),
+            "{notes}"
+        );
+        assert!(
+            notes.contains("Scheduled to resume later, not in the main view: 1"),
+            "{notes}"
         );
     }
 
