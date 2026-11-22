@@ -5,6 +5,7 @@ use std::io::{Read, Write};
 use std::os::fd::FromRawFd;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -13,8 +14,18 @@ use agentview::native_session::{self, NativeSessionExit};
 const CHILD_ENV: &str = "AGENTVIEW_NATIVE_BACKGROUND_CHILD";
 const SCREEN_GATED_CHILD_ENV: &str = "AGENTVIEW_SCREEN_GATED_INPUT_CHILD";
 
+// Like real_tty, keep terminal/process-group scenarios out of each other's
+// fork/exec windows. Each scenario still exercises its real native subprocess.
+fn serialize_native_background_test() -> MutexGuard<'static, ()> {
+    static SERIAL: Mutex<()> = Mutex::new(());
+    SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[test]
 fn work_view_toggle_parks_and_resumes_the_same_native_screen() {
+    let _serial = serialize_native_background_test();
     const ENV: &str = "AGENTVIEW_WORK_VIEW_CHILD";
     if std::env::var_os(ENV).is_some() {
         let store = agentview::work_view::WorkViewStore::load_default().unwrap();
@@ -133,6 +144,7 @@ fn work_view_toggle_parks_and_resumes_the_same_native_screen() {
 
 #[test]
 fn notification_click_detaches_without_losing_the_target() {
+    let _serial = serialize_native_background_test();
     const ENV: &str = "AGENTVIEW_FOCUS_CHILD";
     if std::env::var_os(ENV).is_some() {
         let _registration = agentview::session_focus::register().unwrap();
@@ -217,6 +229,7 @@ fn notification_click_detaches_without_losing_the_target() {
 
 #[test]
 fn boundary_arrows_and_shift_shortcuts_background_and_reattach_the_native_screen() {
+    let _serial = serialize_native_background_test();
     if std::env::var_os(CHILD_ENV).is_some() {
         run_child_scenario();
         return;
@@ -355,6 +368,7 @@ fn boundary_arrows_and_shift_shortcuts_background_and_reattach_the_native_screen
 
 #[test]
 fn queued_task_reaches_only_the_authenticated_native_editor_in_a_real_pty() {
+    let _serial = serialize_native_background_test();
     if std::env::var_os(SCREEN_GATED_CHILD_ENV).is_some() {
         let mut provider = Command::new("bash");
         provider.args([
@@ -501,6 +515,16 @@ fn outer_pty() -> (File, File) {
         )
     };
     assert_eq!(result, 0);
+    // A child only receives its duplicated stdin/stdout/stderr slave. Leaking
+    // another scenario's PTY into exec can keep terminal lifetimes intertwined.
+    for fd in [master, slave] {
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        assert!(flags >= 0);
+        assert_eq!(
+            unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) },
+            0
+        );
+    }
     unsafe { (File::from_raw_fd(master), File::from_raw_fd(slave)) }
 }
 
