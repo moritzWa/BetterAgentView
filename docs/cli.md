@@ -279,8 +279,9 @@ Provider idle signals alone do not prove completion:
 - **Needs input:** the agent is waiting for a human answer, approval, review or
   action before it can proceed. Usage instructions after delivery are not a blocker.
 
-With an OpenRouter key, the dashboard classifies newly idle sessions from the
-last 24 hours. The default is `typesafe/jev-1.14` through OpenRouter's Decisions
+With an OpenRouter key, dashboard refreshes classify eligible discovered idle
+sessions, including older sessions without a current verdict. Hidden sessions
+are excluded before classification. The default is `typesafe/jev-1.14` through OpenRouter's Decisions
 API. The app-specific `~/.config/agentview/openrouter-api-key` takes precedence
 over `OPENROUTER_API_KEY`; XDG config/state locations are respected.
 `AGENTVIEW_TURN_CLASSIFIER_MODEL` selects another **Decisions** model, not a chat
@@ -289,17 +290,27 @@ model. `AGENTVIEW_TURN_CLASSIFIER=off` disables the model.
 One request asks two independent questions over the same evidence: whether the
 agent is blocked on the user, and what scope of work is finished. A human blocker
 takes precedence over either completion label.
+If an unheld session is judged unclear, one bounded second check reads only the
+latest exchange, without older project context. It can confirm Task done, never
+promote Project done. Failed or still-unclear reviews remain unconfirmed. This
+keeps an older unfinished project from obscuring a completed summary or answer.
 
 For OpenCode and Claude transcript history, evidence contains the initial user request and the last two
 user/final-assistant exchanges, capped at about 4,000 characters in total.
+The latest exchange is an explicit top-level ordered list: user message, then
+assistant reply. The original request and previous exchange are background context,
+not extra requirements for the current task. Ordered lists also prevent JSON key
+sorting from reversing the conversation. The replay uses the same compact, sorted-key
+serialization as production.
 Reasoning, commentary, tools, logs, synthetic messages and system instructions
 are excluded. Other adapters can supply a cached assistant reply; without safe
 message evidence, their native state stays unchanged. No raw inspection transcript
 is sent as a fallback.
 
-Verdicts are saved per exchange and reused across restarts, including when a
-session becomes older than 24 hours. New user activity, replies, model changes
-and background-work changes invalidate the cache. Permission requests, native
+Verdicts are saved per exchange and reused across restarts regardless of age.
+New user activity, replies, model changes, classifier prompt/schema changes
+and background-work changes invalidate the cache. Four requests run at most
+concurrently. Permission requests, native
 questions and failed turns remain authoritative. Running work stays Working;
 deferred follow-ups stay Scheduled. A reminder or active descendant prevents
 Project done. Classifications never hide, archive or close a session.
@@ -314,7 +325,17 @@ mixes constructed edge cases with adapted replies. On November 22, 2026, that
 fixture plus eight actual bounded AgentView exchanges gave Jev 26/26 matching
 labels, Perplexity Decider v1.3 free 24/26, and Luna Decisions 25/26. Jev's median
 was 157 ms and average cost was about $0.000034 per request (813 input tokens).
-These small, developer-labeled replays are not production accuracy estimates.
+After the backfill exposed bad Idle labels, the latest exchange was separated
+from older context and the criteria clarified task delivery versus project closure.
+The expanded 27-case checked-in fixture matched 81/81 judgments over three replays.
+A separate 21-session real-history replay using the production ordering matched
+57/63 judgments over three runs, with no false Project done labels. The six
+disagreements concerned two mixed-progress reports: a delivered gate with wider
+CI pending and finished benchmark judging with deferred generation. Neither was
+called Project done. A live Rust-to-Decisions
+probe also verified a formerly misclassified deployed result, with its evidence
+matching the replay exactly. This remains a model judgment,
+not a correctness guarantee. These small, developer-labeled replays are not production accuracy estimates.
 No model is treated as proof that a deployment or task succeeded.
 
 ### Timing log

@@ -11,23 +11,23 @@ pub const DEFAULT_MODEL: &str = "typesafe/jev-1.14";
 pub const ENDPOINT: &str = "https://openrouter.ai/api/alpha/decisions";
 
 pub fn evidence(scope: &str, turns: &[SessionTurn]) -> String {
-    let recent: Vec<Value> = turns
-        .iter()
-        .rev()
-        .take(2)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .enumerate()
-        .map(|(i, turn)| {
-            let latest = i + 1 == turns.len().min(2);
-            json!({
-                "user": excerpt(&turn.you, if latest { 600 } else { 300 }),
-                "assistant_final": excerpt(&turn.it, if latest { 1800 } else { 500 }),
-            })
-        })
-        .collect();
-    json!({"initial_request": excerpt(scope, 600), "exchanges": recent}).to_string()
+    let exchange = |turn: &SessionTurn, latest: bool| {
+        json!([
+            {"role": "user", "text": excerpt(&turn.you, if latest { 600 } else { 300 })},
+            {"role": "assistant", "text": excerpt(&turn.it, if latest { 1800 } else { 500 })},
+        ])
+    };
+    let latest = turns.last().map(|turn| exchange(turn, true));
+    let previous = turns
+        .len()
+        .checked_sub(2)
+        .and_then(|i| turns.get(i))
+        .map(|turn| exchange(turn, false));
+    json!({
+        "context": {"initial_request": excerpt(scope, 600), "previous_exchange": previous},
+        "latest_exchange": latest,
+    })
+    .to_string()
 }
 
 fn excerpt(text: &str, budget: usize) -> String {
@@ -55,6 +55,27 @@ pub fn request(model: &str, messages: &str, held: bool) -> Result<Value> {
         "state": {"messages": messages, "automatic_followup_pending": held},
         "questions": serde_json::from_str::<Value>(include_str!("completion-questions.json"))?
     }))
+}
+
+/// Recheck only task delivery when older project context made it uncertain.
+/// This can establish a delivered task, never full workstream closure.
+pub fn latest_only(messages: &str) -> Result<String> {
+    let evidence: Value = serde_json::from_str(messages)?;
+    Ok(json!({"latest_exchange": evidence.get("latest_exchange").context("missing latest exchange")?}).to_string())
+}
+
+pub fn review_unclear(
+    primary: Verdict,
+    held: bool,
+    review: impl FnOnce() -> Result<Verdict>,
+) -> Verdict {
+    if primary != Verdict::Unclear || held {
+        return primary;
+    }
+    match review() {
+        Ok(Verdict::Done | Verdict::ProjectDone) => Verdict::Done,
+        _ => Verdict::Unclear,
+    }
 }
 
 pub fn parse(response: &[u8]) -> Result<Verdict> {
@@ -99,12 +120,80 @@ mod tests {
         assert!(evidence.len() < 4100);
         assert!(!evidence.contains("private progress"));
         assert_eq!(
-            serde_json::from_str::<Value>(&evidence).unwrap()["exchanges"]
-                .as_array()
-                .unwrap()
-                .len(),
-            2
+            serde_json::from_str::<Value>(&evidence).unwrap()["latest_exchange"][1]["text"],
+            excerpt(&"y".repeat(10_000), 1800)
         );
+    }
+
+    #[test]
+    fn latest_exchange_is_separate_from_superseded_requests_and_previous_replies() {
+        let turns = [
+            SessionTurn {
+                you: "discarded".into(),
+                it: "discarded answer".into(),
+                ..Default::default()
+            },
+            SessionTurn {
+                you: "propose only".into(),
+                it: "no implementation yet".into(),
+                ..Default::default()
+            },
+            SessionTurn {
+                you: "implement now".into(),
+                it: "deployed and verified".into(),
+                ..Default::default()
+            },
+        ];
+        let value: Value =
+            serde_json::from_str(&evidence("original planning scope", &turns)).unwrap();
+        assert_eq!(value["latest_exchange"][0]["role"], "user");
+        assert_eq!(value["latest_exchange"][0]["text"], "implement now");
+        assert_eq!(value["latest_exchange"][1]["text"], "deployed and verified");
+        assert_eq!(
+            value["context"]["previous_exchange"][0]["text"],
+            "propose only"
+        );
+        assert!(!value.to_string().contains("discarded"));
+        let wire = value.to_string();
+        assert!(wire.find("implement now").unwrap() < wire.find("deployed and verified").unwrap());
+    }
+
+    #[test]
+    fn uncertain_delivery_gets_one_focused_review_but_never_project_promotion() {
+        for reviewed in [Verdict::Done, Verdict::ProjectDone] {
+            assert_eq!(
+                review_unclear(Verdict::Unclear, false, || Ok(reviewed)),
+                Verdict::Done
+            );
+        }
+        assert_eq!(
+            review_unclear(Verdict::Unclear, false, || bail!("network failure")),
+            Verdict::Unclear
+        );
+        for primary in [Verdict::NeedsInput, Verdict::Done, Verdict::ProjectDone] {
+            assert_eq!(
+                review_unclear(primary, false, || panic!("must not spend a second request")),
+                primary
+            );
+        }
+        assert_eq!(
+            review_unclear(Verdict::Unclear, true, || panic!(
+                "live hold remains authoritative"
+            )),
+            Verdict::Unclear
+        );
+        let full = evidence(
+            "old scope",
+            &[SessionTurn {
+                you: "tldr".into(),
+                it: "Delivered summary".into(),
+                ..Default::default()
+            }],
+        );
+        let focused = latest_only(&full).unwrap();
+        assert!(!focused.contains("old scope"));
+        assert!(focused.contains("Delivered summary"));
+        assert!(!focused.contains("context"));
     }
 
     #[test]
