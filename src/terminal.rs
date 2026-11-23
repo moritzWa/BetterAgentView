@@ -413,9 +413,7 @@ pub fn run_dashboard(
             models_tx.clone(),
         );
     }
-    if let Some(view_mode) = last_view.view_mode() {
-        app.set_view_mode(view_mode);
-    }
+    app.set_view_mode(last_view.startup_view());
     if control.provider_io_enabled() {
         if let Ok(opens) = crate::search_opens::SearchOpens::load_default() {
             app.set_search_opens(opens);

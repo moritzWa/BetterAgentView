@@ -3,7 +3,7 @@
 //!
 //! Every ctrl+s toggle is recorded, so the next start shows the view the
 //! dashboard was last left in. A missing or unreadable record falls back to
-//! the status view. The row the cursor rests on is recorded the same way, so
+//! the directory view. The row the cursor rests on is recorded the same way, so
 //! a restart returns to it instead of the top of the list.
 
 use std::fs;
@@ -48,6 +48,10 @@ impl LastView {
         self.read().map(|document| document.view)
     }
 
+    pub fn startup_view(&self) -> ViewMode {
+        self.view_mode().unwrap_or(ViewMode::Directory)
+    }
+
     pub fn session_id(&self) -> Option<String> {
         self.read()?.session
     }
@@ -64,7 +68,7 @@ impl LastView {
         if self.session_id().as_deref() == Some(session) {
             return Ok(());
         }
-        let view = self.view_mode().unwrap_or(ViewMode::Status);
+        let view = self.startup_view();
         self.write(view, Some(session.to_owned()))
     }
 
@@ -99,6 +103,10 @@ mod tests {
         let directory = crate::test_support::tempfile::tempdir().unwrap();
         let path = directory.path().join("state").join("last-view.json");
         assert_eq!(LastView::at(path.clone()).view_mode(), None);
+        assert_eq!(
+            LastView::at(path.clone()).startup_view(),
+            ViewMode::Directory
+        );
         LastView::at(path.clone())
             .save(ViewMode::Directory)
             .unwrap();
@@ -107,7 +115,11 @@ mod tests {
             Some(ViewMode::Directory)
         );
         LastView::at(path.clone()).save(ViewMode::Status).unwrap();
-        assert_eq!(LastView::at(path).view_mode(), Some(ViewMode::Status));
+        assert_eq!(
+            LastView::at(path.clone()).view_mode(),
+            Some(ViewMode::Status)
+        );
+        assert_eq!(LastView::at(path).startup_view(), ViewMode::Status);
     }
 
     #[test]
@@ -116,6 +128,10 @@ mod tests {
         let path = directory.path().join("last-view.json");
         assert_eq!(LastView::at(path.clone()).session_id(), None);
         LastView::at(path.clone()).save_session("a").unwrap();
+        assert_eq!(
+            LastView::at(path.clone()).view_mode(),
+            Some(ViewMode::Directory)
+        );
         LastView::at(path.clone())
             .save(ViewMode::Directory)
             .unwrap();
@@ -132,6 +148,7 @@ mod tests {
         let directory = crate::test_support::tempfile::tempdir().unwrap();
         let path = directory.path().join("last-view.json");
         fs::write(&path, "not json").unwrap();
-        assert_eq!(LastView::at(path).view_mode(), None);
+        assert_eq!(LastView::at(path.clone()).view_mode(), None);
+        assert_eq!(LastView::at(path).startup_view(), ViewMode::Directory);
     }
 }
