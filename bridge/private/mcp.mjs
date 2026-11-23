@@ -4,6 +4,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { z } from 'zod';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { toolInputs, ObservedRuntimeSnapshot } from '../contracts/contract.mjs';
+import { toolOutputs } from '../contracts/responses.mjs';
 import { SyncError } from '../sync/projection.mjs';
 import { SyncStore } from '../sync/store.mjs';
 import { ReadContext, readContext } from './context.mjs';
@@ -31,10 +32,13 @@ export async function privateMcp(request, { db, store, principal, outbox, gate, 
     const register = (name, description, fn, annotations = safeRead, structuredErrors = false) => server.registerTool(name, { description, inputSchema: toolInputs[name].shape, annotations }, async (args) => {
         try {
             const value = await fn(toolInputs[name].parse(args));
+            toolOutputs[name].parse(value);
             await requireGrant(db, principal);
             return { content: [{ type: 'text', text: JSON.stringify(value) }] };
         }
         catch (e) {
+            if (e instanceof z.ZodError)
+                console.error('bridge_mcp_response_contract_failed');
             const code = e instanceof SyncError ? e.code : 'operation_failed';
             return { isError: true, content: [{ type: 'text', text: structuredErrors ? JSON.stringify(errorView(code)) : code }] };
         }

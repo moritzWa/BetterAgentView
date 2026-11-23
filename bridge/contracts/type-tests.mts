@@ -16,3 +16,9 @@ const wrongTool:ToolInput<'session_health'>={query:'some name'};
 // @ts-expect-error handlers cannot read invented tool arguments
 const wrongArgument=({} as ToolInput<'list_sessions'>).invented;
 void [valid,wrongStatus,extraField,completion,missingField,unapproved,wrongTool,wrongArgument];
+import type {ToolOutput} from './responses.mjs';
+// @ts-expect-error output must contain the actual message identity and pagination
+const badOutput:ToolOutput<'read_message'>={text:'not a valid response'};
+// @ts-expect-error an invalid health word is not a valid tool response
+const wrongHealth:ToolOutput<'session_health'>={found:true,session_id:'fixture',status:'working',health:'invented',health_live:true};
+void [badOutput,wrongHealth];

@@ -110,13 +110,14 @@ pub fn publish(
     let value = payload(session_id, path, title)?;
     let config = super::load(dir)?;
     let credential = super::token(&config)?;
-    super::http::request(
+    let response = super::http::request::<super::contract::ArtifactResponse>(
         &config.endpoint,
         super::contract::ROUTE_ARTIFACT,
         Some(&credential),
         Some(&value),
         60,
-    )
+    )?;
+    Ok(serde_json::to_value(response)?)
 }
 
 #[cfg(test)]

@@ -4,6 +4,8 @@ import { z } from 'zod';
 import {CallToolResultSchema} from '@modelcontextprotocol/sdk/types.js';
 import type {CallToolResult} from '@modelcontextprotocol/sdk/types.js';
 import {toolInputs,ObservedRuntimeSnapshot} from '../contracts/contract.mjs';
+import {toolOutputs} from '../contracts/responses.mjs';
+import type {OutputName,ToolOutput} from '../contracts/responses.mjs';
 import type {ToolName,ToolInput,RuntimeStatus} from '../contracts/contract.mjs';
 import { SyncError } from '../sync/projection.mjs';
 import { SyncStore } from '../sync/store.mjs';
@@ -30,12 +32,14 @@ export const SERVER_INSTRUCTIONS='Voice assistant for the owner\'s OpenCode sess
 export async function privateMcp(request: Request,{db,store,principal,outbox,gate,starts}: Record<string,any>) {
   const server=new McpServer({name:'Agent View paired sessions',version:'0.7.0'},{instructions:SERVER_INSTRUCTIONS});
   const startsApi=starts??new Starts(db,gate);
-  const register=<K extends ToolName>(name:K,description:string,fn:(args:ToolInput<K>)=>Promise<unknown>,annotations=safeRead,structuredErrors=false)=>server.registerTool(name,{description,inputSchema:toolInputs[name].shape,annotations},async (args:unknown):Promise<CallToolResult>=>{
+  const register=<K extends ToolName & OutputName>(name:K,description:string,fn:(args:ToolInput<K>)=>Promise<ToolOutput<K>>,annotations=safeRead,structuredErrors=false)=>server.registerTool(name,{description,inputSchema:toolInputs[name].shape,annotations},async (args:unknown):Promise<CallToolResult>=>{
     try {
       const value=await fn(toolInputs[name].parse(args) as ToolInput<K>);
+      toolOutputs[name].parse(value);
       await requireGrant(db,principal);
       return {content:[{type:'text',text:JSON.stringify(value)}]};
     } catch(e:any) {
+      if(e instanceof z.ZodError)console.error('bridge_mcp_response_contract_failed');
       const code=e instanceof SyncError?e.code:'operation_failed';
       return {isError:true,content:[{type:'text',text:structuredErrors?JSON.stringify(errorView(code)):code}]};
     }

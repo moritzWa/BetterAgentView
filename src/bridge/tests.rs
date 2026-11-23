@@ -42,6 +42,61 @@ fn generated_wire_types_roundtrip_the_same_fixtures_as_the_worker() {
 }
 
 #[test]
+fn typed_responses_accept_the_previous_server_and_reject_missing_queue_envelopes() {
+    let fixtures: Value = serde_json::from_str(include_str!(
+        "../../bridge/test/fixtures/previous-responses.json"
+    ))
+    .unwrap();
+    macro_rules! check {
+        ($name:ident) => {{
+            let mut value = fixtures[stringify!($name)].clone();
+            value["future_metadata"] = json!(42);
+            let _: contract::$name = serde_json::from_value(value).unwrap();
+        }};
+    }
+    check!(OkResponse);
+    check!(PairStartResponse);
+    check!(PairTokenResponse);
+    check!(BatchResponse);
+    check!(CursorsResponse);
+    check!(VerifyResponse);
+    check!(PollResponse);
+    check!(LeaseResponse);
+    check!(MessageLease);
+    check!(StartLeaseResponse);
+    check!(ReceiptResponse);
+    check!(StartReceiptResponse);
+    check!(ArtifactResponse);
+    assert!(serde_json::from_value::<contract::LeaseResponse>(json!({})).is_err());
+    assert!(serde_json::from_value::<contract::StartLeaseResponse>(json!({})).is_err());
+    assert!(serde_json::from_value::<contract::PollResponse>(
+        json!({"pending":"false","generation":0,"active_until":0})
+    )
+    .is_err());
+}
+
+#[test]
+fn runtime_alert_is_deduplicated_across_restarts_and_clears_on_recovery() {
+    let dir = tempdir().unwrap();
+    let alert = contract::RuntimeAlert {
+        incident: 123,
+        stale_for_ms: 120_000,
+    };
+    assert!(runtime_alert_changed(dir.path(), Some(&alert)).unwrap());
+    assert!(!runtime_alert_changed(dir.path(), Some(&alert)).unwrap());
+    assert!(!runtime_alert_changed(dir.path(), None).unwrap());
+    assert!(!runtime_alert_changed(dir.path(), None).unwrap());
+    assert!(runtime_alert_changed(
+        dir.path(),
+        Some(&contract::RuntimeAlert {
+            incident: 456,
+            ..alert
+        })
+    )
+    .unwrap());
+}
+
+#[test]
 fn an_unknown_source_event_reconciles_visible_text_instead_of_stalling_sync() {
     let mut db = fixture();
     db.execute_batch(

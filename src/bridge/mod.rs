@@ -137,7 +137,7 @@ pub fn pair(
     drop(source);
     let device_id = random_id()?;
     let epoch = random_id()?;
-    let started = http::request(
+    let started = http::request::<contract::PairStartResponse>(
         endpoint,
         contract::ROUTE_PAIR_START,
         None,
@@ -148,18 +148,14 @@ pub fn pair(
         })?),
         30,
     )?;
-    let code = started["device_code"]
-        .as_str()
-        .context("missing pairing code")?;
+    let code = &started.device_code;
     println!(
         "Approve this device in your browser:\n{}",
-        started["verification_uri"]
-            .as_str()
-            .context("missing approval URL")?
+        started.verification_uri
     );
     let deadline = std::time::Instant::now() + Duration::from_secs(600);
     loop {
-        match http::request(
+        match http::request::<contract::PairTokenResponse>(
             endpoint,
             contract::ROUTE_PAIR_TOKEN,
             None,
@@ -169,9 +165,7 @@ pub fn pair(
             30,
         ) {
             Ok(response) => {
-                let credential = response["access_token"]
-                    .as_str()
-                    .context("missing connector credential")?;
+                let credential = &response.access_token;
                 let service = format!("agentview-bridge-{device_id}");
                 save_token(&service, credential)?;
                 let config = Config {
@@ -311,14 +305,14 @@ fn flush_isolating(journal: &mut Journal, config: &Config, token: &str) -> Resul
     let mut faults: Faults = Vec::new();
     while let Some(body) = journal.pending()? {
         let session = body["session_id"].as_str().unwrap_or_default().to_owned();
-        let sent = http::request(
+        let sent = http::request::<contract::BatchResponse>(
             &config.endpoint,
             contract::ROUTE_BATCHES,
             Some(token),
             Some(&body),
             60,
         )
-        .and_then(|receipt| journal.ack(&receipt));
+        .and_then(|receipt| journal.ack(&serde_json::to_value(receipt)?));
         match sent {
             Ok(()) => count += 1,
             Err(error) => match classify(&error) {
@@ -504,7 +498,7 @@ pub fn sync_once(dir: &Path) -> Result<usize> {
                         cursor: *cursor,
                     })
                     .collect();
-                match http::request(
+                match http::request::<contract::CursorsResponse>(
                     &config.endpoint,
                     contract::ROUTE_CURSORS,
                     Some(&credential),
@@ -512,9 +506,8 @@ pub fn sync_once(dir: &Path) -> Result<usize> {
                     60,
                 ) {
                     Ok(report) => {
-                        for id in report["mismatch"].as_array().cloned().unwrap_or_default() {
-                            let Some(id) = id.as_str() else { continue };
-                            if !ids.contains(id) || failing.iter().any(|f| f.session_id == id) {
+                        for id in &report.mismatch {
+                            if !ids.contains(id) || failing.iter().any(|f| f.session_id == *id) {
                                 continue;
                             }
                             match replace_session(&mut db, &mut journal, &config, &credential, id) {
@@ -557,7 +550,7 @@ pub fn sync_once(dir: &Path) -> Result<usize> {
     };
     let _ = crate::fs_util::write_private_json(&dir.join("sync-health.json"), &health);
     // A scan with stuck sessions must not stamp history as fresh.
-    http::request(
+    http::request::<contract::OkResponse>(
         &config.endpoint,
         contract::ROUTE_CHECKED,
         Some(&credential),
@@ -605,7 +598,7 @@ fn publish_runtime(dir: &Path, config: &Config, credential: &str) -> Result<()> 
             runtime::snapshot(config)?
         }
     };
-    http::request(
+    http::request::<contract::OkResponse>(
         &config.endpoint,
         contract::ROUTE_RUNTIME,
         Some(credential),
@@ -664,17 +657,21 @@ pub fn deliver_once(dir: &Path) -> Result<bool> {
     let message = if let Some(body) = pending {
         serde_json::from_str::<Value>(&body)?
     } else {
-        let lease = http::request(
+        let lease = http::request::<contract::LeaseResponse>(
             &config.endpoint,
             contract::ROUTE_LEASE,
             Some(&credential),
             Some(&serde_json::to_value(contract::EmptyRequest {})?),
             30,
         )?;
-        if lease["message"].is_null() || lease["message"].get("needs_confirmation").is_some() {
+        let Some(lease) = lease.message else {
+            return Ok(false);
+        };
+        if lease.needs_confirmation.is_some() {
             return Ok(false);
         }
-        let message = lease["message"].clone();
+        let typed: contract::MessageLease = serde_json::from_value(serde_json::to_value(lease)?)?;
+        let message = serde_json::to_value(typed)?;
         journal.db.execute(
             "INSERT INTO delivery(operation_id,body) VALUES (?1,?2)",
             rusqlite::params![
@@ -739,7 +736,7 @@ pub fn deliver_once(dir: &Path) -> Result<bool> {
             status = "failed";
         }
     }
-    http::request(
+    http::request::<contract::ReceiptResponse>(
         &config.endpoint,
         contract::ROUTE_ACK,
         Some(&credential),
@@ -764,7 +761,7 @@ fn ack_start(
     session_id: Option<&str>,
     reason: &str,
 ) -> Result<()> {
-    http::request(
+    http::request::<contract::StartReceiptResponse>(
         endpoint,
         contract::ROUTE_START_ACK,
         Some(credential),
@@ -830,17 +827,17 @@ pub fn start_once(dir: &Path) -> Result<bool> {
         start::finish(&journal.db, &operation)?;
         return Ok(true);
     }
-    let lease = http::request(
+    let lease = http::request::<contract::StartLeaseResponse>(
         &config.endpoint,
         contract::ROUTE_START_LEASE,
         Some(&credential),
         Some(&serde_json::to_value(contract::EmptyRequest {})?),
         30,
     )?;
-    if lease["start"].is_null() {
+    let Some(start) = lease.start else {
         return Ok(false);
-    }
-    let start = lease["start"].clone();
+    };
+    let start = serde_json::to_value(start)?;
     let operation = start["operation_id"].as_str().context("invalid start")?;
     let directory = start["directory"]
         .as_str()
@@ -1005,23 +1002,23 @@ pub fn run(dir: &Path) -> Result<()> {
             let result = (|| -> Result<()> {
                 let config = load(&queue_dir)?;
                 let credential = token(&config)?;
-                let poll = http::request(
+                let poll = http::request::<contract::PollResponse>(
                     &config.endpoint,
                     contract::ROUTE_POLL,
                     Some(&credential),
                     Some(&serde_json::to_value(contract::EmptyRequest {})?),
                     35,
                 )?;
+                if runtime_alert_changed(&queue_dir, poll.runtime_alert.as_ref())? {
+                    notify_runtime_stale();
+                }
                 // A recovered connection must catch history up even when the phone
                 // is idle. A plain wake alone does not bypass the 15-minute timer.
                 if retrying {
                     request_sync.store(true, Ordering::Relaxed);
                     retrying = false;
                 }
-                activity.store(
-                    poll["active_until"].as_u64().unwrap_or(0),
-                    Ordering::Relaxed,
-                );
+                activity.store(poll.active_until.max(0) as u64, Ordering::Relaxed);
                 let _ = wake.send(());
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)?
@@ -1029,13 +1026,13 @@ pub fn run(dir: &Path) -> Result<()> {
                 // Delivery and the session-state publish are independent. A failed
                 // delivery must not leave the phone reading a stale state.
                 let delivery = (|| -> Result<()> {
-                    if poll["pending"] == true {
+                    if poll.pending {
                         while deliver_unless_busy(&queue_dir)? {}
                         while start_unless_busy(&queue_dir)? {}
                     }
                     Ok(())
                 })();
-                if poll["active_until"].as_u64().unwrap_or(0) > now {
+                if poll.active_until.max(0) as u64 > now {
                     if let Err(error) = publish_runtime(&queue_dir, &config, &credential) {
                         log_unavailable("runtime", &error);
                     }
@@ -1132,6 +1129,35 @@ const STALE_AFTER_SECS: u64 = 30 * 60;
 const CURSOR_BATCH_SIZE: usize = contract::CURSOR_BATCH;
 const STUCK_ALERT_AFTER: Duration = Duration::from_secs(30 * 60);
 const STUCK_ALERT_EVERY: Duration = Duration::from_secs(6 * 3600);
+
+// Durable deduplication: daemon restarts do not re-notify the same incident.
+fn runtime_alert_changed(dir: &Path, alert: Option<&contract::RuntimeAlert>) -> Result<bool> {
+    let path = dir.join("runtime-alert.json");
+    let old: Value = std::fs::read(&path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or(Value::Null);
+    let incident = alert.map(|a| a.incident);
+    if old.get("incident").and_then(Value::as_i64) == incident {
+        return Ok(false);
+    }
+    crate::fs_util::write_private_json(&path, &json!({"incident":incident}))?;
+    if let Some(alert) = alert {
+        eprintln!(
+            "bridge runtime publication stale for {} seconds; notifying",
+            alert.stale_for_ms / 1000
+        );
+        Ok(true)
+    } else {
+        eprintln!("bridge runtime publication recovered");
+        Ok(false)
+    }
+}
+
+fn notify_runtime_stale() {
+    #[cfg(target_os="macos")]
+    let _=std::process::Command::new("osascript").args(["-e","display notification \"Your Mac is online, but phone session status has stopped updating. Run: agentview bridge status\" with title \"BetterAgentView bridge\""]).status();
+}
 
 fn notify_stuck() {
     eprintln!("bridge sync stuck for 30+ minutes; notifying");
@@ -1335,7 +1361,7 @@ pub fn verify(dir: &Path) -> Result<Value> {
         }
         let text = source::projection_text(&capture.state, &capture.messages);
         let local_hash = format!("{:x}", md5::Md5::digest(text.as_bytes()));
-        let report = match http::request(
+        let report = match http::request::<contract::VerifyResponse>(
             &config.endpoint,
             contract::ROUTE_VERIFY,
             Some(&credential),
@@ -1358,17 +1384,17 @@ pub fn verify(dir: &Path) -> Result<Value> {
         // be refused. A moved watermark with no upload is not.
         let pointer_differs = checkpoint
             .as_ref()
-            .is_some_and(|p| report["cloud_cursor"].as_i64() != Some(p.cursor));
-        if report["match"] == true && !pointer_differs {
+            .is_some_and(|p| report.cloud_cursor != Some(p.cursor));
+        if report.verify_response_match && !pointer_differs {
             matched += 1;
         } else {
             mismatches.push(json!({
                 "session_id": id,
-                "reason": if report["match"] == true { json!("pointer") } else { report["reason"].clone() },
+                "reason": if report.verify_response_match { json!("pointer") } else { json!(report.reason) },
                 "local_checkpoint": checkpoint.as_ref().map(|p| p.cursor),
-                "cloud_cursor": report["cloud_cursor"],
+                "cloud_cursor": report.cloud_cursor,
                 "local_count": capture.messages.len(),
-                "cloud_count": report["cloud_count"],
+                "cloud_count": report.cloud_count,
             }));
         }
         if checked % 200 == 0 {
