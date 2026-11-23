@@ -16,10 +16,28 @@ import soundtrack
 import verify
 import visual
 import waveform
+from film_sessions import PROJECTS, SESSIONS, populate
 from PIL import ImageStat
 
 
 class FilmTests(unittest.TestCase):
+    def test_approved_project_session_mix(self):
+        import collections
+        import json
+
+        self.assertEqual(len(SESSIONS), 20)
+        self.assertEqual(len(PROJECTS), 6)
+        self.assertEqual(len({s[0] for s in SESSIONS}), 20)
+        self.assertEqual(collections.Counter(s[1] for s in SESSIONS), {0: 6, 1: 3, 2: 1, 3: 4, 4: 3, 5: 3})
+        self.assertEqual(sum(s[2] == "needs_input" for s in SESSIONS), 5)
+        with tempfile.TemporaryDirectory() as home:
+            data = json.loads((visual.ROOT / "fixtures/demo-sessions.json").read_text())
+            roots = populate(data, Path(home))
+            self.assertEqual(len({s["id"] for s in data["sessions"]}), 20)
+            self.assertEqual(sum(s["cwd"] in [str(r) for r in roots[:3]] for s in data["sessions"]), 10)
+            for row in data["sessions"]:
+                self.assertIn(row["summary"], "\n".join(revision45.chat_script(row)))
+
     def test_approved_runtime_matches_measured_timeline(self):
         self.assertEqual(render.SECONDS, 45)
         self.assertEqual(propose45.SCENES[-1][1], 45)

@@ -31,6 +31,7 @@ def main():
         check=True,
     )
     for script in [
+        "refresh_ui.py",
         "prepare45.py",
         "snappy45.py",
         "trim_native_frames.py",

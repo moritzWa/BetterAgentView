@@ -25,6 +25,7 @@ from visual import (
     uri,
 )
 from waveform import VoiceTracks, envelope
+from film_sessions import PROJECTS, SESSIONS
 
 SECONDS = 45
 PURPLE = "#6f38c5"
@@ -133,19 +134,23 @@ HARNESS_LOOK = {
 
 def chat_script(a):
     name = a["name"]
-    area = name.split("-")[0]
+    project = next(project for session, project, _, _ in SESSIONS if session == name)
+    commands = {
+        0: ["python evals/compare_checkpoints.py", "python -m pytest tests/evals"],
+        1: ["pnpm test upload-validation", "pnpm test billing"],
+        2: ["python scripts/trace_requests.py", "python -m pytest tests/inference"],
+        3: ["python evals/compare_categorization.py", "pnpm test categorization"],
+        4: ["cargo test clipboard", "cargo test previews"],
+        5: ["cargo test session_search", "cargo test session_switch"],
+    }[project]
     lines = [
-        f"> fix {name.replace('-', ' ')} and run the tests",
-        f"● Reading src/{area}/index.ts",
-        "  └ 214 lines",
-        f"● Update(src/{area}/{name}.ts)",
-        "  └ +18 −6",
-        f"● Bash(pnpm test {area})",
-        "  └ 41 passed · 1 failed",
-        f"● Update(src/{area}/{name}.test.ts)",
-        "  └ +4 −1",
-        f"● Bash(pnpm test {area})",
-        "  └ 42 passed",
+        f"> {a['summary']}",
+        f"● Working on {name.replace('-', ' ')}",
+        "● Reviewing the previous run and checking edge cases",
+        f"● Bash({commands[0]})",
+        "  └ Inspecting results",
+        f"● Bash({commands[1]})",
+        "  └ Checking the regression tests",
     ]
     if a["state"] == "needs_input":
         lines.append("? " + a["summary"])
@@ -435,7 +440,8 @@ class Film45(Film):
             uri(ROOT / "site/providers" / harness["icon"]), x + 10, y + 30, 22, 22
         )
         out += txt(x + 40, y + 41, harness["title"], 10, INK, True, mono=True)
-        out += txt(x + 40, y + 53, harness["sub"], 8.5, MUTED, mono=True)
+        project = next(project for name, project, _, _ in SESSIONS if name == a["name"])
+        out += txt(x + 40, y + 53, "~/Code/" + PROJECTS[project], 8.5, MUTED, mono=True)
         # The conversation types in, each window at its own pace, and scrolls.
         script = chat_script(a)
         typed = 36 + max(0.0, t + 0.3 * (i % 5)) * (58 + 14 * (i % 4))

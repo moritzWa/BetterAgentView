@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pyte
 from PIL import Image, ImageDraw, ImageFont
+from film_sessions import populate
 
 ROOT = Path(__file__).resolve().parents[2]
 COLS, ROWS = 132, 36
@@ -87,94 +88,14 @@ def main():
     # Agent View deliberately hides sessions rooted under the OS temp folder.
     with tempfile.TemporaryDirectory(prefix="isolated-home-", dir=args.output) as tmp:
         home = Path(tmp)
-        work = home / "Code/shop"
-        personal = home / "Code/weekend"
-        work.mkdir(parents=True)
-        personal.mkdir(parents=True)
         conf = home / ".config/agentview"
         conf.mkdir(parents=True)
-        (conf / "work-roots.json").write_text(json.dumps({"roots": [str(work)]}))
         data = json.loads((ROOT / "fixtures/demo-sessions.json").read_text())
-        # Keep the composition legible. These are real app rows, not drawn imitations.
-        data["sessions"] = [
-            s
-            for s in data["sessions"]
-            if s["name"] in ["checkout-redesign", "fix-flaky-tests", "db-migration"]
-        ]
-        for s in data["sessions"]:
-            s["cwd"] = str(work)
-        p = copy.deepcopy(data["sessions"][2])
-        p.update(
-            id="opencode:host:weekend",
-            name="plan-weekend",
-            cwd=str(personal),
-            summary="Compare two hiking routes",
-            state="working",
-        )
-        data["sessions"].append(p)
-        devin = copy.deepcopy(data["sessions"][2])
-        devin.update(
-            id="devin:host:storefront",
-            provider="devin",
-            provider_session_id="synthetic-storefront",
-            name="storefront-build",
-            summary="Building the storefront preview",
-            pid=None,
-        )
-        data["sessions"].append(devin)
-        # Busy but entirely synthetic. Multiple work and personal directories
-        # make filtering visible without changing any session's state.
-        roots = [
-            work,
-            home / "Code/payments",
-            home / "Code/docs",
-            personal,
-            home / "Code/recipes",
-            home / "Code/home-lab",
-        ]
-        for root in roots:
-            root.mkdir(parents=True, exist_ok=True)
+        roots = populate(data, home)
+        work = roots[1]
         (conf / "work-roots.json").write_text(
             json.dumps({"roots": [str(p) for p in roots[:3]]})
         )
-        names = [
-            "webhook-retries",
-            "invoice-export",
-            "api-pagination",
-            "docs-search",
-            "oauth-callback",
-            "preview-deploy",
-            "receipt-parser",
-            "meal-planner",
-            "garden-sensors",
-            "backup-photos",
-            "weekend-map",
-            "home-dashboard",
-            "reading-list",
-            "recipe-import",
-            "trip-budget",
-        ]
-        for i, name in enumerate(names):
-            s = copy.deepcopy(devin)
-            provider = ["opencode", "codex", "claude", "cursor"][i % 4]
-            s.update(
-                id=f"{provider}:host:film-{i}",
-                provider=provider,
-                provider_session_id=f"synthetic-film-{i}",
-                name=name,
-                cwd=str(roots[[1, 1, 1, 2, 0, 0, 4, 4, 5, 5, 3, 5, 3, 4, 3][i]]),
-                state="needs_input" if i in [0, 4, 9] else "working",
-                summary="Waiting for a design decision"
-                if i in [0, 4, 9]
-                else [
-                    "Reviewing test results",
-                    "Checking test coverage",
-                    "Building the preview",
-                    "Checking edge cases",
-                ][i % 4],
-                raw_state="waiting_on_user_input" if i in [0, 4, 9] else "running",
-            )
-            data["sessions"].append(s)
         usage = data["demo"]["usage"]
         # Supported account keys are claude + claude2; claude1 is ignored by
         # the real fixture parser. Keep the actual UI labels honest.
@@ -254,7 +175,7 @@ def main():
             assert "checkout-redesign" in "\n".join(screen.display), "\n".join(
                 screen.display
             )
-            assert "plan-weekend" in "\n".join(screen.display)
+            assert "batch-paste-order" in "\n".join(screen.display)
             picture(screen, args.output / "overview.png")
             anchors = []
             for session in data["sessions"]:
@@ -287,12 +208,7 @@ def main():
             os.write(master, b"\x1b[A")
             drain(0.2)
             rows = {}
-            for name in [
-                "checkout-redesign",
-                "db-migration",
-                "fix-flaky-tests",
-                "storefront-build",
-            ]:
+            for name in ["checkout-redesign", "rl-reward-debug", "jev-to-qwen-distillation", "customer-onboarding"]:
                 rows[name] = next(
                     i for i, line in enumerate(screen.display) if name in line
                 )
@@ -349,7 +265,7 @@ def main():
             drain(1)
             picture(screen, args.output / "work.png")
             assert "Work only" in "\n".join(screen.display)
-            assert "plan-weekend" not in "\n".join(screen.display)
+            assert "batch-paste-order" not in "\n".join(screen.display)
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 23, COLS, 0, 0))
             screen.resize(lines=23, columns=COLS)
             os.killpg(proc.pid, signal.SIGWINCH)
@@ -357,6 +273,7 @@ def main():
             scheduled = copy.deepcopy(data["sessions"][2])
             scheduled.update(
                 id="opencode:host:review-checkout",
+                cwd=str(work),
                 name="review-checkout",
                 provider_session_id="synthetic-review-checkout",
                 state="scheduled",

@@ -39,6 +39,21 @@ video or playing audio. No test plays audio or opens a GUI on the host.
 
 ## What is real
 
+### Project-content refresh
+
+`film_sessions.py` defines the approved 20 sessions across six directories:
+Applied Evidence research/platform/infra (10 company sessions) and personal
+Cronus/Clipglass/BetterAgentView (10 sessions). These are synthetic examples,
+not real training runs or customer data. Five sessions need input; the checkout
+question stays unchanged to match the existing voice and native recordings.
+
+After `capture.py`, run `refresh_ui.py --output TARGET` to synchronize the
+opening pane-to-row map and voice dashboard with the fresh real TUI captures.
+It retains the recorded live-call footer and does not alter native ChatGPT
+footage, native session footage, narration, music or the 45-second timeline.
+For a UI-only revision of a copied draft, run capture, refresh_ui, render and
+verify without prepare45/snappy45, which would reconform the audio.
+
 - `capture.py` launches Agent View in a headless PTY with isolated HOME and XDG
   paths. It renders the terminal cells with pyte and Menlo. This is actual TUI
   output, not hand-drawn app controls. It does not probe private sessions.
