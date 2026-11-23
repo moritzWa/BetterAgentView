@@ -15,7 +15,9 @@ fn serialize_setup_test() -> MutexGuard<'static, ()> {
     // executing that fixture with ETXTBSY until the unrelated child execs.
     // Keep fixture writes and process handoffs out of each other's fork window.
     static SERIAL: Mutex<()> = Mutex::new(());
-    SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[derive(Clone, Copy)]
