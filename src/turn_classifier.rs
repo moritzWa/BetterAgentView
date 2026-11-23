@@ -31,6 +31,7 @@ const MAX_IN_FLIGHT: usize = 4;
 /// asking. Unlike a permission or question prompt it is a soft call, so a
 /// manager whose sub-sessions are still running reads as waiting on them.
 pub const ASKED_IN_MESSAGE: &str = "asked in last message";
+pub const UNFINISHED_TURN: &str = "unfinished last turn";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Verdict {
@@ -165,6 +166,16 @@ impl TurnClassifier {
             thread::spawn(move || {
                 let result = (classifier.read_messages)(&session)
                     .and_then(|messages| (classifier.ask)(&messages, is_held))
+                    .or_else(|error| {
+                        if error
+                            .downcast_ref::<crate::completion::MissingFinalReply>()
+                            .is_some()
+                        {
+                            Ok(Verdict::Unclear)
+                        } else {
+                            Err(error)
+                        }
+                    })
                     .map(|verdict| Labelled {
                         turn,
                         verdict,
@@ -314,16 +325,21 @@ fn protect_project_done_with_links(
 }
 
 fn apply_verdict(session: &mut AgentSession, verdict: Verdict) {
-    if verdict == Verdict::NeedsInput && session.state.is_idle() {
-        session.raw_state = Some(ASKED_IN_MESSAGE.into());
+    let is_held = held(session);
+    if session.state.is_idle() {
+        match verdict {
+            Verdict::NeedsInput => session.raw_state = Some(ASKED_IN_MESSAGE.into()),
+            Verdict::Unclear => session.raw_state = Some(UNFINISHED_TURN.into()),
+            _ => {}
+        }
     }
-    session.state = match (verdict, held(session)) {
+    session.state = match (verdict, is_held) {
         (Verdict::NeedsInput, _) => SessionState::NeedsInput,
         (_, true) if session.is_scheduled() => SessionState::Scheduled,
         (_, true) => SessionState::Working,
         (Verdict::ProjectDone, false) if session.wake.is_none() => SessionState::ProjectDone,
         (Verdict::ProjectDone | Verdict::Done, false) => SessionState::TaskDone,
-        (Verdict::Unclear, false) => SessionState::Completed,
+        (Verdict::Unclear, false) => SessionState::NeedsInput,
     };
 }
 
@@ -608,9 +624,92 @@ mod tests {
                 Verdict::ProjectDone => SessionState::ProjectDone,
                 Verdict::Done => SessionState::TaskDone,
                 Verdict::NeedsInput => SessionState::NeedsInput,
-                Verdict::Unclear => SessionState::Completed,
+                Verdict::Unclear => SessionState::NeedsInput,
             }
         );
+    }
+
+    #[test]
+    fn unresolved_verdicts_need_attention_only_when_no_live_followup_is_running() {
+        for state in [SessionState::Working, SessionState::Scheduled] {
+            let mut session = idle(
+                "held-unfinished",
+                state,
+                "background: shell: running",
+                "In progress",
+            );
+            apply_verdict(&mut session, Verdict::Unclear);
+            assert_eq!(session.state, state);
+            assert_eq!(
+                session.raw_state.as_deref(),
+                Some("background: shell: running")
+            );
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("saved.json");
+        let session = idle(
+            "stopped-unfinished",
+            SessionState::Completed,
+            "idle",
+            "Partial result",
+        );
+        record_in_store(
+            &path,
+            &session.id,
+            Labelled {
+                turn: turn_hash(&session, false),
+                verdict: Verdict::Unclear,
+                labelled_at_ms: now_ms(),
+            },
+        )
+        .unwrap();
+        let mut view = snapshot(vec![session]);
+        apply_saved_at(&mut view, &path);
+        assert_eq!(view.sessions[0].state, SessionState::NeedsInput);
+        assert_eq!(view.sessions[0].raw_state.as_deref(), Some(UNFINISHED_TURN));
+    }
+
+    #[test]
+    fn a_missing_final_reply_needs_attention_without_a_model_call() {
+        let classifier = TurnClassifier::new(
+            |_| Err(crate::completion::MissingFinalReply.into()),
+            |_, _| panic!("there is no reply to classify"),
+        );
+        let mut view = snapshot(vec![idle(
+            "missing-reply",
+            SessionState::Completed,
+            "idle",
+            "Unanswered task",
+        )]);
+        classifier.apply(&mut view);
+        classifier.wait_for_idle();
+        classifier.apply(&mut view);
+        assert_eq!(view.sessions[0].state, SessionState::NeedsInput);
+        assert_eq!(view.sessions[0].raw_state.as_deref(), Some(UNFINISHED_TURN));
+        assert!(view.warnings.is_empty());
+    }
+
+    #[test]
+    fn database_or_network_errors_are_not_mistaken_for_an_unfinished_reply() {
+        let classifier = TurnClassifier::new(
+            |_| bail!("database unavailable"),
+            |_, _| panic!("no safe evidence"),
+        );
+        let session = idle(
+            "read-error",
+            SessionState::Completed,
+            "idle",
+            "Unknown result",
+        );
+        classifier.apply(&mut snapshot(vec![session.clone()]));
+        classifier.wait_for_idle();
+        let mut view = snapshot(vec![session]);
+        classifier.apply(&mut view);
+        assert_eq!(view.sessions[0].state, SessionState::Completed);
+        assert!(view
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("database unavailable")));
     }
 
     #[test]
@@ -650,12 +749,15 @@ mod tests {
     }
 
     #[test]
-    fn unclear_stays_idle_and_completed_verdicts_survive_restart_beyond_one_day() {
+    fn unresolved_turns_need_attention_and_old_completion_survives_restart() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("verdicts.json");
         let mut session = idle("old-project", SessionState::Completed, "idle", "All done");
         apply_verdict(&mut session, Verdict::Unclear);
-        assert_eq!(session.state, SessionState::Completed);
+        assert_eq!(session.state, SessionState::NeedsInput);
+        assert_eq!(session.raw_state.as_deref(), Some(UNFINISHED_TURN));
+        session.state = SessionState::Completed;
+        session.raw_state = Some("idle".into());
         session.updated_at = Some(SystemTime::now() - Duration::from_secs(172_800));
         record_in_store(
             &path,

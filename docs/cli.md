@@ -271,13 +271,15 @@ The Show-more row pages only the already discovered window.
 
 Provider idle signals alone do not prove completion:
 
-- **Idle:** completion is unclear or has not been assessed.
+- **Idle:** not assessed yet, or no classifier is configured. It is not a settled
+  verdict for a stopped, unfinished turn.
 - **Task done:** the latest request finished, but the workstream remains open or
   still has user follow-through, such as loading or reviewing delivered changes.
 - **Project done:** the agreed workstream is wrapped up, with no work, follow-up,
   review or decision left. This means the session's workstream, not the entire repository.
 - **Needs input:** the agent is waiting for a human answer, approval, review or
-  action before it can proceed. Usage instructions after delivery are not a blocker.
+  action before it can proceed, or its turn stopped without a completed result
+  and needs review/resumption. Usage instructions after delivery are not a blocker.
 
 With an OpenRouter key, dashboard refreshes classify eligible discovered idle
 sessions, including older sessions without a current verdict. Hidden sessions
@@ -292,7 +294,10 @@ agent is blocked on the user, and what scope of work is finished. A human blocke
 takes precedence over either completion label.
 If an unheld session is judged unclear, one bounded second check reads only the
 latest exchange, without older project context. It can confirm Task done, never
-promote Project done. Failed or still-unclear reviews remain unconfirmed. This
+promote Project done. A still-unclear stopped turn shows Needs input, with an
+unfinished-turn reason, rather than staying Idle indefinitely. A missing final
+reply is treated the same way without an API request; database/network errors
+remain errors, not claims that the user is needed. This
 keeps an older unfinished project from obscuring a completed summary or answer.
 
 For OpenCode and Claude transcript history, evidence contains the initial user request and the last two

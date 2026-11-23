@@ -414,10 +414,9 @@ fn completion_context_from_db(db: &Connection, session_id: &str) -> Result<Strin
     };
     let turns = recent_turns_from_db(db, session_id, 2)?;
     // Do not classify a stale reply when the newest user has not been answered.
-    anyhow::ensure!(
-        turns.last().is_some_and(|turn| !turn.it.is_empty()),
-        "latest request has no final reply"
-    );
+    if !turns.last().is_some_and(|turn| !turn.it.is_empty()) {
+        return Err(crate::completion::MissingFinalReply.into());
+    }
     Ok(crate::completion::evidence(
         scope.as_deref().unwrap_or_default(),
         &turns,

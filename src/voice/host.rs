@@ -281,6 +281,9 @@ fn needs_you_because(session: &AgentSession) -> Option<String> {
     }
     Some(
         match session.raw_state.as_deref() {
+            Some(crate::turn_classifier::UNFINISHED_TURN) => {
+                "its turn stopped without a completed result; review it or send a message to resume"
+            }
             Some("turn failed") => {
                 "its last turn failed; send it a message such as \"continue\" to retry it"
             }

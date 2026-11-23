@@ -10,6 +10,17 @@ use crate::turn_classifier::Verdict;
 pub const DEFAULT_MODEL: &str = "typesafe/jev-1.14";
 pub const ENDPOINT: &str = "https://openrouter.ai/api/alpha/decisions";
 
+#[derive(Debug)]
+pub struct MissingFinalReply;
+
+impl std::fmt::Display for MissingFinalReply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("latest request has no final reply")
+    }
+}
+
+impl std::error::Error for MissingFinalReply {}
+
 pub fn evidence(scope: &str, turns: &[SessionTurn]) -> String {
     let exchange = |turn: &SessionTurn, latest: bool| {
         json!([

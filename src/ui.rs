@@ -850,7 +850,12 @@ fn render_tree_session_row(
     reminder_column: bool,
 ) -> Line<'static> {
     let soft_ask = session.state == SessionState::NeedsInput
-        && session.raw_state.as_deref() == Some(crate::turn_classifier::ASKED_IN_MESSAGE);
+        && matches!(
+            session.raw_state.as_deref(),
+            Some(
+                crate::turn_classifier::ASKED_IN_MESSAGE | crate::turn_classifier::UNFINISHED_TURN
+            )
+        );
     let waiting = view_mode == ViewMode::Directory
         && (soft_ask
             || session.is_scheduled()
