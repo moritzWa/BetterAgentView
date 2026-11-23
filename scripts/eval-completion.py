@@ -20,12 +20,24 @@ def main():
     parser.add_argument("--cases", type=Path, required=True)
     parser.add_argument("--models", default="typesafe/jev-1.14,openai/gpt-6-luna-decisions,perplexity/pplx-decider-flash-v1.3:free")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--repeat", type=int, default=1)
     args = parser.parse_args()
     # Use the production questions verbatim, not an eval-only prompt.
     questions = json.loads((Path(__file__).resolve().parents[1] / "src/completion-questions.json").read_text())
     keyfile = Path.home() / ".config/agentview/openrouter-api-key"
     key = keyfile.read_text().strip() if keyfile.exists() else os.environ["OPENROUTER_API_KEY"]
     cases = json.loads(args.cases.read_text())
+    for case in cases:
+        messages = case["messages"]
+        if "exchanges" in messages:
+            turns = messages["exchanges"]
+            case["messages"] = {
+                "context": {"initial_request": messages.get("initial_request", ""),
+                    "previous_exchange": turns[-2] if len(turns) > 1 else None},
+                "latest_exchange": turns[-1] if turns else None,
+            }
+    cases = [dict(case, id=f"{case['id']}#{repeat + 1}")
+        for repeat in range(args.repeat) for case in cases]
 
     def run(model, case):
         request = {"model": model, "state": {"messages": case["messages"],

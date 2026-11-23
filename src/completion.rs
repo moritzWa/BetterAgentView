@@ -11,23 +11,23 @@ pub const DEFAULT_MODEL: &str = "typesafe/jev-1.14";
 pub const ENDPOINT: &str = "https://openrouter.ai/api/alpha/decisions";
 
 pub fn evidence(scope: &str, turns: &[SessionTurn]) -> String {
-    let recent: Vec<Value> = turns
-        .iter()
-        .rev()
-        .take(2)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .enumerate()
-        .map(|(i, turn)| {
-            let latest = i + 1 == turns.len().min(2);
-            json!({
-                "user": excerpt(&turn.you, if latest { 600 } else { 300 }),
-                "assistant_final": excerpt(&turn.it, if latest { 1800 } else { 500 }),
-            })
+    let exchange = |turn: &SessionTurn, latest: bool| {
+        json!({
+            "user": excerpt(&turn.you, if latest { 600 } else { 300 }),
+            "assistant_final": excerpt(&turn.it, if latest { 1800 } else { 500 }),
         })
-        .collect();
-    json!({"initial_request": excerpt(scope, 600), "exchanges": recent}).to_string()
+    };
+    let latest = turns.last().map(|turn| exchange(turn, true));
+    let previous = turns
+        .len()
+        .checked_sub(2)
+        .and_then(|i| turns.get(i))
+        .map(|turn| exchange(turn, false));
+    json!({
+        "context": {"initial_request": excerpt(scope, 600), "previous_exchange": previous},
+        "latest_exchange": latest,
+    })
+    .to_string()
 }
 
 fn excerpt(text: &str, budget: usize) -> String {
@@ -99,12 +99,42 @@ mod tests {
         assert!(evidence.len() < 4100);
         assert!(!evidence.contains("private progress"));
         assert_eq!(
-            serde_json::from_str::<Value>(&evidence).unwrap()["exchanges"]
-                .as_array()
-                .unwrap()
-                .len(),
-            2
+            serde_json::from_str::<Value>(&evidence).unwrap()["latest_exchange"]["assistant_final"],
+            excerpt(&"y".repeat(10_000), 1800)
         );
+    }
+
+    #[test]
+    fn latest_exchange_is_separate_from_superseded_requests_and_previous_replies() {
+        let turns = [
+            SessionTurn {
+                you: "discarded".into(),
+                it: "discarded answer".into(),
+                ..Default::default()
+            },
+            SessionTurn {
+                you: "propose only".into(),
+                it: "no implementation yet".into(),
+                ..Default::default()
+            },
+            SessionTurn {
+                you: "implement now".into(),
+                it: "deployed and verified".into(),
+                ..Default::default()
+            },
+        ];
+        let value: Value =
+            serde_json::from_str(&evidence("original planning scope", &turns)).unwrap();
+        assert_eq!(value["latest_exchange"]["user"], "implement now");
+        assert_eq!(
+            value["latest_exchange"]["assistant_final"],
+            "deployed and verified"
+        );
+        assert_eq!(
+            value["context"]["previous_exchange"]["user"],
+            "propose only"
+        );
+        assert!(!value.to_string().contains("discarded"));
     }
 
     #[test]

@@ -3,7 +3,7 @@
 //! Providers report an idle session either as completed or as waiting at its
 //! prompt, without saying whether the agent's last message asked for anything.
 //! When an OpenRouter key is configured, bounded message-only evidence from a
-//! recently idle session is labelled once by a Decisions model. No inspection
+//! discovered idle session is labelled once by a Decisions model. No inspection
 //! transcript, reasoning, tool output or system prompt reaches the model.
 //! Verdicts are kept on disk so a restarted dashboard shows them at once.
 
@@ -14,7 +14,9 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, SystemTime};
+#[cfg(test)]
+use std::time::Duration;
+use std::time::SystemTime;
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -23,8 +25,7 @@ use crate::control::ControlHub;
 use crate::domain::{AgentSession, Capability, Provider, SessionSnapshot, SessionState};
 
 use crate::completion::{DEFAULT_MODEL, ENDPOINT};
-/// Older idle sessions keep their provider state rather than spending requests.
-const RECENT: Duration = Duration::from_secs(24 * 60 * 60);
+/// Bound background traffic while filling missing or invalidated verdicts.
 const MAX_IN_FLIGHT: usize = 4;
 /// `raw_state` of a session the model, rather than the provider, judged to be
 /// asking. Unlike a permission or question prompt it is a soft call, so a
@@ -142,9 +143,7 @@ impl TurnClassifier {
                 }
                 _ if cache.in_flight.contains(&session.id)
                     || cache.failed.get(&session.id) == Some(&turn) => {}
-                _ if session.age(now).is_some_and(|age| age <= RECENT)
-                    && cache.in_flight.len() + pending.len() < MAX_IN_FLIGHT =>
-                {
+                _ if cache.in_flight.len() + pending.len() < MAX_IN_FLIGHT => {
                     pending.push((session.clone(), turn, is_held));
                 }
                 _ => {}
@@ -335,6 +334,10 @@ fn apply_verdict(session: &mut AgentSession, verdict: Verdict) {
 /// verdicts must match across builds and `DefaultHasher` is free to change
 /// between Rust releases.
 fn turn_hash(session: &AgentSession, held: bool) -> u64 {
+    turn_hash_with_policy(session, held, include_bytes!("completion-questions.json"))
+}
+
+fn turn_hash_with_policy(session: &AgentSession, held: bool, policy: &[u8]) -> u64 {
     let reply = crate::last_message::get(&session.id).unwrap_or_default();
     let facts = crate::last_message::facts_for(&session.id).unwrap_or_default();
     let messages = crate::last_message::completion_for(&session.id).unwrap_or_default();
@@ -355,6 +358,8 @@ fn turn_hash(session: &AgentSession, held: bool) -> u64 {
         .chain(facts.last_user_ms.to_le_bytes())
         .chain(activity.to_le_bytes())
         .chain(b"message-only-completion-v3".iter().copied())
+        .chain(policy.iter().copied())
+        .chain(b"focused-latest-exchange-v1".iter().copied())
         .chain(
             std::env::var("AGENTVIEW_TURN_CLASSIFIER_MODEL")
                 .unwrap_or_else(|_| DEFAULT_MODEL.into())
@@ -594,6 +599,42 @@ mod tests {
                 Verdict::Unclear => SessionState::Completed,
             }
         );
+    }
+
+    #[test]
+    fn changed_classifier_instructions_invalidate_a_cached_verdict() {
+        let session = idle(
+            "policy-change",
+            SessionState::Completed,
+            "idle",
+            "Delivered result",
+        );
+        let old = turn_hash_with_policy(&session, false, b"old completion policy");
+        let current = turn_hash(&session, false);
+        assert_ne!(old, current);
+        assert_eq!(current, turn_hash(&session, false));
+    }
+
+    #[test]
+    fn old_idle_sessions_are_assessed_once_without_needing_a_manual_backfill() {
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&asked);
+        let classifier = TurnClassifier::new(
+            |_| Ok("message evidence".into()),
+            move |_, _| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok(Verdict::Done)
+            },
+        );
+        let mut session = idle("older-visible", SessionState::Completed, "idle", "Finished");
+        session.updated_at = Some(SystemTime::now() - Duration::from_secs(60 * 24 * 3600));
+        let mut view = snapshot(vec![session]);
+        classifier.apply(&mut view);
+        classifier.wait_for_idle();
+        classifier.apply(&mut view);
+        assert_eq!(view.sessions[0].state, SessionState::TaskDone);
+        classifier.apply(&mut view);
+        assert_eq!(asked.load(Ordering::SeqCst), 1);
     }
 
     #[test]
