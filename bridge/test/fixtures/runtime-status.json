@@ -1,0 +1,14 @@
+{
+  "session_id": "ses_x",
+  "status": "needs_you",
+  "completion": "unconfirmed",
+  "reason": "approval",
+  "updated_at": 0,
+  "can_message": false,
+  "last_user_message_id": null,
+  "last_user_ms": 0,
+  "top_level": true,
+  "attention_assessed": true,
+  "directory": "PRIVATE_PATH",
+  "health": "idle"
+}

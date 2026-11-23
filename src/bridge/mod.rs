@@ -480,31 +480,33 @@ pub fn sync_once(dir: &Path) -> Result<usize> {
     // Compare pointers and replace those sessions. A network failure here is not a stall.
     if let Ok(local) = journal.checkpoints() {
         if !local.is_empty() {
-            let sessions: Vec<Value> = local
-                .iter()
-                .map(|(id, cursor)| json!({"session_id": id, "cursor": cursor}))
-                .collect();
-            match http::request(
-                &config.endpoint,
-                "/v1/sync/cursors",
-                Some(&credential),
-                Some(&json!({"sessions": sessions})),
-                60,
-            ) {
-                Ok(report) => {
-                    for id in report["mismatch"].as_array().cloned().unwrap_or_default() {
-                        let Some(id) = id.as_str() else { continue };
-                        if !ids.contains(id) || failing.iter().any(|f| f.session_id == id) {
-                            continue;
-                        }
-                        match replace_session(&mut db, &mut journal, &config, &credential, id) {
-                            Ok(n) => uploads += n,
-                            Err(("transport", error)) => return Err(error),
-                            Err((stage, error)) => note(&mut failing, id, stage, &error),
+            for chunk in local.chunks(CURSOR_BATCH_SIZE) {
+                let sessions: Vec<Value> = chunk
+                    .iter()
+                    .map(|(id, cursor)| json!({"session_id": id, "cursor": cursor}))
+                    .collect();
+                match http::request(
+                    &config.endpoint,
+                    "/v1/sync/cursors",
+                    Some(&credential),
+                    Some(&json!({"sessions": sessions})),
+                    60,
+                ) {
+                    Ok(report) => {
+                        for id in report["mismatch"].as_array().cloned().unwrap_or_default() {
+                            let Some(id) = id.as_str() else { continue };
+                            if !ids.contains(id) || failing.iter().any(|f| f.session_id == id) {
+                                continue;
+                            }
+                            match replace_session(&mut db, &mut journal, &config, &credential, id) {
+                                Ok(n) => uploads += n,
+                                Err(("transport", error)) => return Err(error),
+                                Err((stage, error)) => note(&mut failing, id, stage, &error),
+                            }
                         }
                     }
+                    Err(error) => log_unavailable("cursors", &error),
                 }
-                Err(error) => log_unavailable("cursors", &error),
             }
         }
     }
@@ -1091,6 +1093,9 @@ pub fn run(dir: &Path) -> Result<()> {
 /// Wall-clock age after which `status` calls the last pass stale. A Mac that
 /// slept will read stale until it wakes and syncs.
 const STALE_AFTER_SECS: u64 = 30 * 60;
+// The Worker accepts at most 4,000 pointers and bounds request bytes. History
+// includes legacy sessions too, so a whole-source inventory can exceed that.
+const CURSOR_BATCH_SIZE: usize = 1000;
 const STUCK_ALERT_AFTER: Duration = Duration::from_secs(30 * 60);
 const STUCK_ALERT_EVERY: Duration = Duration::from_secs(6 * 3600);
 
@@ -1112,6 +1117,8 @@ fn error_kind(message: &str) -> &'static str {
         "rate_limit"
     } else if message.contains("HTTP 5") {
         "cloud_service"
+    } else if message.contains("HTTP 4") {
+        "protocol"
     } else if message.contains("already running") {
         "busy"
     } else if message.contains("Keychain") {
@@ -1147,6 +1154,24 @@ fn runtime_stage(chain: &str) -> Option<&'static str> {
 fn curl_code(chain: &str) -> Option<i32> {
     let rest = chain.split("(curl ").nth(1)?;
     rest.split(')').next()?.trim().parse().ok()
+}
+
+fn http_failure(chain: &str) -> Option<String> {
+    let rest = chain.strip_prefix("bridge HTTP ")?;
+    let mut parts = rest.split_whitespace();
+    let status = parts.next()?.parse::<u16>().ok()?;
+    if !(400..600).contains(&status) {
+        return None;
+    }
+    // Only the transport's sanitized error token is safe to log. Never print
+    // arbitrary response text or an anyhow context containing private data.
+    let code = parts.next().filter(|code| {
+        code.len() <= 80 && code.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    });
+    Some(format!(
+        " http={status}{}",
+        code.map_or(String::new(), |c| format!(" code={c}"))
+    ))
 }
 
 struct Outage {
@@ -1237,12 +1262,15 @@ fn log_unavailable(channel: &str, error: &anyhow::Error) {
     };
     let stage = runtime_stage(&chain).map_or(String::new(), |stage| format!(" stage={stage}"));
     let curl = curl_code(&chain).map_or(String::new(), |code| format!(" curl={code}"));
+    let http = http_failure(&error.to_string()).unwrap_or_default();
     let since = if failing_for > 0 {
         format!(" failing_for={failing_for}s repeats={repeats}")
     } else {
         String::new()
     };
-    eprintln!("bridge {channel} unavailable kind={kind}{stage}{curl}{since} time={now}; retrying");
+    eprintln!(
+        "bridge {channel} unavailable kind={kind}{stage}{curl}{http}{since} time={now}; retrying"
+    );
 }
 
 /// Compares each local projection with the cloud copy. Prints no message text.
@@ -1335,8 +1363,15 @@ pub fn status(dir: &Path) -> Result<Value> {
             .query_row("SELECT count(*) FROM pending", [], |r| r.get(0))?,
     );
     let age = (health.last_pass_at > 0).then(|| now_secs().saturating_sub(health.last_pass_at));
+    // A successful history scan/heartbeat does not imply that the separately
+    // published native-state snapshot was accepted by the Worker.
+    let runtime_age = std::fs::metadata(dir.join("runtime-checked.json"))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .map(|age| age.as_secs());
     Ok(
-        json!({"paired":true,"endpoint":config.endpoint,"sessions":sessions,"messages":messages,"pending_batches":pending,"device_id":config.device_id,"database_epoch":config.database_epoch,"last_fully_synced":health.last_ok,"last_pass_at":health.last_pass_at,"last_pass_age_seconds":age,"stale":age.map_or(true, |age| age > STALE_AFTER_SECS),"last_pass_ms":health.last_pass_ms,"scanned_sessions":health.scanned,"stuck_sessions":health.failing,"held_batches_for":journal.held_sessions()?}),
+        json!({"paired":true,"endpoint":config.endpoint,"sessions":sessions,"messages":messages,"pending_batches":pending,"device_id":config.device_id,"database_epoch":config.database_epoch,"last_fully_synced":health.last_ok,"last_pass_at":health.last_pass_at,"last_pass_age_seconds":age,"stale":age.map_or(true, |age| age > STALE_AFTER_SECS),"runtime_age_seconds":runtime_age,"runtime_stale":runtime_age.map_or(true, |age| age >= 30),"last_pass_ms":health.last_pass_ms,"scanned_sessions":health.scanned,"stuck_sessions":health.failing,"held_batches_for":journal.held_sessions()?}),
     )
 }
 

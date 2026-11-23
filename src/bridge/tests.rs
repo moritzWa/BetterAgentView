@@ -240,6 +240,14 @@ fn runtime_projection_includes_requested_directory_but_never_chat_or_tool_payloa
         capabilities: Default::default(),
     };
     let status = serde_json::to_value(runtime::project(&session)).unwrap();
+    let contract: Value = serde_json::from_str(include_str!(
+        "../../bridge/test/fixtures/runtime-status.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        status, contract,
+        "update the shared Worker contract when changing the producer"
+    );
     assert_eq!(status["status"], "needs_you");
     assert_eq!(status["reason"], "approval");
     assert_eq!(status["can_message"], false);
@@ -261,10 +269,20 @@ fn real_runtime_snapshot_audit_without_upload() {
     let start = std::time::Instant::now();
     let snapshot = serde_json::to_value(runtime::snapshot(&config).unwrap()).unwrap();
     let mut counts = std::collections::BTreeMap::new();
+    let targets = std::env::var("AGENTVIEW_RUNTIME_AUDIT_SESSIONS").unwrap_or_default();
     for status in snapshot["statuses"].as_array().unwrap() {
         *counts
             .entry(status["status"].as_str().unwrap())
             .or_insert(0usize) += 1;
+        if targets
+            .split(',')
+            .any(|id| Some(id) == status["session_id"].as_str())
+        {
+            eprintln!("Native target status: {status}");
+        }
+    }
+    if let Some(path) = std::env::var_os("AGENTVIEW_RUNTIME_AUDIT_OUTPUT") {
+        crate::fs_util::write_private_json(std::path::Path::new(&path), &snapshot).unwrap();
     }
     eprintln!("Native runtime audit: available={}, partial={}, truncated={}, states={counts:?}, elapsed_ms={}",snapshot["available"],snapshot["partial"],snapshot["truncated"],start.elapsed().as_millis());
     assert_eq!(snapshot["available"], true);
@@ -474,6 +492,80 @@ fn a_busy_lock_is_skipped_quietly_and_failures_name_their_stage() {
     assert_eq!(error_kind("database is locked"), "source_locked");
     assert_eq!(error_kind("bridge network request failed"), "network");
     assert_eq!(error_kind("bridge operation already running"), "busy");
+    assert_eq!(
+        error_kind("bridge HTTP 400 invalid_runtime_snapshot"),
+        "protocol"
+    );
+    assert_eq!(
+        http_failure("bridge HTTP 400 invalid_runtime_snapshot"),
+        Some(" http=400 code=invalid_runtime_snapshot".into())
+    );
+    assert_eq!(
+        http_failure("private path: bridge HTTP 400 invalid_runtime_snapshot"),
+        None
+    );
+    assert_eq!(
+        http_failure("bridge HTTP 400 /private/path"),
+        Some(" http=400".into())
+    );
+}
+
+#[test]
+fn cursor_inventory_is_bounded_even_above_the_cloud_limit() {
+    let pointers = (0..4973)
+        .map(|i| (format!("ses_{i}"), i))
+        .collect::<Vec<_>>();
+    let chunks = pointers.chunks(CURSOR_BATCH_SIZE).collect::<Vec<_>>();
+    assert_eq!(chunks.len(), 5);
+    assert!(chunks.iter().all(|chunk| chunk.len() <= 1000));
+    assert_eq!(
+        chunks.into_iter().flatten().cloned().collect::<Vec<_>>(),
+        pointers
+    );
+}
+
+#[test]
+fn fresh_history_does_not_hide_a_missing_or_stale_runtime_snapshot() {
+    let dir = tempdir().unwrap();
+    let database = dir.path().join("source.sqlite");
+    std::fs::write(&database, b"").unwrap();
+    let config = Config {
+        version: 1,
+        endpoint: "https://example.test".into(),
+        device_id: "device".into(),
+        database_epoch: "epoch".into(),
+        inode: inode(&database).unwrap(),
+        database,
+        opencode_bin: "opencode".into(),
+        keychain_service: "unused-test-service".into(),
+        supervisor_state: None,
+    };
+    crate::fs_util::write_private_json(&dir.path().join("config.json"), &config).unwrap();
+    let health = Health {
+        last_pass_at: now_secs(),
+        ..Health::default()
+    };
+    crate::fs_util::write_private_json(&dir.path().join("sync-health.json"), &health).unwrap();
+    let missing = status(dir.path()).unwrap();
+    assert_eq!(missing["stale"], false);
+    assert_eq!(missing["runtime_stale"], true);
+    assert_eq!(missing["runtime_age_seconds"], Value::Null);
+    let stamp = dir.path().join("runtime-checked.json");
+    std::fs::write(&stamp, b"{}").unwrap();
+    assert_eq!(status(dir.path()).unwrap()["runtime_stale"], false);
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&stamp)
+        .unwrap();
+    file.set_times(
+        std::fs::FileTimes::new()
+            .set_modified(std::time::SystemTime::now() - Duration::from_secs(7200)),
+    )
+    .unwrap();
+    let stale = status(dir.path()).unwrap();
+    assert_eq!(stale["stale"], false);
+    assert_eq!(stale["runtime_stale"], true);
+    assert!(stale["runtime_age_seconds"].as_u64().unwrap() >= 7200);
 }
 
 #[test]
