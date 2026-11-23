@@ -58,83 +58,68 @@ own interface.
 
 ## Features
 
-- **Task done versus project done:** distinguish a finished request from a wrapped-up
-  workstream with nothing left to review or decide. A small message-only decision
-  model labels idle sessions; uncertain or unassessed ones stay Idle. [Details](docs/cli.md#completion-labels).
-- **Grouped by status:** waiting for input, working, task done, project done. The harness is
-  shown on every row.
-- **Jump in and back out** of a native session while its work keeps running.
-- **Hide personal chats with one shortcut.** Switch to work-only browsing,
-  even from inside a native chat. Toggle back to your previous chat or draft.
-  Background agents keep working. [Set up work-only browsing](#work-only-browsing).
-- **Bring back any past session** without leaving the dashboard. `Ctrl+G`
-  searches older and hidden sessions by name, harness, folder, or ID, even
-  while you're typing a task, and `Enter` puts the session back in the list.
-  No new terminal, `cd`, or `--resume` needed. With nothing typed, the list
-  puts the sessions you open most often first, fading those you haven't
-  touched in days.
-- **Fast message search across Claude Code, Codex, and OpenCode.** `Ctrl+G`
-  searches conversation text through local SQLite FTS5 indices, including
-  partial words and matching snippets. `Enter` resumes the exact session,
-  even outside the dashboard's recent-history limit. Indices catch up at
-  startup and every 30 seconds at low priority; only changed sessions are
-  reindexed. Provider logs and databases stay read-only.
-- **Launches stay on the dashboard** for harnesses that can run in the
-  background. `Enter` opens the new row.
-- **Pause sessions you're waiting on** with `Ctrl+T`. They move into a Paused
-  group that stays collapsed until you press `Enter` on it. Reorder rows with
-  `Option+↑` / `↓`.
-- **Reminders don't hide ongoing work.** Follow-ups show their wake time beside
-  the normal status. Only explicitly deferred sessions go into Scheduled, below Paused
-  (`Ctrl+Y` to expand). `/defer` puts a session away; `/keep` brings it back
-  without cancelling its reminder. Sending a new message also brings it back.
-- **Available apps aren't ongoing work.** Mark preview servers as services so
-  the session keeps its normal status, rather than Background.
-- **Start in any folder** with `/cd` or `Ctrl+O` (`Cmd+O` in terminals that
-  forward it, like Ghostty and kitty). Multi-line tasks and pastes
-  stay one draft. A long paste shows as `[Pasted ~12 lines]` and `Ctrl+V`
-  attaches a clipboard image as `[Image #1]`.
-- **Select text in the draft** with `Shift+←` / `→`, a word at a time with
-  `Option+Shift`, as in OpenCode. Typing replaces the selection.
-- **Move a session to another folder** with `Ctrl+M` (`Cmd+M` where the
-  terminal forwards it), or **migrate it** to another harness with `/migrate`,
-  using [session-migrate](https://session-migrate.github.io/). OpenCode folder
-  moves use its native CLI and preserve the session ID and full history.
-- **OpenCode sessions outlive the dashboard**, and Cursor chats show live state
-  on every platform.
-- **Per-project OpenCode models:** choose `Default` in the model picker to use
-  the launch folder's OpenCode config or plugin rules. Explicit model picks override them.
-- **Fast with big histories.** Refreshes run in the background, so typing and
-  arrows never wait on a harness. Where a harness's own CLI is slow to start,
-  betteragentview reads its data directly instead: an OpenCode refresh over a 17 GB
-  history takes about 0.1 s, and Cursor about 3 ms.
-- **Light and dark themes** that follow the terminal and the OS. Force one with
-  `--theme`.
-- **Subscription usage at a glance:** concise header lines show Claude and
-  Codex rate-limit windows, resets, and pace when space allows. A second Claude
-  subscription in a `~/.claude-*` profile gets its own line (macOS). `/usage`
-  shows the full breakdown.
-- **Heavy-job queue:** with [agent-bouncer](https://github.com/moritzWa/agent-bouncer)
-  installed, a panel above the input lists the builds and test runs that are
-  running or waiting, with how long each has been at it and when the queue
-  should clear. A session whose own run is stuck in line says
-  `#1 in line for cargo test`. betteragentview only reads the queue.
-- **Talk to your sessions** with `Ctrl+K` or `Cmd+K`, from the list or inside a
-  session. Ask which ones need you, hear what one last said, tell it what to
-  do, or start a new one, with your hands in the dishwasher. It knows which
-  session you are looking at. Voice runs on OpenAI's GPT-Live or xAI's Grok
-  (`/voice grok` switches; Grok's speed has clickable `−`/`+`) through a hidden
-  browser betteragentview starts for the call, for OpenCode sessions. See
-  [Voice Mode](docs/voice.md).
-- **`Ctrl+X` twice** stops and hides or deletes a session, no dialog.
-- **`Ctrl+Z` undoes a hide** and brings the session back (in Ghostty, map `Cmd+Z` to it).
-- **ChatGPT mobile voice:** opt-in text-only OpenCode history search and queued replies
-  through a private ChatGPT MCP server. Runs without the dashboard.
-  [Setup and privacy](docs/mobile-bridge.md).
-- **Artifact previews:** explicitly approved output files open through ChatGPT's
-  file viewer, without switching between embedded preview modes.
+### See what needs you
 
-### Refresh time by harness
+- **Sessions grouped by status**, with the harness on every row. [Completion labels](docs/cli.md#completion-labels)
+  distinguish a finished task from a finished project; uncertain sessions stay Idle.
+- **Subscription usage at a glance:** Claude and Codex limits, resets, and pace
+  in the header. `/usage` shows the full breakdown, including a second Claude subscription on macOS.
+- **Builds and tests in line:** an optional [agent-bouncer](https://github.com/moritzWa/agent-bouncer)
+  panel shows running jobs, waits, and when the queue should clear.
+- **Light and dark themes** follow your terminal and OS, or choose with `--theme`.
+
+### Find and organize sessions
+
+- **Search past chats with `Ctrl+G`**, by name, harness, folder, ID, or message text
+  across Claude Code, Codex, and OpenCode. Partial words and snippets help you find
+  the right conversation; `Enter` restores it. An empty search shows frequently used sessions first.
+- **Keep work and personal chats separate.** [Work-only browsing](#work-only-browsing)
+  hides personal sessions without stopping their agents. Toggle back to your previous chat or draft.
+- **Pause or schedule:** `Ctrl+T` parks a session in Paused; `/defer` puts it in Scheduled.
+  Reminders on active work stay beside its normal status. `/keep` brings a deferred session back.
+- **Reorder, hide, undo:** reorder with `Option+↑` / `↓`, stop and hide or delete
+  with `Ctrl+X` twice, and undo a hide with `Ctrl+Z` (map `Cmd+Z` in Ghostty).
+- **Preview servers don't count as ongoing work.** Mark them as services to keep
+  the session's normal status instead of Background.
+
+### Start and switch work
+
+- **Jump into the harness's own interface and back** while work keeps running.
+  Background-capable harnesses launch without leaving the dashboard.
+  OpenCode sessions outlive it; Cursor chats show live state on every platform.
+- **Start in any folder** with `/cd` or `Ctrl+O`. Write multi-line drafts, paste
+  long text, attach clipboard images with `Ctrl+V`, and select text with `Shift+arrow`
+  or words with `Option+Shift+arrow`.
+- **Move or migrate a session:** `Ctrl+M` changes folders; `/migrate` changes
+  harnesses through [session-migrate](https://session-migrate.github.io/).
+  OpenCode folder moves preserve the session ID and history.
+- **Per-project OpenCode models:** choose `Default` to follow the folder's config
+  or plugin rules, or pick a model explicitly to override them.
+
+### Talk to your agents
+
+- **Desktop voice for OpenCode:** `Ctrl+K` or `Cmd+K` lets you ask what needs you,
+  hear a session's answer, give it a task, or start a new one. Supports OpenAI's
+  GPT-Live and xAI's Grok. [Voice Mode](docs/voice.md).
+- **ChatGPT mobile voice:** opt-in OpenCode history search and queued replies
+  through a private MCP server, even without the dashboard. Approved output files
+  open in ChatGPT's file viewer. [Setup and privacy](docs/mobile-bridge.md).
+
+### Performance
+
+- **Refreshes don't block typing or navigation.** Harnesses refresh in parallel
+  on background threads, reading local data directly where possible.
+- **Fast local message search:** SQLite FTS5 indices update at startup and every
+  30 seconds, reindexing only changed sessions. Harness logs and databases stay read-only.
+
+**No OpenCode fork is needed for fast dashboard refreshes or history search.**
+Those optimizations live in BetterAgentView and support stock OpenCode.
+Opening a chat is a separate path: reusing one prewarmed OpenCode interface across
+sessions needs targeted TUI switching, available in my [OpenCode fork](https://gist.github.com/moritzWa/9c0eb6f5d36a238714a40b900fde09ce).
+BetterAgentView detects that capability. Without it, chats still open, but the first
+open of each session can take longer because it starts a separate interface.
+
+#### Refresh time by harness
 
 betteragentview is fast because it skips each harness's CLI wherever it can and
 reads the data itself: OpenCode's SQLite database directly instead of starting
@@ -152,6 +137,7 @@ macOS instead of running `lsof`.
 
 Median over 30 s of one-second refreshes on an Apple M5 Pro with a 17 GB
 OpenCode history, measured with [`AGENTVIEW_PERF_LOG`](docs/cli.md#timing-log).
+These measurements used my OpenCode setup, not a separate stock-versus-fork benchmark.
 Harnesses are read in parallel, and none of it runs on the input thread.
 
 ## Work-only browsing
