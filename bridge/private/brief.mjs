@@ -23,8 +23,11 @@ async function resolve({inventory,session_id,query}) {
 }
 
 /** One-call deep dive on a single session: task, recent turns with a generous
- * budget for the latest reply, decision candidates, freshness and send parameters. */
-export async function sessionBrief({db,gate,principal},{session_id,query}) {
+ * budget for the latest reply, decision candidates, freshness and send parameters.
+ * @param {any} dependencies
+ * @param {import('../contracts/contract.mjs').ToolInput<'session_brief'>} input */
+export async function sessionBrief({db,gate,principal},input) {
+  const {session_id,query}=input;
   if(!session_id&&!query?.trim())throw new SyncError('session_id_or_query_required',400);
   const source=`${principal.device_id}|${principal.database_epoch}`;
   const started=Date.now();

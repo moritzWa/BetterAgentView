@@ -1,10 +1,9 @@
-import { z } from 'zod';
+export {ReadContext} from '../contracts/contract.mjs';
 import { SyncError } from '../sync/projection.mjs';
 
 // A consistency check, not authorization. Native permissions and the write grant
 // remain independent. Preserve the already-read bytes of the latest visible
 // message: streaming suffixes and appended turns do not invalidate a reply.
-export const ReadContext=z.object({version:z.literal(1),anchor_order:z.number().int().min(-1),anchor_bytes:z.number().int().min(0).max(1_000_000),prefix_hash:z.string().regex(/^[a-f0-9]{64}$/),visible_before:z.number().int().min(0).nullable()}).strict();
 export async function readContext(db,principal,sessionId,anchor=null) {
   const row=(await db.query(`WITH target AS (
       SELECT * FROM av_sessions WHERE owner_id=$1 AND device_id=$2 AND database_epoch=$3 AND session_id=$4 AND cursor IS NOT NULL AND (state->>'deleted')::boolean=false

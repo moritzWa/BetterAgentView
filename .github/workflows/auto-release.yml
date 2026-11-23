@@ -33,6 +33,19 @@ jobs:
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@1.75.0
+        with:
+          components: rustfmt
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: bridge/package-lock.json
+      - name: Reject shared API contract drift before tagging
+        working-directory: bridge
+        run: |
+          npm ci
+          npm run contracts:check
+          npm run typecheck
       - name: Check it compiles before releasing
         run: cargo check --locked
       - name: Pick the next version

@@ -1,4 +1,5 @@
 import { digest, parseBatch, SyncError } from './projection.mjs';
+import {CursorRequest,VerifyRequest} from '../contracts/contract.mjs';
 
 const key = p => [p.owner_id, p.device_id, p.database_epoch];
 const predicate = 'owner_id=$1 AND device_id=$2 AND database_epoch=$3';
@@ -119,8 +120,9 @@ export class SyncStore {
   /** Cursor compare only. A mismatch is a session whose cloud pointer is not the Mac's. */
   async cursors(principal, input) {
     if (principal.audience !== 'sync') throw new SyncError('forbidden', 403);
-    const sessions = input?.sessions;
-    if (!Array.isArray(sessions) || sessions.length > 4000) throw new SyncError('invalid_cursors', 400);
+    const parsed = CursorRequest.safeParse(input);
+    if (!parsed.success) throw new SyncError('invalid_cursors', 400);
+    const {sessions} = parsed.data;
     const ids = [...new Set(sessions.filter(s => typeof s?.session_id === 'string' && s.session_id.length <= 200).map(s => s.session_id))];
     const rows = ids.length ? (await this.db.query(`SELECT session_id, cursor FROM av_sessions WHERE ${predicate} AND session_id = ANY($4::text[])`, [...key(principal), ids])).rows : [];
     const cloud = new Map(rows.map(r => [r.session_id, r.cursor === null || r.cursor === undefined ? null : Number(r.cursor)]));
@@ -135,8 +137,10 @@ export class SyncStore {
   /** One session, a hash only. Hashed in Postgres so a long session cannot exceed the Worker CPU limit. */
   async verify(principal, input) {
     if (principal.audience !== 'sync') throw new SyncError('forbidden', 403);
-    const sessionId = input?.session_id;
-    if (typeof sessionId !== 'string' || sessionId.length > 200 || typeof input?.hash !== 'string' || !/^[a-f0-9]{32}$/.test(input.hash)) throw new SyncError('invalid_verify', 400);
+    const parsed = VerifyRequest.safeParse(input);
+    if (!parsed.success) throw new SyncError('invalid_verify', 400);
+    input = parsed.data;
+    const sessionId = input.session_id;
     const sk = [...key(principal), sessionId];
     const row = (await this.db.query(`SELECT s.cursor,
       (SELECT count(*) FROM av_messages m WHERE m.owner_id=s.owner_id AND m.device_id=s.device_id AND m.database_epoch=s.database_epoch AND m.session_id=s.session_id AND m.generation=s.generation) AS n,

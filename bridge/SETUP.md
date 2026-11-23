@@ -46,6 +46,10 @@ This updates the same Worker, not a new service. Keep `name`, `ISSUER`, the
 Durable Object binding/class and migration history unchanged. Do not delete or
 recreate the Worker or replace its secrets. No push or PR automatically deploys.
 
+Wire types, validation, MCP inputs, routes and limits share one [contract](contracts/README.md).
+Edit its TypeScript source and run `npm run contracts:generate`. Tests and builds
+reject generated drift and type errors before deployment.
+
 `npm run deploy` now runs the installed-connector live gate after deployment.
 Do not deploy directly with Wrangler: that bypasses the gate. A failed gate means
 the rollout is not healthy, even if Cloudflare accepted the upload.

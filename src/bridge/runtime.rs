@@ -1,3 +1,5 @@
+use super::contract::{Completion, Health, Reason, Status};
+pub(super) use super::contract::{RuntimeSnapshot as Snapshot, RuntimeStatus};
 use super::Config;
 use crate::adapters::{DiscoveryRequest, OpenCodeController, OpenCodeSource, SessionSource};
 use crate::control::ProviderController;
@@ -5,56 +7,26 @@ use crate::domain::{AgentSession, SessionSnapshot, SessionState};
 use crate::opencode_supervisor::OpenCodeSupervisor;
 use anyhow::{Context, Result};
 use rusqlite::OptionalExtension;
-use serde::Serialize;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
-#[derive(Serialize)]
-pub(super) struct RuntimeStatus {
-    session_id: String,
-    status: &'static str,
-    completion: &'static str,
-    reason: Option<&'static str>,
-    updated_at: u64,
-    can_message: bool,
-    last_user_message_id: Option<String>,
-    last_user_ms: u64,
-    top_level: bool,
-    attention_assessed: bool,
-    directory: Option<String>,
-    health: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    turn_started_at: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    last_progress_at: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    last_progress_kind: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    in_flight: Option<&'static str>,
-}
-#[derive(Serialize)]
-pub(super) struct Snapshot {
-    available: bool,
-    partial: bool,
-    truncated: bool,
-    statuses: Vec<RuntimeStatus>,
-}
-
 pub(super) fn project(session: &AgentSession) -> RuntimeStatus {
     let status = match session.state {
-        SessionState::Working => "working",
-        SessionState::NeedsInput => "needs_you",
-        SessionState::Scheduled => "scheduled",
-        SessionState::ReadyForReview => "needs_you",
-        SessionState::Completed | SessionState::TaskDone | SessionState::ProjectDone => "done",
-        SessionState::Unknown => "unknown",
+        SessionState::Working => Status::Working,
+        SessionState::NeedsInput => Status::NeedsYou,
+        SessionState::Scheduled => Status::Scheduled,
+        SessionState::ReadyForReview => Status::NeedsYou,
+        SessionState::Completed | SessionState::TaskDone | SessionState::ProjectDone => {
+            Status::Done
+        }
+        SessionState::Unknown => Status::Unknown,
     };
     let reason = if session.state == SessionState::NeedsInput {
         Some(match session.raw_state.as_deref() {
-            Some("permission requested") => "approval",
-            Some("question asked") => "question",
-            Some("turn failed") => "failed",
-            _ => "reply",
+            Some("permission requested") => Reason::Approval,
+            Some("question asked") => Reason::Question,
+            Some("turn failed") => Reason::Failed,
+            _ => Reason::Reply,
         })
     } else {
         None
@@ -66,32 +38,32 @@ pub(super) fn project(session: &AgentSession) -> RuntimeStatus {
         );
     RuntimeStatus {
         session_id: session.provider_session_id.clone(),
-        status,
+        status: status.clone(),
         completion: match session.state {
-            SessionState::TaskDone => "task_done",
-            SessionState::ProjectDone => "project_done",
-            _ => "unconfirmed",
+            SessionState::TaskDone => Completion::TaskDone,
+            SessionState::ProjectDone => Completion::ProjectDone,
+            _ => Completion::Unconfirmed,
         },
-        reason,
+        reason: reason.clone(),
         updated_at: session
             .updated_at
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map_or(0, |d| d.as_millis() as u64),
+            .map_or(0, |d| d.as_millis() as i64),
         can_message,
         last_user_message_id: None,
         last_user_ms: crate::last_message::facts_for(&session.id)
-            .map_or(0, |facts| facts.last_user_ms),
+            .map_or(0, |facts| facts.last_user_ms as i64),
         top_level: true,
         attention_assessed: session.state == SessionState::NeedsInput,
         directory: (!session.cwd.as_os_str().is_empty())
             .then(|| session.cwd.to_string_lossy().into_owned()),
         // Working stays unknown until the source read. A missing read is not a stall.
-        health: if reason == Some("failed") {
-            "failed"
-        } else if status == "working" || status == "unknown" {
-            "unknown"
+        health: if reason == Some(Reason::Failed) {
+            Health::Failed
+        } else if status == Status::Working || status == Status::Unknown {
+            Health::Unknown
         } else {
-            "idle"
+            Health::Idle
         },
         turn_started_at: None,
         last_progress_at: None,
@@ -190,9 +162,9 @@ pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
         .collect::<Vec<_>>();
     statuses.sort_by_key(|s| {
         (
-            if s.status == "needs_you" {
+            if s.status == Status::NeedsYou {
                 0
-            } else if s.status == "working" {
+            } else if s.status == Status::Working {
                 1
             } else {
                 2
@@ -200,12 +172,15 @@ pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
             std::cmp::Reverse(s.updated_at),
         )
     });
-    let count_truncated = statuses.len() > 1000;
-    let mut partial =
-        !discovery.warnings.is_empty() || statuses.iter().skip(1000).any(|s| s.status != "done");
+    let count_truncated = statuses.len() > super::contract::SNAPSHOT_STATUSES;
+    let mut partial = !discovery.warnings.is_empty()
+        || statuses
+            .iter()
+            .skip(super::contract::SNAPSHOT_STATUSES)
+            .any(|s| s.status != Status::Done);
     // Keep the durable wake snapshot small; never drop attention states merely
     // to make room for old completed history. Search still covers all history.
-    statuses.truncate(1000);
+    statuses.truncate(super::contract::SNAPSHOT_STATUSES);
     let db = super::source::open(&config.database).context("runtime snapshot: source_open")?;
     let mut latest=db.prepare("SELECT m.id FROM session_message m JOIN session_v2 s ON s.id=m.session_id WHERE s.id=?1 AND m.type='user' AND m.seq<COALESCE((SELECT b.seq FROM session_message b WHERE b.session_id=s.id AND b.id=json_extract(s.revert,'$.messageID')),9007199254740991) ORDER BY m.seq DESC LIMIT 1").context("runtime snapshot: last_user")?;
     for status in &mut statuses {
@@ -219,18 +194,19 @@ pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
         .map_or(0, |d| d.as_millis() as u64);
     let working = statuses
         .iter()
-        .filter(|status| status.status == "working")
+        .filter(|status| status.status == Status::Working)
         .map(|status| status.session_id.clone())
         .collect::<Vec<_>>();
     match super::health::progress(&db, &working, now_ms) {
         Ok(found) => {
             for status in &mut statuses {
                 if let Some(progress) = found.get(&status.session_id) {
-                    status.health = progress.health;
-                    status.turn_started_at = progress.turn_started_at;
-                    status.last_progress_at = progress.last_progress_at;
-                    status.last_progress_kind = progress.last_progress_kind;
-                    status.in_flight = progress.in_flight;
+                    status.health = progress.health.parse().unwrap_or(Health::Unknown);
+                    status.turn_started_at = progress.turn_started_at.map(|v| v as i64);
+                    status.last_progress_at = progress.last_progress_at.map(|v| v as i64);
+                    status.last_progress_kind =
+                        progress.last_progress_kind.and_then(|v| v.parse().ok());
+                    status.in_flight = progress.in_flight.and_then(|v| v.parse().ok());
                 }
             }
         }
@@ -251,7 +227,7 @@ pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
         keep += 1;
     }
     let truncated = count_truncated || keep < statuses.len();
-    partial |= statuses.iter().skip(keep).any(|s| s.status != "done");
+    partial |= statuses.iter().skip(keep).any(|s| s.status != Status::Done);
     statuses.truncate(keep);
     Ok(Snapshot {
         available: true,
