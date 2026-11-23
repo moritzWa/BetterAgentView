@@ -119,26 +119,31 @@ sessions needs targeted TUI switching, available in my [OpenCode fork](https://g
 BetterAgentView detects that capability. Without it, chats still open, but the first
 open of each session can take longer because it starts a separate interface.
 
-#### Refresh time by harness
+#### Refresh and chat-opening times
 
 betteragentview is fast because it skips each harness's CLI wherever it can and
 reads the data itself: OpenCode's SQLite database directly instead of starting
 `opencode db` for every query, and which Cursor chats are open straight from
 macOS instead of running `lsof`.
 
-| Harness | Time per refresh | How betteragentview reads it |
-| --- | ---: | --- |
-| OpenCode | ~130 ms | Its SQLite database, read-only (going through `opencode db` took ~460 ms) |
-| Claude Code | ~180 ms | `claude agents --json` |
-| OpenAI Codex | ~80 ms | Codex's App Server |
-| Cursor | ~3 ms | Its chat files, plus macOS for which chats are open (`lsof` took ~80 ms) |
-| Devin | ~6 ms | Its SQLite database, read-only |
-| Pi, Antigravity, Terminal | under 1 ms | Session files and betteragentview's own records |
+| Harness | Dashboard refresh¹ | Native chat opening, stock² | Native chat opening, [my OpenCode fork](https://github.com/moritzWa/opencode/tree/v2-parity)² |
+| --- | ---: | ---: | ---: |
+| OpenCode | ~130 ms | ~204 ms | **~52 ms (3.9× faster)** |
+| Claude Code | ~180 ms | — | — |
+| OpenAI Codex | ~80 ms | — | — |
+| Cursor | ~3 ms | — | — |
+| Devin | ~6 ms | — | — |
+| Pi, Antigravity, Terminal | under 1 ms | — | — |
 
-Median over 30 s of one-second refreshes on an Apple M5 Pro with a 17 GB
-OpenCode history, measured with [`AGENTVIEW_PERF_LOG`](docs/cli.md#timing-log).
-These measurements used my OpenCode setup, not a separate stock-versus-fork benchmark.
-Harnesses are read in parallel, and none of it runs on the input thread.
+¹ Median refresh over 30 s on an Apple M5 Pro with a 17 GB OpenCode history,
+recorded using my setup. Refreshes read harnesses in parallel, off the input thread.
+The direct-database optimization does not need the fork; stock was not separately timed on that history.
+
+² First visit to another chat with a warm server: a new native interface in stock
+OpenCode versus the fork's prewarmed shared interface. Medians over 40 openings per build, using identical
+40-message synthetic chats, timed until the last reply reaches a headless terminal.
+These are native launch/switch timings, not full dashboard or model-response timings.
+[Versions, raw samples, and reproduction](docs/performance.md).
 
 ## Work-only browsing
 
