@@ -3,13 +3,13 @@ use serde_json::Value;
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 
-pub fn request(
+pub fn request<T: serde::de::DeserializeOwned>(
     endpoint: &str,
     path: &str,
     token: Option<&str>,
     body: Option<&Value>,
     timeout: u64,
-) -> Result<Value> {
+) -> Result<T> {
     let base = url::Url::parse(endpoint)?;
     if base.scheme() != "https"
         || base.host_str().is_none()

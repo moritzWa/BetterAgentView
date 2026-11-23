@@ -1,0 +1,15 @@
+{
+  "OkResponse":{"ok":true},
+  "PairStartResponse":{"device_code":"fixture","verification_uri":"https://bridge.invalid/pair","expires_in":600,"interval":5},
+  "PairTokenResponse":{"access_token":"fixture","token_type":"Bearer","expires_at":2000000,"owner_id":"fixture@example.invalid","device_id":"device_fixture","database_epoch":"epoch_fixture"},
+  "BatchResponse":{"batch_id":"batch_fixture","session_id":"ses_fixture","committed":true,"through":2,"next_chunk":null},
+  "CursorsResponse":{"mismatch":["ses_fixture"]},
+  "VerifyResponse":{"session_id":"ses_fixture","match":true,"reason":"match","cloud_cursor":2,"cloud_count":1},
+  "PollResponse":{"pending":false,"generation":0,"active_until":0},
+  "LeaseResponse":{"message":null},
+  "MessageLease":{"operation_id":"op_fixture","session_id":"ses_fixture","message_id":"msg_fixture","text":"Synthetic task","base_cursor":2,"expires_at":2000000,"context":null},
+  "StartLeaseResponse":{"start":null},
+  "ReceiptResponse":{"operation_id":"op_fixture","session_id":"ses_fixture","status":"accepted","message_id":"msg_fixture","expires_at":2000000,"delivery_confirmed":true,"next_action":"read_session_for_agent_reply"},
+  "StartReceiptResponse":{"operation_id":"op_fixture","status":"started","directory":"/fixture","session_id":"ses_fixture","started":true,"prompt_accepted":true,"reason":null,"expires_at":2000000,"next_action":"session_health"},
+  "ArtifactResponse":{"artifact_id":"artifact_fixture","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bytes":2}
+}

@@ -67,6 +67,16 @@ after the gate passes. A receipt in `~/.local/state/agentview/bridge/release-che
 records the running binary hash and cloud observation timestamps, not secrets.
 The receipt proves that rollout, not perpetual health. Failed checks remove it.
 
+After rollout, each authenticated connector poll checks runtime publication age
+independently of heartbeats. A continuously online Mac alerts after two minutes
+without a usable runtime snapshot while the phone is active, or 20 minutes while
+idle (normal idle sync is 15 minutes). Startup/wake gets a two-minute grace period;
+offline gaps reset continuity. The cloud logs one incident and includes it in poll
+responses. The installed Mac bridge shows a notification once per incident, with
+durable deduplication across restarts, and logs recovery. No chat text, tokens or
+session titles are included. A Mac that is asleep or wholly offline cannot show
+this local notification; presence remains offline/unknown in that case.
+
 This is an operator gate for the private bridge. Public GitHub release jobs do not
 have the owner's Mac or account credentials; their synthetic tests are not a live
 private-bridge pass.

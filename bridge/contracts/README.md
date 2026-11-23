@@ -25,3 +25,17 @@ Tests, Worker builds/deploys and public release checks run these guards. Numeric
 and array limits still need runtime validation; ordinary TypeScript numbers and
 arrays cannot encode those bounds. A shared schema also cannot prove which cloud
 version is deployed. Keep the installed-connector live release gate.
+
+`responses.mts` owns connector responses and per-tool MCP output envelopes.
+The Worker validates successful connector responses and MCP results before
+returning them. Rust deserializes generated response types, including required
+nullable queue envelopes, rather than treating missing fields as empty queues.
+MCP attachment results use the official SDK's result schema. Rich read envelopes
+allow extra metadata; critical fields are typed and validated. Database adapters
+remain dynamic, so runtime checks still matter.
+
+The previous shipped contract and Worker source are frozen under `test/compat`.
+Tests exercise old/new request validators, both HTTP servers, and old response
+fixtures consumed by generated Rust types. The baseline is not updated by normal
+generation. To advance it intentionally after a rollout, run
+`node contracts/snapshot-compat.mjs <full-shipped-commit-sha>` and review the diff.

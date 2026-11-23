@@ -1,3 +1,4 @@
+import {runtimeWatch} from './runtime-watch.mjs';
 /** Durable wake metadata only, never chat text. Idle polls do not connect to Neon. */
 function runtimeBucket(id){let hash=0;for(let i=0;i<id.length;i++)hash=(hash*31+id.charCodeAt(i))>>>0;return hash%64;}
 export class WakeGate {
@@ -126,7 +127,16 @@ export class WakeGate {
       return Response.json({ok:true,complete});
     }
     if(path==='/poll') {
-      await s.put(`last_seen:${source}`,Date.now());
+      const meta=await s.get(`runtime_meta:${source}`);
+      const now=Date.now(),watch=runtimeWatch(now,{
+        last_seen:await s.get(`last_seen:${source}`)??null,
+        runtime_checked:meta?.available&&!meta.partial?(await s.get(`runtime_checked:${source}`)??null):null,
+        active_until:await s.get(`active_until:${source}`)??0,
+      },await s.get(`runtime_watch:${source}`)??{});
+      const old=await s.get(`runtime_watch:${source}`);
+      if(watch.incident&&watch.incident!==old?.incident)console.error('bridge_runtime_publication_stale');
+      if(!watch.incident&&old?.incident)console.info('bridge_runtime_publication_recovered');
+      await s.put({[`last_seen:${source}`]:now,[`runtime_watch:${source}`]:watch});
       if(!(await s.get(`pending:${source}`))) {
         await new Promise(resolve=>{
           let timer;
@@ -136,7 +146,8 @@ export class WakeGate {
       }
       if(!(await s.get(`token:${p.token_hash}`)))return Response.json({error:'unauthorized'},{status:401});
     }
-    return Response.json({principal:credential,pending:await s.get(`pending:${source}`)??false,generation:await s.get(`generation:${source}`)??0,last_seen:await s.get(`last_seen:${source}`)??null,active_until:await s.get(`active_until:${source}`)??0});
+    const watch=await s.get(`runtime_watch:${source}`);
+    return Response.json({principal:credential,pending:await s.get(`pending:${source}`)??false,generation:await s.get(`generation:${source}`)??0,last_seen:await s.get(`last_seen:${source}`)??null,active_until:await s.get(`active_until:${source}`)??0,runtime_alert:watch?.incident?{incident:watch.incident,stale_for_ms:watch.stale_for_ms}:null});
   }
 }
 

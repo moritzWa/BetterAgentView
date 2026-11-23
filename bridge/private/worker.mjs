@@ -10,6 +10,7 @@ import { digest, SyncError } from '../sync/projection.mjs';
 import { RuntimeSnapshot } from './runtime.mjs';
 import {publishArtifact} from './artifacts.mjs';
 import {CheckedRequest,EmptyRequest,AckRequest,StartAckRequest,routes} from '../contracts/contract.mjs';
+import {responseByRoute} from '../contracts/responses.mjs';
 export { WakeGate } from './gate.mjs';
 
 const AUTH_PATHS=new Set(['/register','/authorize','/token','/revoke','/pair/start','/pair/token','/pair','/consent','/auth/google/callback']);
@@ -29,7 +30,7 @@ async function bounded(request,limit) {
   return new Request(request.url,{method:request.method,headers:request.headers,body:bytes});
 }
 export function application({database=openDatabase}={}) {
-  return {async fetch(request,env) {
+  const app={async fetch(request,env) {
     const url=new URL(request.url),path=url.pathname;
     if(path==='/health')return json({ok:true,private:true});
     if(path==='/oauth/test-callback')return html('<h1>Authorization callback received</h1><p>The integration test can finish exchanging its one-use code. You can close this tab.</p>');
@@ -51,7 +52,7 @@ export function application({database=openDatabase}={}) {
         if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new SyncError('unauthorized',401);
         await wire(EmptyRequest,request);
         const value=await gate.poll(await digest(token));
-        return json({pending:value.pending,generation:value.generation,active_until:value.active_until}); // No Neon query.
+        return json({pending:value.pending,generation:value.generation,active_until:value.active_until,runtime_alert:value.runtime_alert??null}); // No Neon query.
       }
       if(path===routes.runtime && request.method==='POST') {
         if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new SyncError('unauthorized',401);
@@ -114,6 +115,14 @@ export function application({database=openDatabase}={}) {
       console.error('bridge_request_failed',name,code);
       return json({error:'request_failed'},500); // Deliberately no SQL, token or body logging.
     } finally { try{await db?.close();}catch{console.error('bridge_db_close_failed');} }
+  }};
+  return {async fetch(request,env) {
+    const response=await app.fetch(request,env),schema=responseByRoute[new URL(request.url).pathname];
+    if(response.ok&&schema) {
+      const parsed=schema.safeParse(await response.clone().json().catch(()=>null));
+      if(!parsed.success){console.error('bridge_response_contract_failed');return json({error:'invalid_server_response'},500);}
+    }
+    return response;
   }};
 }
 export default application();

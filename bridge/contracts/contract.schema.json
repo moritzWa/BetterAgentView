@@ -46,6 +46,45 @@
     },
     "ArtifactUpload": {
       "$ref": "#/definitions/ArtifactUpload"
+    },
+    "OkResponse": {
+      "$ref": "#/definitions/OkResponse"
+    },
+    "PairStartResponse": {
+      "$ref": "#/definitions/PairStartResponse"
+    },
+    "PairTokenResponse": {
+      "$ref": "#/definitions/PairTokenResponse"
+    },
+    "BatchResponse": {
+      "$ref": "#/definitions/BatchResponse"
+    },
+    "CursorsResponse": {
+      "$ref": "#/definitions/CursorsResponse"
+    },
+    "VerifyResponse": {
+      "$ref": "#/definitions/VerifyResponse"
+    },
+    "PollResponse": {
+      "$ref": "#/definitions/PollResponse"
+    },
+    "LeaseResponse": {
+      "$ref": "#/definitions/LeaseResponse"
+    },
+    "MessageLease": {
+      "$ref": "#/definitions/MessageLease"
+    },
+    "StartLeaseResponse": {
+      "$ref": "#/definitions/StartLeaseResponse"
+    },
+    "ReceiptResponse": {
+      "$ref": "#/definitions/ReceiptResponse"
+    },
+    "StartReceiptResponse": {
+      "$ref": "#/definitions/StartReceiptResponse"
+    },
+    "ArtifactResponse": {
+      "$ref": "#/definitions/ArtifactResponse"
     }
   },
   "required": [
@@ -63,7 +102,20 @@
     "VerifyRequest",
     "PairStart",
     "PairToken",
-    "ArtifactUpload"
+    "ArtifactUpload",
+    "OkResponse",
+    "PairStartResponse",
+    "PairTokenResponse",
+    "BatchResponse",
+    "CursorsResponse",
+    "VerifyResponse",
+    "PollResponse",
+    "LeaseResponse",
+    "MessageLease",
+    "StartLeaseResponse",
+    "ReceiptResponse",
+    "StartReceiptResponse",
+    "ArtifactResponse"
   ],
   "additionalProperties": false,
   "definitions": {
@@ -773,6 +825,549 @@
         "application/pdf",
         "application/zip"
       ]
+    },
+    "OkResponse": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": false
+    },
+    "PairStartResponse": {
+      "type": "object",
+      "properties": {
+        "device_code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verification_uri": {
+          "type": "string",
+          "format": "uri"
+        },
+        "expires_in": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "interval": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "device_code",
+        "verification_uri",
+        "expires_in",
+        "interval"
+      ],
+      "additionalProperties": false
+    },
+    "PairTokenResponse": {
+      "type": "object",
+      "properties": {
+        "access_token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "token_type": {
+          "type": "string",
+          "const": "Bearer"
+        },
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "device_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "database_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "access_token",
+        "token_type",
+        "expires_at",
+        "owner_id",
+        "device_id",
+        "database_epoch"
+      ],
+      "additionalProperties": false
+    },
+    "BatchResponse": {
+      "type": "object",
+      "properties": {
+        "batch_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "through": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "next_chunk": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "batch_id",
+        "session_id",
+        "committed",
+        "through",
+        "next_chunk"
+      ],
+      "additionalProperties": false
+    },
+    "CursorsResponse": {
+      "type": "object",
+      "properties": {
+        "mismatch": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
+      "required": [
+        "mismatch"
+      ],
+      "additionalProperties": false
+    },
+    "VerifyResponse": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "match": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "missing",
+            "match",
+            "differs"
+          ]
+        },
+        "cloud_cursor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "cloud_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "session_id",
+        "match",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "PollResponse": {
+      "type": "object",
+      "properties": {
+        "pending": {
+          "type": "boolean"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "active_until": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "runtime_alert": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RuntimeAlert"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "pending",
+        "generation",
+        "active_until"
+      ],
+      "additionalProperties": false
+    },
+    "RuntimeAlert": {
+      "type": "object",
+      "properties": {
+        "incident": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "stale_for_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "incident",
+        "stale_for_ms"
+      ],
+      "additionalProperties": false
+    },
+    "LeaseResponse": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/MessageLease"
+                },
+                {
+                  "$ref": "#/definitions/ConfirmationLease"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "MessageLease": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "message_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50000
+        },
+        "base_cursor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "context": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReadContext"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "operation_id",
+        "session_id",
+        "message_id",
+        "text",
+        "base_cursor",
+        "expires_at"
+      ],
+      "additionalProperties": false
+    },
+    "ConfirmationLease": {
+      "type": "object",
+      "properties": {
+        "needs_confirmation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "needs_confirmation"
+      ],
+      "additionalProperties": false
+    },
+    "StartLeaseResponse": {
+      "type": "object",
+      "properties": {
+        "start": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StartLease"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "start"
+      ],
+      "additionalProperties": false
+    },
+    "StartLease": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "directory": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "operation_id",
+        "directory",
+        "text",
+        "expires_at"
+      ],
+      "additionalProperties": false
+    },
+    "ReceiptResponse": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "status": {
+          "$ref": "#/definitions/DeliveryStatus"
+        },
+        "message_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "delivery_confirmed": {
+          "type": "boolean"
+        },
+        "next_action": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "operation_id",
+        "session_id",
+        "status",
+        "message_id",
+        "expires_at",
+        "delivery_confirmed",
+        "next_action"
+      ],
+      "additionalProperties": false
+    },
+    "DeliveryStatus": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "leased",
+        "accepted",
+        "needs_confirmation",
+        "failed",
+        "expired",
+        "uncertain",
+        "cancelled"
+      ]
+    },
+    "StartReceiptResponse": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "status": {
+          "$ref": "#/definitions/StartStatus"
+        },
+        "directory": {
+          "type": "string"
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "started": {
+          "type": "boolean"
+        },
+        "prompt_accepted": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "next_action": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "operation_id",
+        "status",
+        "directory",
+        "session_id",
+        "started",
+        "prompt_accepted",
+        "reason",
+        "expires_at",
+        "next_action"
+      ],
+      "additionalProperties": false
+    },
+    "StartStatus": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "leased",
+        "started",
+        "created_not_started",
+        "failed",
+        "expired",
+        "uncertain",
+        "cancelled"
+      ]
+    },
+    "ArtifactResponse": {
+      "type": "object",
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "artifact_id",
+        "sha256",
+        "bytes"
+      ],
+      "additionalProperties": false
     }
   },
   "title": "BridgeContracts"

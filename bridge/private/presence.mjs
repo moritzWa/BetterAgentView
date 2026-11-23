@@ -1,3 +1,4 @@
+// @ts-check
 import {ageText} from './attention.mjs';
 
 /** Timestamps only. Never reads the outbox: a queued message is not a Mac. */
@@ -5,6 +6,9 @@ export const IDLE_SYNC_MS=15*60_000;
 export const HEARTBEAT_ONLINE_MS=90_000;
 export const HISTORY_FRESH_MS=17*60_000;
 
+/** @param {number} now
+ * @param {Partial<Record<string,number>>} stamps
+ * @returns {import('../contracts/responses.mjs').ToolOutput<'mac_presence'>} */
 export function macPresence(now,stamps={}) {
   const last_heartbeat_at=finite(stamps.last_seen);
   const last_successful_sync_at=finite(stamps.checked);
@@ -14,18 +18,19 @@ export function macPresence(now,stamps={}) {
   const last_contact_at=contacts.length?Math.max(...contacts):null;
   const heartbeat_age_ms=last_heartbeat_at===null?null:Math.max(0,now-last_heartbeat_at);
   const sync_age_ms=last_successful_sync_at===null?null:Math.max(0,now-last_successful_sync_at);
-  const bridge=last_heartbeat_at===null?'unknown':heartbeat_age_ms<=HEARTBEAT_ONLINE_MS?'online':'offline';
+  const bridge=heartbeat_age_ms===null?'unknown':heartbeat_age_ms<=HEARTBEAT_ONLINE_MS?'online':'offline';
   // A recent connector HTTPS call proves this worker was reachable. Silence can be
   // sleep, a stopped daemon, or a network loss, so it is unknown, not "no internet".
   const internet=bridge==='online'?'reachable':'unknown';
-  const skipped=Number.isInteger(stamps.sync_skipped)&&stamps.sync_skipped>0?stamps.sync_skipped:0;
-  const sessions_behind=Number.isInteger(stamps.behind)&&stamps.behind>0?stamps.behind:0;
+  const skipped=typeof stamps.sync_skipped==='number'&&Number.isInteger(stamps.sync_skipped)&&stamps.sync_skipped>0?stamps.sync_skipped:0;
+  const sessions_behind=typeof stamps.behind==='number'&&Number.isInteger(stamps.behind)&&stamps.behind>0?stamps.behind:0;
   const behind_since=finite(stamps.behind_since);
   const behind_for_ms=sessions_behind&&behind_since!==null?Math.max(0,now-behind_since):null;
+  /** @type {import('../contracts/responses.mjs').ToolOutput<'mac_presence'>['history_sync']} */
   let history_sync='unknown';
   if(last_successful_sync_at!==null) {
     const partial=skipped>0&&last_attempt_at!==null&&last_attempt_at>last_successful_sync_at;
-    history_sync=partial?'partial':sync_age_ms<=HISTORY_FRESH_MS?'fresh':'stale';
+    history_sync=partial?'partial':(sync_age_ms??Infinity)<=HISTORY_FRESH_MS?'fresh':'stale';
   }
   return {
     bridge,internet,history_sync,last_heartbeat_at,last_successful_sync_at,last_contact_at,
@@ -42,4 +47,5 @@ export function macPresence(now,stamps={}) {
     },
   };
 }
-function finite(value){return Number.isFinite(value)?value:null;}
+/** @param {number|undefined} value */
+function finite(value){return typeof value==='number'&&Number.isFinite(value)?value:null;}

@@ -1,0 +1,1626 @@
+{
+  "list_artifacts": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "artifacts": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "artifact_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "session_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "title": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "mime_type": {
+              "type": "string"
+            },
+            "byte_length": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "sha256": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "artifact_id",
+            "session_id",
+            "title",
+            "name",
+            "mime_type",
+            "byte_length",
+            "sha256"
+          ],
+          "additionalProperties": {}
+        }
+      }
+    },
+    "required": [
+      "artifacts"
+    ],
+    "additionalProperties": {}
+  },
+  "mac_presence": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "bridge": {
+        "type": "string",
+        "enum": [
+          "online",
+          "offline",
+          "unknown"
+        ]
+      },
+      "internet": {
+        "type": "string",
+        "enum": [
+          "reachable",
+          "unknown"
+        ]
+      },
+      "history_sync": {
+        "type": "string",
+        "enum": [
+          "fresh",
+          "stale",
+          "partial",
+          "unknown"
+        ]
+      },
+      "last_heartbeat_at": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "last_successful_sync_at": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "bridge",
+      "internet",
+      "history_sync",
+      "last_heartbeat_at",
+      "last_successful_sync_at"
+    ],
+    "additionalProperties": {}
+  },
+  "new_since_last_check": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "available": {
+        "type": "boolean"
+      },
+      "changes": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "change": {
+              "type": "string",
+              "enum": [
+                "needs_you",
+                "finished"
+              ]
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Reason"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "session_id",
+            "change",
+            "reason"
+          ],
+          "additionalProperties": {}
+        }
+      },
+      "note": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "available",
+      "changes",
+      "note"
+    ],
+    "additionalProperties": {},
+    "definitions": {
+      "Reason": {
+        "type": "string",
+        "enum": [
+          "question",
+          "approval",
+          "failed",
+          "reply"
+        ]
+      }
+    }
+  },
+  "list_sessions": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "anyOf": [
+      {
+        "type": "object",
+        "properties": {
+          "sessions": {
+            "minItems": 0,
+            "maxItems": 0,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "session_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "title": {
+                  "type": "string"
+                },
+                "status": {
+                  "$ref": "#/definitions/Status"
+                },
+                "health": {
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/Health"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "session_id",
+                "title",
+                "status"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "counts": {
+            "type": "null"
+          },
+          "partial": {
+            "type": "boolean",
+            "const": true
+          },
+          "status_fresh": {
+            "type": "boolean",
+            "const": false
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessions",
+          "counts",
+          "partial",
+          "status_fresh",
+          "note"
+        ],
+        "additionalProperties": {}
+      },
+      {
+        "type": "object",
+        "properties": {
+          "sessions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "session_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "title": {
+                  "type": "string"
+                },
+                "status": {
+                  "$ref": "#/definitions/Status"
+                },
+                "health": {
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/Health"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "session_id",
+                "title",
+                "status"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "working": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "needs_you": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "done": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "scheduled": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "unknown": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "total",
+              "working",
+              "needs_you",
+              "done",
+              "scheduled",
+              "unknown"
+            ],
+            "additionalProperties": {}
+          },
+          "status_fresh": {
+            "type": "boolean"
+          },
+          "status_observed_at": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next_after": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_checked_at": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mac_seen_recently": {
+            "type": "boolean"
+          },
+          "history_fresh": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessions",
+          "counts",
+          "status_fresh",
+          "status_observed_at",
+          "next_after"
+        ],
+        "additionalProperties": {}
+      }
+    ],
+    "definitions": {
+      "Status": {
+        "type": "string",
+        "enum": [
+          "working",
+          "needs_you",
+          "done",
+          "scheduled",
+          "unknown"
+        ]
+      },
+      "Health": {
+        "default": "unknown",
+        "type": "string",
+        "enum": [
+          "running",
+          "idle",
+          "potentially_stalled",
+          "failed",
+          "unknown"
+        ]
+      }
+    }
+  },
+  "session_health": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "anyOf": [
+      {
+        "type": "object",
+        "properties": {
+          "found": {
+            "type": "boolean",
+            "const": false
+          },
+          "health": {
+            "type": "string",
+            "const": "unknown"
+          },
+          "health_live": {
+            "type": "boolean",
+            "const": false
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "found",
+          "health",
+          "health_live",
+          "note"
+        ],
+        "additionalProperties": {}
+      },
+      {
+        "type": "object",
+        "properties": {
+          "found": {
+            "type": "boolean",
+            "const": true
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "status": {
+            "$ref": "#/definitions/Status"
+          },
+          "health": {
+            "$ref": "#/definitions/Health"
+          },
+          "health_live": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "found",
+          "session_id",
+          "status",
+          "health",
+          "health_live"
+        ],
+        "additionalProperties": {}
+      }
+    ],
+    "definitions": {
+      "Status": {
+        "type": "string",
+        "enum": [
+          "working",
+          "needs_you",
+          "done",
+          "scheduled",
+          "unknown"
+        ]
+      },
+      "Health": {
+        "default": "unknown",
+        "type": "string",
+        "enum": [
+          "running",
+          "idle",
+          "potentially_stalled",
+          "failed",
+          "unknown"
+        ]
+      }
+    }
+  },
+  "session_brief": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "anyOf": [
+      {
+        "type": "object",
+        "properties": {
+          "found": {
+            "type": "boolean",
+            "const": false
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "found",
+          "note"
+        ],
+        "additionalProperties": {}
+      },
+      {
+        "type": "object",
+        "properties": {
+          "found": {
+            "type": "boolean",
+            "const": true
+          },
+          "session": {
+            "type": "object",
+            "properties": {
+              "session_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "title": {
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/definitions/Status"
+              },
+              "health": {
+                "allOf": [
+                  {
+                    "$ref": "#/definitions/Health"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "session_id",
+              "title",
+              "status"
+            ],
+            "additionalProperties": {}
+          },
+          "transcript": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "message_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "assistant"
+                  ]
+                },
+                "message_order": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "message_id",
+                "role",
+                "message_order",
+                "text"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "data_age": {
+            "type": "object",
+            "properties": {
+              "status_fresh": {
+                "type": "boolean"
+              },
+              "context_fresh": {
+                "type": "boolean"
+              },
+              "caveat": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "status_fresh",
+              "context_fresh",
+              "caveat"
+            ],
+            "additionalProperties": {}
+          },
+          "send_params": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "base_cursor": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "context": {
+                    "$ref": "#/definitions/ReadContext"
+                  }
+                },
+                "required": [
+                  "session_id",
+                  "base_cursor",
+                  "context"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "found",
+          "session",
+          "transcript",
+          "data_age",
+          "send_params"
+        ],
+        "additionalProperties": {}
+      }
+    ],
+    "definitions": {
+      "Status": {
+        "type": "string",
+        "enum": [
+          "working",
+          "needs_you",
+          "done",
+          "scheduled",
+          "unknown"
+        ]
+      },
+      "Health": {
+        "default": "unknown",
+        "type": "string",
+        "enum": [
+          "running",
+          "idle",
+          "potentially_stalled",
+          "failed",
+          "unknown"
+        ]
+      },
+      "ReadContext": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "number",
+            "const": 1
+          },
+          "anchor_order": {
+            "type": "integer",
+            "minimum": -1,
+            "maximum": 9007199254740991
+          },
+          "anchor_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "prefix_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "visible_before": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "version",
+          "anchor_order",
+          "anchor_bytes",
+          "prefix_hash",
+          "visible_before"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "search_history": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "matches": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "message_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "user",
+                "assistant"
+              ]
+            },
+            "excerpt": {
+              "type": "string"
+            },
+            "excerpt_offset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "session_id",
+            "message_id",
+            "role",
+            "excerpt",
+            "excerpt_offset"
+          ],
+          "additionalProperties": {}
+        }
+      },
+      "source_checked_at": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "mac_seen_recently": {
+        "type": "boolean"
+      },
+      "history_fresh": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "matches"
+    ],
+    "additionalProperties": {}
+  },
+  "read_session": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "messages": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "message_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "user",
+                "assistant"
+              ]
+            },
+            "message_order": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message_id",
+            "role",
+            "message_order",
+            "text"
+          ],
+          "additionalProperties": {}
+        }
+      },
+      "cursor": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "context": {
+        "$ref": "#/definitions/ReadContext"
+      },
+      "page_kind": {
+        "type": "string",
+        "enum": [
+          "older",
+          "newer",
+          "latest"
+        ]
+      },
+      "next_after": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "next_before": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "source_checked_at": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "mac_seen_recently": {
+        "type": "boolean"
+      },
+      "history_fresh": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "messages",
+      "cursor",
+      "context",
+      "page_kind",
+      "next_after",
+      "next_before"
+    ],
+    "additionalProperties": {},
+    "definitions": {
+      "ReadContext": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "number",
+            "const": 1
+          },
+          "anchor_order": {
+            "type": "integer",
+            "minimum": -1,
+            "maximum": 9007199254740991
+          },
+          "anchor_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "prefix_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "visible_before": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "version",
+          "anchor_order",
+          "anchor_bytes",
+          "prefix_hash",
+          "visible_before"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "read_message": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "message_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "role": {
+        "type": "string",
+        "enum": [
+          "user",
+          "assistant"
+        ]
+      },
+      "text": {
+        "type": "string"
+      },
+      "offset": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "next_offset": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "source_checked_at": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "mac_seen_recently": {
+        "type": "boolean"
+      },
+      "history_fresh": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "message_id",
+      "role",
+      "text",
+      "offset",
+      "next_offset"
+    ],
+    "additionalProperties": {}
+  },
+  "send_session_message": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "session_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "status": {
+        "$ref": "#/definitions/DeliveryStatus"
+      },
+      "message_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "expires_at": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "delivery_confirmed": {
+        "type": "boolean"
+      },
+      "next_action": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "delivery_state": {
+        "type": "string"
+      },
+      "claim_ceiling": {
+        "type": "string"
+      },
+      "say_to_owner": {
+        "type": "string"
+      },
+      "report_rule": {
+        "type": "string"
+      },
+      "source_checked_at": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "mac_seen_recently": {
+        "type": "boolean"
+      },
+      "history_fresh": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "operation_id",
+      "session_id",
+      "status",
+      "message_id",
+      "expires_at",
+      "delivery_confirmed",
+      "next_action",
+      "delivery_state",
+      "claim_ceiling",
+      "say_to_owner",
+      "report_rule"
+    ],
+    "additionalProperties": {},
+    "definitions": {
+      "DeliveryStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "leased",
+          "accepted",
+          "needs_confirmation",
+          "failed",
+          "expired",
+          "uncertain",
+          "cancelled"
+        ]
+      }
+    }
+  },
+  "message_status": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "session_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "status": {
+        "$ref": "#/definitions/DeliveryStatus"
+      },
+      "message_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "expires_at": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "delivery_confirmed": {
+        "type": "boolean"
+      },
+      "next_action": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "delivery_state": {
+        "type": "string"
+      },
+      "claim_ceiling": {
+        "type": "string"
+      },
+      "say_to_owner": {
+        "type": "string"
+      },
+      "report_rule": {
+        "type": "string"
+      },
+      "source_checked_at": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "mac_seen_recently": {
+        "type": "boolean"
+      },
+      "history_fresh": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "operation_id",
+      "session_id",
+      "status",
+      "message_id",
+      "expires_at",
+      "delivery_confirmed",
+      "next_action",
+      "delivery_state",
+      "claim_ceiling",
+      "say_to_owner",
+      "report_rule"
+    ],
+    "additionalProperties": {},
+    "definitions": {
+      "DeliveryStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "leased",
+          "accepted",
+          "needs_confirmation",
+          "failed",
+          "expired",
+          "uncertain",
+          "cancelled"
+        ]
+      }
+    }
+  },
+  "cancel_message": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "session_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "status": {
+        "$ref": "#/definitions/DeliveryStatus"
+      },
+      "message_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "expires_at": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "delivery_confirmed": {
+        "type": "boolean"
+      },
+      "next_action": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "delivery_state": {
+        "type": "string"
+      },
+      "claim_ceiling": {
+        "type": "string"
+      },
+      "say_to_owner": {
+        "type": "string"
+      },
+      "report_rule": {
+        "type": "string"
+      },
+      "source_checked_at": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "mac_seen_recently": {
+        "type": "boolean"
+      },
+      "history_fresh": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "operation_id",
+      "session_id",
+      "status",
+      "message_id",
+      "expires_at",
+      "delivery_confirmed",
+      "next_action",
+      "delivery_state",
+      "claim_ceiling",
+      "say_to_owner",
+      "report_rule"
+    ],
+    "additionalProperties": {},
+    "definitions": {
+      "DeliveryStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "leased",
+          "accepted",
+          "needs_confirmation",
+          "failed",
+          "expired",
+          "uncertain",
+          "cancelled"
+        ]
+      }
+    }
+  },
+  "start_session": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "status": {
+        "$ref": "#/definitions/StartStatus"
+      },
+      "directory": {
+        "type": "string"
+      },
+      "session_id": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "started": {
+        "type": "boolean"
+      },
+      "prompt_accepted": {
+        "type": "boolean"
+      },
+      "reason": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "expires_at": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "next_action": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "delivery_state": {
+        "type": "string"
+      },
+      "claim_ceiling": {
+        "type": "string"
+      },
+      "say_to_owner": {
+        "type": "string"
+      },
+      "report_rule": {
+        "type": "string"
+      },
+      "source_checked_at": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "mac_seen_recently": {
+        "type": "boolean"
+      },
+      "history_fresh": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "operation_id",
+      "status",
+      "directory",
+      "session_id",
+      "started",
+      "prompt_accepted",
+      "reason",
+      "expires_at",
+      "next_action",
+      "delivery_state",
+      "claim_ceiling",
+      "say_to_owner",
+      "report_rule"
+    ],
+    "additionalProperties": {},
+    "definitions": {
+      "StartStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "leased",
+          "started",
+          "created_not_started",
+          "failed",
+          "expired",
+          "uncertain",
+          "cancelled"
+        ]
+      }
+    }
+  },
+  "start_status": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "status": {
+        "$ref": "#/definitions/StartStatus"
+      },
+      "directory": {
+        "type": "string"
+      },
+      "session_id": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "started": {
+        "type": "boolean"
+      },
+      "prompt_accepted": {
+        "type": "boolean"
+      },
+      "reason": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "expires_at": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "next_action": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "delivery_state": {
+        "type": "string"
+      },
+      "claim_ceiling": {
+        "type": "string"
+      },
+      "say_to_owner": {
+        "type": "string"
+      },
+      "report_rule": {
+        "type": "string"
+      },
+      "source_checked_at": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "mac_seen_recently": {
+        "type": "boolean"
+      },
+      "history_fresh": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "operation_id",
+      "status",
+      "directory",
+      "session_id",
+      "started",
+      "prompt_accepted",
+      "reason",
+      "expires_at",
+      "next_action",
+      "delivery_state",
+      "claim_ceiling",
+      "say_to_owner",
+      "report_rule"
+    ],
+    "additionalProperties": {},
+    "definitions": {
+      "StartStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "leased",
+          "started",
+          "created_not_started",
+          "failed",
+          "expired",
+          "uncertain",
+          "cancelled"
+        ]
+      }
+    }
+  },
+  "cancel_start": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "status": {
+        "$ref": "#/definitions/StartStatus"
+      },
+      "directory": {
+        "type": "string"
+      },
+      "session_id": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "started": {
+        "type": "boolean"
+      },
+      "prompt_accepted": {
+        "type": "boolean"
+      },
+      "reason": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "expires_at": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "next_action": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "delivery_state": {
+        "type": "string"
+      },
+      "claim_ceiling": {
+        "type": "string"
+      },
+      "say_to_owner": {
+        "type": "string"
+      },
+      "report_rule": {
+        "type": "string"
+      },
+      "source_checked_at": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "mac_seen_recently": {
+        "type": "boolean"
+      },
+      "history_fresh": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "operation_id",
+      "status",
+      "directory",
+      "session_id",
+      "started",
+      "prompt_accepted",
+      "reason",
+      "expires_at",
+      "next_action",
+      "delivery_state",
+      "claim_ceiling",
+      "say_to_owner",
+      "report_rule"
+    ],
+    "additionalProperties": {},
+    "definitions": {
+      "StartStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "leased",
+          "started",
+          "created_not_started",
+          "failed",
+          "expired",
+          "uncertain",
+          "cancelled"
+        ]
+      }
+    }
+  }
+}
