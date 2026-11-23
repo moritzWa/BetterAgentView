@@ -105,10 +105,19 @@ class FilmTests(unittest.TestCase):
         film = revision45.Film45.__new__(revision45.Film45)
         film.crop = lambda *args, **kwargs: ""
         tall = __import__("PIL").Image.new("RGB", (4848, 3120))
-        film.shots = {"overview": tall, "directories": tall, "work-directories": tall}
+        film.shots = {"overview": tall, "directories": tall, "status": tall, "work-directories": tall}
         film.t = 25
         self.assertNotIn("Configured global shortcut", film.projects(25))
         self.assertNotIn("Configured global shortcut", film.work_scope(28))
+
+    def test_grouping_demo_returns_to_directories(self):
+        film = revision45.Film45.__new__(revision45.Film45)
+        calls = []
+        film.blend = lambda a, b, mix: calls.append((a, b)) or ""
+        self.assertIn("Toggle grouping", film.projects(24.5))
+        self.assertEqual(calls[-1], ("directories", "status"))
+        film.projects(25.8)
+        self.assertEqual(calls[-1], ("status", "directories"))
 
     def test_every_shortcut_pill_sits_in_the_same_place(self):
         for keys, label in [

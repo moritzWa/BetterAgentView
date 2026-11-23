@@ -17,15 +17,10 @@ def main():
     assert len(anchors) == 20
     provenance = json.loads((captures / "provenance.json").read_text())
     assert provenance["synthetic_directory_count"] == 6
-    # The recorded voice-live footer stays unchanged; replace the dashboard
-    # above it with the new real CmdK capture, preserving selection in Film45.
-    live = Image.open(captures / "voice-live.png").convert("RGB")
+    # Use the actual new CmdK capture, including its live/Ready footer and
+    # selected checkout row. No old status-grouped dashboard pixels remain.
     fresh = Image.open(captures / "voice-start.png").convert("RGB")
-    lines = (captures / "voice-start.txt").read_text().splitlines()
-    footer = next(i for i, line in enumerate(lines) if "Ready." in line)
-    bottom = (16 + footer * 28) * 3
-    live.paste(fresh.crop((0, 0, fresh.width, bottom)), (0, 0))
-    live.save(captures / "voice-live.png")
+    fresh.save(captures / "voice-live.png")
     proposal = root / "proposal45"
     shutil.copyfile(captures / "session-anchors.json", proposal / "captures/session-anchors.json")
     shutil.copyfile(captures / "overview.png", proposal / "captures/overview.png")
@@ -33,6 +28,11 @@ def main():
     # actual new terminal rows so pane names and their landing rows agree.
     mapping = json.loads((proposal / "morph-map.json").read_text())
     scale = 1460 / 1616
+    # Keep all six projects represented in the 16-pane intro, including Cronus
+    # at the end of the directory-grouped list.
+    omitted = {"dataset-dedup", "eval-report", "launch-demo-video", "screenshot-ocr-search"}
+    panes = [a for a in anchors if a["name"] not in omitted]
+    assert len(panes) == 16
     mapping["mapping"] = [
         dict(a, grid=old["grid"],
              destination=[70 + a["cell_bounds"][0] * scale,
@@ -40,7 +40,7 @@ def main():
                           a["cell_bounds"][2] * scale,
                           a["cell_bounds"][3] * scale],
              state_color="#df8e1d" if a["state"] == "needs_input" else "#6c6f85")
-        for a, old in zip(anchors[:16], mapping["mapping"], strict=True)
+        for a, old in zip(panes, mapping["mapping"], strict=True)
     ]
     (proposal / "morph-map.json").write_text(json.dumps(mapping, indent=2))
     print("Updated 20 captured rows, voice dashboard and 16 matching intro panes; audio and native footage untouched.")

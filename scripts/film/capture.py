@@ -26,7 +26,7 @@ from PIL import Image, ImageDraw, ImageFont
 from film_sessions import populate
 
 ROOT = Path(__file__).resolve().parents[2]
-COLS, ROWS = 132, 36
+COLS, ROWS = 132, 42
 RASTER_SCALE = 3
 PALETTE = [
     "5c5f77",
@@ -108,6 +108,10 @@ def main():
         data["demo"]["voice"] = [{"at_ms": 0, "who": "agent", "text": "Ready."}]
         fixture = home / "film.json"
         fixture.write_text(json.dumps(data))
+        view_state = home / "state/agentview/last-view.json"
+        view_state.parent.mkdir(parents=True, mode=0o700)
+        view_state.write_text(json.dumps({"version": 1, "view": "directory"}))
+        view_state.chmod(0o600)
         queue_dir = home / "queue"
         queue_dir.mkdir()
         queue_file = queue_dir / "synthetic-status.json"
@@ -202,11 +206,15 @@ def main():
             (args.output / "session-anchors.json").write_text(
                 json.dumps(sorted(anchors, key=lambda s: s["row"]), indent=2)
             )
+            assert len(anchors) == 20, "All 20 directory-grouped sessions must fit"
             os.write(master, b"\x1b[B")
             drain(0.35)
+            # Directory headers are selectable too. Step past the platform
+            # header onto its checkout session before illustrating Right-open.
+            os.write(master, b"\x1b[B")
+            drain(0.35)
+            assert "enter to open" in screen.display[-1]
             picture(screen, args.output / "selected.png")
-            os.write(master, b"\x1b[A")
-            drain(0.2)
             rows = {}
             for name in ["checkout-redesign", "rl-reward-debug", "jev-to-qwen-distillation", "customer-onboarding"]:
                 rows[name] = next(
@@ -225,6 +233,9 @@ def main():
             drain(0.3)
             os.write(master, b"\x13")  # Actual Ctrl+S, not scope filtering.
             drain(0.7)
+            picture(screen, args.output / "status.png")
+            os.write(master, b"\x13")
+            drain(0.7)
             picture(screen, args.output / "directories.png")
             before_filter = copy.deepcopy(data)
             subprocess.run(
@@ -235,8 +246,6 @@ def main():
             subprocess.run(
                 [args.binary, "view", "all"], env=env, check=True, capture_output=True
             )
-            drain(0.5)
-            os.write(master, b"\x13")
             drain(0.5)
             # This is a staged fixture update, not a voice send. Capture the real
             # app moving the same synthetic checkout row into Working.
@@ -251,8 +260,8 @@ def main():
             fixture.write_text(json.dumps(data))
             drain(1)
             display = "\n".join(screen.display)
-            assert "checkout-redesign" not in display.split("Working")[0]
-            assert "checkout-redesign" in display.split("Working")[1]
+            checkout_line = next(line for line in screen.display if "checkout-redesign" in line)
+            assert "Working" in checkout_line and "Needs input" not in checkout_line
             picture(screen, args.output / "resumed.png")
             # Global scope uses the same isolated state as this capture.
             r = subprocess.run(
@@ -341,6 +350,8 @@ def main():
                         "synthetic_session_count": len(before_filter["sessions"]),
                         "synthetic_directory_count": len(roots),
                         "same_state_scope_comparison": True,
+                        "initial_grouping": "directory",
+                        "status_view": "brief Ctrl+S comparison only",
                         "queue_source": "isolated read-only synthetic agent-bouncer status; actual app widget",
                         "data": "isolated synthetic fixture; no live calls or sends",
                         "checks": [

@@ -73,7 +73,7 @@ def keycap(x, y, label, pressed=False, scale=1):
 
 # One camera for every Agent View shot: the whole terminal (1616 logical px
 # wide, 28 px rows from y=16), same scale and top-left in every beat.
-S = 0.75
+S = 0.65
 LX, LY = (1600 - 1616 * S) / 2, 14
 LW = 1616 * S
 # One position for every shortcut pill, in the clear band under the terminal.
@@ -273,6 +273,7 @@ class Film45(Film):
 
     def __init__(self, output):
         super().__init__(output)
+        self.shots["status"] = Image.open(self.output / "captures/status.png").convert("RGB")
         self.plan = json.loads((self.output / "edit45.json").read_text())
         self.cues = self.plan["cues"]
         self.alignments = {
@@ -331,10 +332,6 @@ class Film45(Film):
         self.still = None
         self.uris = {}
         live = Image.open(self.output / "captures/voice-live.png").convert("RGB")
-        # Same fixture state; the call capture had the first row selected.
-        # Keep the selection where Right/Left left it (checkout-redesign).
-        band = (0, row_y(6) * 3, live.width, row_y(8) * 3)
-        live.paste(self.shots["selected"].crop(band), band[:2])
         self.shots["voice-live"] = live
 
     @staticmethod
@@ -639,7 +636,7 @@ class Film45(Film):
         # Staged fixture update: the checkout agent got its answer and works on.
         mix = ease_in_out((t - 16.55) / 0.35)
         out = self.blend("voice-live", "resumed", mix)
-        return out + self.row_box(13, BLUE, ease_in_out((t - 16.95) / 0.25))
+        return out + self.row_box(self.rows["checkout-redesign"], BLUE, ease_in_out((t - 16.95) / 0.25))
 
     def plugin_page(self, t):
         card = self.cached(
@@ -749,9 +746,12 @@ class Film45(Film):
 
     def projects(self, t):
         key = KEY_EVENTS["CtrlS"]
-        out = self.blend("overview", "directories", ease_in_out((t - key) / 0.25))
+        if t < key + 1.2:
+            out = self.blend("directories", "status", ease_in_out((t - key) / 0.25))
+        else:
+            out = self.blend("status", "directories", ease_in_out((t - key - 1.2) / 0.25))
         return out + shortcut_overlay(
-            ["Ctrl", "S"], "Group by project", key <= t < key + 0.3
+            ["Ctrl", "S"], "Toggle grouping", key <= t < key + 0.3 or key + 1.2 <= t < key + 1.5
         )
 
     def work_scope(self, t):

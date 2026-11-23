@@ -49,10 +49,17 @@ question stays unchanged to match the existing voice and native recordings.
 
 After `capture.py`, run `refresh_ui.py --output TARGET` to synchronize the
 opening pane-to-row map and voice dashboard with the fresh real TUI captures.
-It retains the recorded live-call footer and does not alter native ChatGPT
-footage, native session footage, narration, music or the 45-second timeline.
+It uses the fresh actual live/Ready capture, including its selected session
+and footer. It does not alter native ChatGPT or native session footage.
 For a UI-only revision of a copied draft, run capture, refresh_ui, render and
 verify without prepare45/snappy45, which would reconform the audio.
+
+The directory-first revision uses 42 terminal rows (3624 raster pixels tall)
+so every session in all six directories is visible. The main camera fits that
+entire capture. Status grouping appears only for the Ctrl+S comparison near
+24 seconds, then returns to directory grouping before Work-only filtering.
+Two new narration takes replace the status-first introduction and one-way
+grouping explanation. All other dry takes and the overall timing are retained.
 
 - `capture.py` launches Agent View in a headless PTY with isolated HOME and XDG
   paths. It renders the terminal cells with pyte and Menlo. This is actual TUI

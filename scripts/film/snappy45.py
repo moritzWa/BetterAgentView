@@ -34,9 +34,9 @@ TAKES = [
         4.0,
     ),
     (
-        "intro-onelist.mp3",
-        "Better Agent View puts every agent in one list, sorted by what needs you.",
-        4.1,
+        "intro-directories.mp3",
+        "Better Agent View keeps every agent in one list, grouped by directory.",
+        4.0,
         6.9,
     ),
     (
@@ -71,8 +71,8 @@ TAKES = [
         23.9,
     ),
     (
-        "projects-groups.mp3",
-        "Control S groups them by project.",
+        "grouping-toggle.mp3",
+        "Control S toggles status or directory grouping.",
         24.0,
         26.3,
     ),
