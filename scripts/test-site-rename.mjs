@@ -13,6 +13,16 @@ test("the site advertises portable move and back shortcuts", async () => {
   assert.doesNotMatch(html, /<kbd>(Ctrl\+M|Shift\+&larr;)<\/kbd>/);
 });
 
+test("install commands wrap rather than showing a horizontal scrollbar", async () => {
+  const html = await readFile(new URL("../site/index.html", import.meta.url), "utf8");
+  const rule = html.match(/\.install code\s*\{([^}]+)\}/)?.[1];
+  assert.ok(rule, "the install command has a layout rule");
+  assert.match(rule, /min-width:\s*0/);
+  assert.match(rule, /white-space:\s*pre-wrap/);
+  assert.match(rule, /overflow-wrap:\s*anywhere/);
+  assert.doesNotMatch(rule, /overflow(?:-x)?:\s*(?:auto|scroll|hidden)/);
+});
+
 for (const host of ["agent-view.app", "www.agent-view.app", "www.betteragentview.com"]) {
   test(`${host} redirects permanently, retaining paths and query strings`, async () => {
     const response = await worker.fetch(new Request(`https://${host}/film.mp4?v=2`), {});
