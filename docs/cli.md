@@ -76,7 +76,7 @@ betteragentview is already up to date.
 | `--openhands-bin PATH` / `--no-host-openhands` | Select or disable OpenHands native control plus bounded event-store discovery. |
 | `--docker-container NAME_OR_ID` | Observe Claude and Codex in one explicitly selected running container; repeatable. |
 | `--docker-bin PATH` | Use a particular Docker executable; default `docker`. |
-| `--session-migrate-bin PATH` | Use a particular session-migrate executable for `ctrl+m` moves and `/migrate`; default `session-migrate`. |
+| `--session-migrate-bin PATH` | Use a particular session-migrate executable for `F6` moves and `/migrate`; default `session-migrate`. |
 | `--harness` / `--launch-provider claude\|codex\|pi\|omp\|opencode\|cursor\|copilot\|antigravity\|mistral-vibe\|muse\|qwen\|kimi\|grok\|kilo\|openhands\|terminal` | Initial harness for new-session prompts; default Claude. Each configured coding harness opens its native full-screen UI; Terminal opens the user's shell. `oh-my-pi` and `kilo-code` are accepted aliases. |
 | `--launch-cwd PATH` | Working directory for newly launched host sessions; default current directory. |
 | `--refresh-ms N` | Refresh interval, at least 250 ms; default 15000 ms. Refresh runs off the input thread, and first-launch results appear provider by provider. Use `ctrl+l` for an immediate refresh. |
@@ -212,7 +212,7 @@ no-session TUI (`/login` inside Pi), `opencode auth login`, `cursor-agent login`
 `grok login`, `kilo auth login`, and `openhands login`. betteragentview suspends its
 alternate screen before these commands and never reads or copies credentials.
 The setup/login UI always gets its own private terminal; Left/Right twice at a
-cursor boundary or Shift+Left/Right anywhere returns to the dashboard and
+cursor boundary or F7 anywhere returns to the dashboard and
 leaves that process running. Enter/Right shows its latest screen. The
 frontend is stopped only when the dashboard itself exits. `/setup
 HARNESS` uses the same terminal for an installation check, confirmed official
@@ -220,7 +220,7 @@ installer, and native login. It never attaches setup to the last agent session.
 
 Select `Terminal` (or `/harness terminal`) to create a plain interactive shell.
 The task text becomes the terminal's display name, not a command. A boundary
-double-arrow or Shift+Left/Right returns to betteragentview, Enter/Right resumes, the first
+double-arrow or F7 returns to betteragentview, Enter/Right resumes, the first
 Ctrl+X stops it, and the second Ctrl+X
 deletes its completed row. These terminal frontends are process-local and are
 stopped when the dashboard itself exits. `/shell` and `/model` both open a
@@ -611,7 +611,7 @@ label.
 | Group heading | `enter` | Collapse or expand the group. |
 | Session row | `enter` or `→` | Suspend the dashboard and open the provider's full native interface. The physical screen is cleared before the provider draws. |
 | Provider-native interface | `←` / `→` twice at a cursor boundary | The first arrow is forwarded. If the cursor does not move, a 1.6-second bottom-line hint appears; repeat the same arrow to retain the frontend and return to betteragentview. In Claude Code, `←` at an empty prompt (where Claude shows "← for agents") returns at once and never opens Claude's agents view; OpenCode also returns on one `←`. |
-| Provider-native interface | `F13`, `shift+←` / `shift+→` | Return immediately from anywhere. In an OpenCode session whose prompt has a draft, Shift+arrow selects text instead and only F13 returns. A plain arrow that only collapses a selection never returns. Plain arrows otherwise remain available for line editing. `enter` or `→` on the same dashboard row reattaches and restores its terminal screen. |
+| Provider-native interface | `F7` (existing `F13` mappings also work) | Return immediately from anywhere without stopping the agent. Shift+arrows pass through for text selection in every provider. A plain arrow that only collapses a selection never returns. Plain arrows otherwise remain available for line editing. `enter` or `→` on the same dashboard row reattaches and restores its terminal screen. |
 | Inline Peek | `←` | Return to the session list without opening the native provider interface. |
 | Session row | `space` | Open the inline Peek panel and inspect transcript/request details when capability is advertised. |
 | Inspect peek | type, `enter` | Send an owned provider reply/steer or the current structured answer. |
@@ -650,7 +650,7 @@ label.
 | Writable composer/model filter | `option+backspace` or `ctrl+w` | Remove the previous word. |
 | Writable composer/model filter | `cmd+backspace` or `ctrl+u` | Remove to the beginning of the current line. |
 | Session row | `ctrl+r` | Open the accented `rename session` composer. The `name ❯` mode label is separate from the editable display name; empty submission clears it and follows the latest provider title again. |
-| Host coding-harness session row | `ctrl+m` (`cmd+m` on macOS) | Open the folder picker and move the selected session there with the same harness and name. session-migrate creates the copy in the new folder; betteragentview then deletes the original, or hides it when the harness cannot delete it. Working sessions must stop first. Files in either folder are not touched. |
+| Host coding-harness session row | `F6` | Open the folder picker and move the selected session there with the same harness and name. session-migrate creates the copy in the new folder; betteragentview then deletes the original, or hides it when the harness cannot delete it. Working sessions must stop first. Files in either folder are not touched. Legacy `ctrl+m` / `cmd+m` mappings still work when delivered distinctly, but traditional terminals send `ctrl+m` as Enter and macOS normally reserves `cmd+m` for minimize. |
 | New-task composer | `/migrate` | Choose a different supported harness, edit the prefilled local name, and migrate the exact selected session through `session-migrate`. The default is `CURRENT NAME (TARGET HARNESS)`. Escape returns from the name editor to the target picker before closing the workflow. |
 | Idle owned Codex row | `ctrl+a`, then `enter` | Confirm archive. |
 | Session row or Peek | `ctrl+x`, then `ctrl+x` | Stop an exact active owned session; after refresh reports it idle, press again to delete it or remove it reversibly from betteragentview's view. Idle rows and active rows without stop authority show `ctrl+x again to delete` (or `to hide`) on the first press and act on the second; any other key cancels. |
@@ -668,9 +668,9 @@ correlated diff, expanded permissions, or unknown request form. See the
 
 ### A dedicated key to return to the dashboard
 
-`Shift+←` / `→` selects text in an OpenCode prompt that has a draft, and `←` only
-returns at an empty prompt, so none of them is a reliable way back. Map any key
-to **F13** and it returns from any provider's native interface at any time. The
+Press **F7** to return from any provider's native interface at any time. On Mac
+keyboards with media keys, hold **Fn** for F6 (move) or F7 (back). Shift+arrows
+stay available for text selection. You can also map any key to **F13**. The
 draft, selection and cursor stay where they were. betteragentview reads F13 in both the
 legacy form (`CSI 25 ~`) and the kitty keyboard form (`CSI 57376 u`) that some
 terminals switch to while a provider is in front.

@@ -52,7 +52,7 @@ opens the selected row directly. Plain Left/Right arrows first reach the
 provider. If the cursor does not move, betteragentview displays a 1.6-second return hint;
 repeat the same arrow to restore the dashboard and leave the managed backend
 alive. The provider frontend is not stopped: it keeps running on its private
-pseudo-terminal until an explicit Ctrl+X or dashboard exit. Shift+Left/Right
+pseudo-terminal until an explicit Ctrl+X or dashboard exit. F7
 performs the same return immediately. Enter or Right on the same dashboard row
 reattaches that exact frontend and shows the screen it has produced since. Left also returns from
 betteragentview's inline Peek without starting a provider CLI.

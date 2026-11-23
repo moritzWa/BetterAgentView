@@ -155,7 +155,7 @@ Antigravity's native interface if needed.
 Provider clients run behind an agentview-owned pseudo-terminal. Plain Left/Right
 first reach the provider editor. At a cursor boundary the first arrow displays
 a 1.6-second bottom-line hint; repeat the same arrow to background only that
-frontend and return to the dashboard. Shift+Left/Right returns immediately.
+frontend and return to the dashboard. F7 returns immediately.
 The managed backend remains alive, and Enter or Right on the same dashboard
 row restores the exact retained screen. This applies to every configured
 native harness, including Oh My Pi, Grok, Kilo Code, and OpenHands.
@@ -247,7 +247,7 @@ Antigravity is a special case: its documented last-conversation cache is
 written only when the native UI exits. betteragentview therefore shows a provisional
 managed row immediately, correlates the exact new local transcript in the
 background, and replaces the provisional ID without waiting for exit. A task
-that returned with Shift+Left should be visible and stoppable at once.
+that returned with F7 should be visible and stoppable at once.
 
 The current foreground Claude path runs the documented `--background` launch
 on a worker, captures Claude's returned eight-character ID, resolves the exact

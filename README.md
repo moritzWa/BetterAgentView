@@ -90,7 +90,7 @@ own interface.
 - **Start in any folder** with `/cd` or `Ctrl+O`. Write multi-line drafts, paste
   long text, attach clipboard images with `Ctrl+V`, and select text with `Shift+arrow`
   or words with `Option+Shift+arrow`.
-- **Move or migrate a session:** `Ctrl+M` changes folders; `/migrate` changes
+- **Move or migrate a session:** `F6` changes folders; `/migrate` changes
   harnesses through [session-migrate](https://session-migrate.github.io/).
   OpenCode folder moves preserve the session ID and history.
 - **Per-project OpenCode models:** choose `Default` to follow the folder's config
@@ -178,11 +178,13 @@ previous chat or overview. Other apps and browser windows stay unchanged.
 | Move through sessions | `↑` / `↓` |
 | Jump between folders | `Cmd+↑` / `↓` in kitty, or in Ghostty with `keybind = cmd+up=unbind` and `keybind = cmd+down=unbind` |
 | Open the selected session | `Enter` or `→` |
-| Return to betteragentview | `Shift+←`, or `←` twice at an empty prompt (once in Claude Code and OpenCode). In an OpenCode prompt with a draft, Shift+←/→ selects text; [map a key to `F13`](docs/cli.md#a-dedicated-key-to-return-to-the-dashboard) to return from anywhere |
+| Return to betteragentview | `F7` from anywhere, or `←` twice at an empty prompt (once in Claude Code and OpenCode). Shift+arrows stay available for text selection. Existing [F13 mappings](docs/cli.md#a-dedicated-key-to-return-to-the-dashboard) also work |
 | Bring back a past session | `Ctrl+G` or `/hidden` |
 | Rename / filter | `Ctrl+R` / `Ctrl+F` |
 | New line in a task | `Shift+Enter`, `Ctrl+J`, or `\` then `Enter` |
 | Show every shortcut | `?` |
+
+On Mac keyboards with media keys, hold `Fn` to send `F6` or `F7`.
 
 The [CLI and keyboard guide](docs/cli.md) covers models, login, paging, bulk
 actions, non-interactive commands, and [`--yolo`](docs/cli.md#explicit-yolo-mode)

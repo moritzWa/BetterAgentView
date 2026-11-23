@@ -2052,11 +2052,7 @@ const FOLDER_PICKER_KEYS: &str = if cfg!(target_os = "macos") {
     "ctrl+o"
 };
 
-const MOVE_KEYS: &str = if cfg!(target_os = "macos") {
-    "ctrl+m / cmd+m"
-} else {
-    "ctrl+m"
-};
+const MOVE_KEYS: &str = "F6";
 
 fn help_sections(app: &App) -> Vec<HelpSection> {
     let mut sections = vec![HelpSection {
@@ -2083,7 +2079,7 @@ fn help_sections(app: &App) -> Vec<HelpSection> {
         } else {
             selected.push(("← / → twice", "back, at the prompt edge"));
         }
-        selected.push(("shift+← / →", "back immediately"));
+        selected.push(("F7", "back immediately"));
         if session.capabilities.contains(&Capability::Approve)
             || session.capabilities.contains(&Capability::Decline)
         {

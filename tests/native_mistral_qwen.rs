@@ -409,7 +409,7 @@ fn run_pty_outer(provider: &str, test_name: &str, marker: &str, ready: &[u8]) {
     let mut child = ChildGuard::new(command.spawn().unwrap());
     let mut output = Vec::new();
     read_until(&mut master, &mut output, ready, Duration::from_secs(5));
-    master.write_all(b"\x1b[1;2D").unwrap();
+    master.write_all(b"\x1b[18~").unwrap();
     read_until_present(
         &mut master,
         &mut output,
@@ -423,7 +423,7 @@ fn run_pty_outer(provider: &str, test_name: &str, marker: &str, ready: &[u8]) {
         Duration::from_secs(5),
     );
     read_until(&mut master, &mut output, ready, Duration::from_secs(5));
-    master.write_all(b"\x1b[1;2C").unwrap();
+    master.write_all(b"\x1b[18~").unwrap();
     read_until_present(
         &mut master,
         &mut output,

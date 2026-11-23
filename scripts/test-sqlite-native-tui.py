@@ -100,11 +100,11 @@ def run(args):
             send(f"/model {model}\r"); wait(model)
             send("AGENTVIEW_NATIVE_HELLO\r")
             wait("AGENTVIEW_NATIVE_REPLY_CONFIRMED_1",90,native=True)
-            send("\x1b[1;2D"); wait("agentview"); wait("AGENTVIEW_NATIVE_REPLY")
+            send("\x1b[18~"); wait("agentview"); wait("AGENTVIEW_NATIVE_REPLY")
             send("\r"); wait("AGENTVIEW_NATIVE_REPLY_CONFIRMED_1",native=True)
             send("AGENTVIEW_NATIVE_FOLLOWUP\r")
             wait("AGENTVIEW_NATIVE_REPLY_CONFIRMED_2",native=True)
-            send("\x1b[1;2D"); wait("agentview"); wait("AGENTVIEW_NATIVE_REPLY_CONFIRMED_2")
+            send("\x1b[18~"); wait("agentview"); wait("AGENTVIEW_NATIVE_REPLY_CONFIRMED_2")
             send("\x1b"); child.wait(timeout=10)
             # Reopen agentview and prove exact native resume, not just reattachment
             # to the in-memory frontend from the first launch.

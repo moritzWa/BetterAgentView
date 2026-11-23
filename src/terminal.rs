@@ -1816,7 +1816,7 @@ fn install_voice_hook(voice: &crate::voice::VoiceService) {
             match toggler.toggle_with(draft.map(|text| crate::voice::Draft { text })) {
                 Toggle::Started | Toggle::Ended => None,
                 Toggle::NeedKey(provider) => Some(format!(
-                    "voice needs a {} key: go back with shift+← and press ctrl+k once",
+                    "voice needs a {} key: go back with F7 and press ctrl+k once",
                     provider.label()
                 )),
                 Toggle::Failed(error) => Some(error),
@@ -2793,6 +2793,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> AppAction {
     }
 
     match key.code {
+        KeyCode::F(6) if key.modifiers.is_empty() && app.overlay == Overlay::None => {
+            app.start_move();
+            AppAction::None
+        }
         KeyCode::Esc => app.escape(),
         KeyCode::Char('y')
             if app.overlay == Overlay::Peek
@@ -4535,8 +4539,9 @@ mod tests {
     }
 
     #[test]
-    fn control_m_and_command_m_open_the_move_picker_without_replacing_enter() {
+    fn f6_and_legacy_move_aliases_open_the_picker_without_replacing_enter() {
         for shortcut in [
+            key(KeyCode::F(6)),
             control_key('m'),
             modified_key(KeyCode::Char('m'), KeyModifiers::SUPER),
         ] {
@@ -4557,6 +4562,25 @@ mod tests {
                 session_id: "worker".into()
             }
         );
+
+        for shortcut in [
+            key(KeyCode::F(6)),
+            modified_key(KeyCode::F(6), KeyModifiers::SHIFT),
+        ] {
+            let mut composer = app();
+            composer.start_new_session(None);
+            let overlay = composer.overlay.clone();
+            handle_key(&mut composer, shortcut);
+            assert_eq!(composer.overlay, overlay);
+            assert!(composer.moving_session.is_none());
+        }
+        let mut dashboard = app();
+        handle_key(
+            &mut dashboard,
+            modified_key(KeyCode::F(6), KeyModifiers::SHIFT),
+        );
+        assert_eq!(dashboard.overlay, Overlay::None);
+        assert!(dashboard.moving_session.is_none());
     }
 
     #[test]

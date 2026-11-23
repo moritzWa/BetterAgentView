@@ -19,15 +19,13 @@ const ENTER: &[u8] = b"\r";
 const UP: &[u8] = b"\x1b[A";
 const DOWN: &[u8] = b"\x1b[B";
 const LEFT: &[u8] = b"\x1b[D";
-const SHIFT_LEFT: &[u8] = b"\x1b[1;2D";
+const DASHBOARD_BACK: &[u8] = b"\x1b[18~";
 const SHIFT_TAB: &[u8] = b"\x1b[Z";
 const CTRL_A: &[u8] = b"\x01";
 const CTRL_C: &[u8] = b"\x03";
 const CTRL_F: &[u8] = b"\x06";
 const CTRL_J: &[u8] = b"\x0a";
-// Kitty keyboard enhancement encoding for Ctrl+M. A legacy terminal sends CR
-// for both Ctrl+M and Enter, so this exact sequence verifies disambiguation.
-const CTRL_M_ENHANCED: &[u8] = b"\x1b[109;5u";
+const MOVE_SESSION: &[u8] = b"\x1b[17~";
 const CTRL_R: &[u8] = b"\x12";
 const CTRL_S: &[u8] = b"\x13";
 const CTRL_X: &[u8] = b"\x18";
@@ -223,7 +221,7 @@ fn sqlite_harnesses_launch_foreground_detach_rename_and_resume_together() {
         app.wait_for("native foreground reply", |s| {
             s.contains(&format!("NATIVE {provider} reply: hello from fixture"))
         });
-        app.send(SHIFT_LEFT);
+        app.send(DASHBOARD_BACK);
         app.wait_for("owned dashboard row", |s| {
             s.contains("BetterAgentView") && s.contains("hello from fixture") && s.contains(label)
         });
@@ -249,7 +247,7 @@ fn sqlite_harnesses_launch_foreground_detach_rename_and_resume_together() {
         app.wait_for("continued native reply", |s| {
             s.contains("continued conversation")
         });
-        app.send(SHIFT_LEFT);
+        app.send(DASHBOARD_BACK);
         app.wait_for("live preview refreshed", |s| {
             s.contains("BetterAgentView") && s.contains("continued conversation")
         });
@@ -761,7 +759,7 @@ else:
     app.wait_for("original evidence row", |s| {
         s.contains("casa-questionnaire-evidence")
     });
-    app.send(CTRL_M_ENHANCED);
+    app.send(MOVE_SESSION);
     app.wait_for("move folder picker", |s| {
         s.contains("move session to folder")
     });
@@ -788,7 +786,7 @@ else:
 }
 
 #[test]
-fn ctrl_m_moves_through_the_real_tui_and_keeps_enter_distinct() {
+fn f6_moves_through_the_real_tui_and_keeps_enter_distinct() {
     let _serial = serialize_real_tty_test();
     let mut app = PtyApp::spawn_configured(110, 32, |command, home| {
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -835,13 +833,12 @@ printf '%s\n' '{"session_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","target_form
     app.wait_for("selected host source row", |screen| {
         screen.contains("approval-needed") && !screen.contains("release-reviewer")
     });
-    app.send(CTRL_M_ENHANCED);
+    app.send(MOVE_SESSION);
     app.wait_for("move folder picker", |screen| {
         screen.contains("move session to folder")
     });
     app.send(target.to_str().expect("UTF-8 move target").as_bytes());
-    // Enter must choose the folder rather than being mistaken for another
-    // Ctrl+M after enhanced keyboard mode is enabled.
+    // Enter chooses the folder; F6 needs no enhanced keyboard encoding.
     app.send(ENTER);
     let moved = app.wait_for("moved row", |screen| {
         screen.contains("moved approval-needed to")
@@ -1511,7 +1508,7 @@ fn terminal_harness_backgrounds_resumes_stops_then_deletes_in_a_real_pty() {
     app.wait_for("foreground Terminal shell", |screen| {
         screen.contains("TERMINAL_HARNESS_READY")
     });
-    app.send(SHIFT_LEFT);
+    app.send(DASHBOARD_BACK);
     app.wait_for("backgrounded Terminal row", |screen| {
         screen.contains("release shell") && screen.contains("Interactive shell")
     });
@@ -1520,7 +1517,7 @@ fn terminal_harness_backgrounds_resumes_stops_then_deletes_in_a_real_pty() {
     app.wait_for("exact Terminal screen replay", |screen| {
         screen.contains("TERMINAL_HARNESS_READY")
     });
-    app.send(SHIFT_LEFT);
+    app.send(DASHBOARD_BACK);
     app.wait_for("second Terminal background", |screen| {
         screen.contains("release shell") && screen.contains("backgrounded terminal release shell")
     });
@@ -1624,7 +1621,7 @@ esac
         !login.contains("BetterAgentView"),
         "Cursor login was painted over the dashboard instead of receiving an isolated screen"
     );
-    app.send(SHIFT_LEFT);
+    app.send(DASHBOARD_BACK);
     app.wait_for(
         "Cursor login backgrounds to its actionable model picker",
         |screen| {
@@ -1666,7 +1663,7 @@ esac
     app.wait_for("Enter opens the Cursor native foreground", |screen| {
         screen.contains("CURSOR NATIVE FOREGROUND") && !screen.contains("BetterAgentView")
     });
-    app.send(SHIFT_LEFT);
+    app.send(DASHBOARD_BACK);
     app.wait_for("new managed Cursor row after launch", |screen| {
         screen.contains("cursor login task")
             && screen.contains("Cursor native session is backgrounded")
@@ -1762,7 +1759,7 @@ printf '%s\n' 'backgrounded · deadbeef'
     );
     let paste_enables_before = count_bytes(&app.raw, b"\x1b[?2004h");
     let enters_before = count_bytes(&app.raw, b"\x1b[?1049h");
-    app.send(SHIFT_LEFT);
+    app.send(DASHBOARD_BACK);
     app.wait_for_byte_count(
         b"\x1b[?1049h",
         enters_before + 1,
@@ -1901,7 +1898,7 @@ send({'jsonrpc':'2.0','id':request['id'],'result':{'models':[
     app.wait_for("Copilot native foreground session", |screen| {
         screen.contains("COPILOT FULL SCREEN SESSION")
     });
-    app.send(SHIFT_LEFT);
+    app.send(DASHBOARD_BACK);
     app.wait_for(
         "Copilot dashboard after backgrounding native session",
         |screen| {
@@ -1977,7 +1974,7 @@ while :; do sleep 1; done
     app.wait_for("Pi native foreground session", |screen| {
         screen.contains("PI FULL SCREEN SESSION")
     });
-    app.send(SHIFT_LEFT);
+    app.send(DASHBOARD_BACK);
     app.wait_for("exact managed Pi row after backgrounding", |screen| {
         screen.contains("BetterAgentView")
             && screen.contains("Pi foreground task")
@@ -2080,7 +2077,7 @@ while :; do sleep 1; done
         screen.contains("ANTIGRAVITY FULL SCREEN SESSION")
     });
     let return_started = Instant::now();
-    app.send(SHIFT_LEFT);
+    app.send(DASHBOARD_BACK);
     let returned = app.wait_for("owned Antigravity row after Left", |screen| {
         screen.contains("BetterAgentView")
             && screen.contains("antigravity account task")
@@ -2179,7 +2176,7 @@ while :; do sleep 1; done
     assert!(arguments.contains("--model gemini-3-pro"));
     assert!(!arguments.contains("--sandbox"));
 
-    app.send(SHIFT_LEFT);
+    app.send(DASHBOARD_BACK);
     app.wait_for(
         "dashboard warning after backgrounding YOLO session",
         |screen| {

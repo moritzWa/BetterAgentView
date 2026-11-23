@@ -101,7 +101,7 @@ fn run_outer(provider: &str, marker: &str, task: &str) {
         );
     }
 
-    master.write_all(b"\x1b[1;2D").unwrap();
+    master.write_all(b"\x1b[18~").unwrap();
     read_until(
         &mut master,
         &mut output,
@@ -120,7 +120,7 @@ fn run_outer(provider: &str, marker: &str, task: &str) {
         b"Send /help for help information.".as_slice()
     };
     read_until(&mut master, &mut output, ready, Duration::from_secs(4));
-    master.write_all(b"\x1b[1;2C").unwrap();
+    master.write_all(b"\x1b[18~").unwrap();
     read_until(
         &mut master,
         &mut output,

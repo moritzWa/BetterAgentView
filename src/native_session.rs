@@ -5,7 +5,7 @@
 //! a cursor boundary, the first arrow is still forwarded and opens a short,
 //! visible return window; pressing the same arrow again returns to the
 //! dashboard. OpenCode sessions return on that first Left instead.
-//! Shift+Left and Shift+Right are immediate equivalents. In OpenCode, a Ctrl+X
+//! F7 returns immediately without taking text-selection keys. In OpenCode, a Ctrl+X
 //! that no other key follows returns too and asks the dashboard to treat it as
 //! its own Ctrl+X on that row; a quick follow-up key keeps it OpenCode's
 //! leader (with `AGENTVIEW_OPENCODE_LEADER=off` it returns at once). The
@@ -1252,19 +1252,6 @@ fn bridge_session(
                                 detach = true;
                                 break;
                             }
-                            InputAction::ShiftArrow(bytes) => {
-                                // Shift+arrow selects text once the OpenCode prompt has a draft;
-                                // with nothing to select it still returns immediately.
-                                if session_key.starts_with("opencode:")
-                                    && prompt_draft(&screen).is_some()
-                                {
-                                    return_gesture.clear(&mut stdout, &screen)?;
-                                    pending_input.write_all(bytes)?;
-                                    continue;
-                                }
-                                detach = true;
-                                break;
-                            }
                             InputAction::Voice => {
                                 if let Some(hook) = VOICE_HOOK.get() {
                                     let draft = session_key
@@ -2229,7 +2216,6 @@ impl ArrowDirection {
 enum InputAction {
     Forward(Vec<u8>),
     Arrow(ArrowDirection, &'static [u8]),
-    ShiftArrow(&'static [u8]),
     Detach,
     /// The removal key, with no OpenCode leader sequence to wait for.
     Remove,
@@ -2237,8 +2223,6 @@ enum InputAction {
     Voice,
 }
 
-const SHIFT_LEFT: &[u8] = b"\x1b[1;2D";
-const SHIFT_RIGHT: &[u8] = b"\x1b[1;2C";
 const LEFT: &[u8] = b"\x1b[D";
 const RIGHT: &[u8] = b"\x1b[C";
 const APPLICATION_LEFT: &[u8] = b"\x1bOD";
@@ -2246,15 +2230,7 @@ const APPLICATION_RIGHT: &[u8] = b"\x1bOC";
 /// F13 as a terminal sends it. Karabiner maps Cmd+H to F13 inside Ghostty, so there is
 /// a way back to agentview that never collides with selecting or moving in the prompt.
 const BACK_KEY: &[u8] = b"\x1b[25~";
-const RECOGNIZED_ARROWS: [&[u8]; 7] = [
-    BACK_KEY,
-    SHIFT_LEFT,
-    SHIFT_RIGHT,
-    LEFT,
-    RIGHT,
-    APPLICATION_LEFT,
-    APPLICATION_RIGHT,
-];
+const RECOGNIZED_ARROWS: [&[u8]; 5] = [BACK_KEY, LEFT, RIGHT, APPLICATION_LEFT, APPLICATION_RIGHT];
 
 #[derive(Default)]
 struct DetachParser {
@@ -2333,8 +2309,7 @@ fn cmd_k(input: &[u8], ctrl_too: bool) -> CmdK {
     }
 }
 
-/// F13 in the kitty keyboard encoding (`CSI 57376 u`, optionally `; modifiers : event`),
-/// which Ghostty uses once a provider has switched that protocol on. A release is dropped.
+/// F7 (legacy or kitty) and the existing F13 mapping. Releases are dropped.
 enum BackKey {
     Press(usize),
     Release(usize),
@@ -2343,25 +2318,38 @@ enum BackKey {
 }
 
 fn back_key(input: &[u8]) -> BackKey {
-    const HEAD: &[u8] = b"\x1b[57376";
+    for (head, terminator) in [
+        (&b"\x1b[18"[..], b'~'),
+        (&b"\x1b[57370"[..], b'u'),
+        (&b"\x1b[57376"[..], b'u'),
+    ] {
+        match encoded_back_key(input, head, terminator) {
+            BackKey::No => {}
+            recognized => return recognized,
+        }
+    }
+    BackKey::No
+}
+
+fn encoded_back_key(input: &[u8], head: &[u8], terminator: u8) -> BackKey {
     const LONGEST: usize = 24;
-    if input.len() < HEAD.len() {
-        return if HEAD.starts_with(input) {
+    if input.len() < head.len() {
+        return if head.starts_with(input) {
             BackKey::Partial
         } else {
             BackKey::No
         };
     }
-    if !input.starts_with(HEAD) {
+    if !input.starts_with(head) {
         return BackKey::No;
     }
-    let rest = &input[HEAD.len()..];
+    let rest = &input[head.len()..];
     // More digits would be another key code.
     if rest.first().is_some_and(u8::is_ascii_digit) {
         return BackKey::No;
     }
     let is_param = |byte: &u8| matches!(byte, b':' | b';' | b'0'..=b'9');
-    let Some(end) = rest.iter().position(|byte| *byte == b'u') else {
+    let Some(end) = rest.iter().position(|byte| *byte == terminator) else {
         return if rest.iter().all(is_param) && rest.len() < LONGEST {
             BackKey::Partial
         } else {
@@ -2371,11 +2359,16 @@ fn back_key(input: &[u8]) -> BackKey {
     if !rest[..end].iter().all(is_param) {
         return BackKey::No;
     }
-    let length = HEAD.len() + end + 1;
-    let event = std::str::from_utf8(&rest[..end])
-        .ok()
-        .and_then(|params| params.split(';').nth(1))
-        .and_then(|modifiers| modifiers.split(':').nth(1));
+    let length = head.len() + end + 1;
+    let params = std::str::from_utf8(&rest[..end]).unwrap_or_default();
+    let modifiers = params.split(';').nth(1).unwrap_or("1");
+    let mut parts = modifiers.split(':');
+    let mask = parts.next().and_then(|value| value.parse::<u32>().ok());
+    // Lock keys are harmless, but modified function keys belong to the provider.
+    if !mask.is_some_and(|mask| mask > 0 && (mask - 1) & 63 == 0) {
+        return BackKey::No;
+    }
+    let event = parts.next();
     if event == Some("3") {
         BackKey::Release(length)
     } else {
@@ -2407,11 +2400,7 @@ impl DetachParser {
         let mut index = 0;
         while index < bytes.len() {
             let remaining = &bytes[index..];
-            let recognized = if remaining.starts_with(SHIFT_LEFT) {
-                Some((InputAction::ShiftArrow(SHIFT_LEFT), SHIFT_LEFT.len()))
-            } else if remaining.starts_with(SHIFT_RIGHT) {
-                Some((InputAction::ShiftArrow(SHIFT_RIGHT), SHIFT_RIGHT.len()))
-            } else if remaining.starts_with(BACK_KEY) {
+            let recognized = if remaining.starts_with(BACK_KEY) {
                 Some((InputAction::Detach, BACK_KEY.len()))
             } else if let BackKey::Press(length) = back_key(remaining) {
                 Some((InputAction::Detach, length))
@@ -2725,7 +2714,7 @@ fn write_return_hint(
     let (rows, cols) = screen.screen().size();
     let tenths = remaining.as_millis().div_ceil(100);
     let message = format!(
-        " Press {} again to return to BetterAgentView · {:.1}s · Shift+←/→ anytime",
+        " Press {} again to return to BetterAgentView · {:.1}s · F7 anytime",
         direction.symbol(),
         tenths as f64 / 10.0
     );
@@ -3439,10 +3428,7 @@ mod tests {
         let second = parser.push(b"[1;2Dignored");
         assert_eq!(
             second,
-            vec![
-                InputAction::ShiftArrow(SHIFT_LEFT),
-                InputAction::Forward(b"ignored".to_vec())
-            ]
+            vec![InputAction::Forward(b"\x1b[1;2Dignored".to_vec())]
         );
     }
 
@@ -3483,6 +3469,41 @@ mod tests {
     }
 
     #[test]
+    fn f7_returns_in_legacy_and_enhanced_terminals_without_taking_modified_keys() {
+        for session in ["opencode:ses_1", "claude:worker", "codex:worker"] {
+            for sequence in [
+                &b"\x1b[18~"[..],
+                b"\x1b[18;1~",
+                b"\x1b[18;1:1~",
+                b"\x1b[57370u",
+                b"\x1b[57370;65u",
+            ] {
+                for split in 1..sequence.len() {
+                    let mut parser = DetachParser::for_session(session);
+                    assert!(parser.push(&sequence[..split]).is_empty());
+                    assert_eq!(parser.push(&sequence[split..]), vec![InputAction::Detach]);
+                }
+            }
+            let mut parser = DetachParser::for_session(session);
+            for release in [&b"\x1b[18;1:3~"[..], b"\x1b[57370;1:3u"] {
+                assert!(parser.push(release).is_empty());
+            }
+            for other in [&b"\x1b[18;2~"[..], b"\x1b[57370;5u", b"\x1b[180~"] {
+                assert_eq!(
+                    parser.push(other),
+                    vec![InputAction::Forward(other.to_vec())]
+                );
+            }
+            for selection in [&b"\x1b[1;2D"[..], b"\x1b[1;2C"] {
+                assert_eq!(
+                    parser.push(selection),
+                    vec![InputAction::Forward(selection.to_vec())]
+                );
+            }
+        }
+    }
+
+    #[test]
     fn detach_parser_classifies_plain_arrows_and_preserves_other_input_exactly() {
         let mut parser = DetachParser::default();
         let parsed = parser.push(b"abc\x1b[A\x1b[D\x1bOD\x1b[C\x1bOC\x1b[1;2C");
@@ -3494,7 +3515,7 @@ mod tests {
                 InputAction::Arrow(ArrowDirection::Left, APPLICATION_LEFT),
                 InputAction::Arrow(ArrowDirection::Right, RIGHT),
                 InputAction::Arrow(ArrowDirection::Right, APPLICATION_RIGHT),
-                InputAction::ShiftArrow(SHIFT_RIGHT),
+                InputAction::Forward(b"\x1b[1;2C".to_vec()),
             ]
         );
     }
@@ -3502,6 +3523,7 @@ mod tests {
     #[test]
     fn opencode_holds_a_lone_ctrl_x_until_it_expires_as_the_removal_key() {
         let mut parser = DetachParser::for_session("opencode:ses_1");
+        parser.leader_off = false;
         assert_eq!(
             parser.push(b"hi\x18"),
             vec![InputAction::Forward(b"hi".to_vec())]
@@ -3538,6 +3560,7 @@ mod tests {
     #[test]
     fn held_keys_report_how_long_until_they_come_due() {
         let mut parser = DetachParser::for_session("opencode:ses_1");
+        parser.leader_off = false;
         assert_eq!(parser.next_deadline(), None);
         parser.push(b"\x18");
         let due = parser.next_deadline().expect("the leader is held");
@@ -3554,6 +3577,7 @@ mod tests {
     #[test]
     fn opencode_leader_sequences_reach_the_provider_intact() {
         let mut parser = DetachParser::for_session("opencode:ses_1");
+        parser.leader_off = false;
         assert_eq!(parser.push(b"\x18"), vec![]);
         assert_eq!(
             parser.push(b"n"),

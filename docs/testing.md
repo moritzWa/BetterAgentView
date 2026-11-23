@@ -228,7 +228,7 @@ checks; the guide also contains release gates that are not yet complete.
   that the first screen is not gated on the slowest provider.
 - An authenticated Antigravity 1.1.20 regression (isolated workspace plus betteragentview
   state/cache) verified a 14-model live catalog, exact selected-model launch,
-  foreground response, Shift+Left return, immediate exact managed row,
+  foreground response, F7 return, immediate exact managed row,
   transcript-derived current summary/time, exact Ctrl+X stop, and rediscovery
   from a fresh betteragentview process. The CLI reused its existing login internally; the
   test did not read or copy authentication material.
@@ -395,7 +395,7 @@ checks; the guide also contains release gates that are not yet complete.
 - Provider-native handoff is covered by a nested real-PTY regression: a plain
   arrow reaches the provider editor, an unchanged cursor produces the timed
   bottom-line hint, repeated Left and Right each background the exact frontend,
-  Shift+Right returns immediately, and every reopen restores the retained VT screen.
+  F7 returns immediately, and every reopen restores the retained VT screen.
   Main-account read-only probes repeated the cycle against a managed OpenCode
   session and a managed Codex thread; the OpenCode server and Codex App Server
   remained alive afterward.

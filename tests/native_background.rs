@@ -228,7 +228,7 @@ fn notification_click_detaches_without_losing_the_target() {
 }
 
 #[test]
-fn boundary_arrows_and_shift_shortcuts_background_and_reattach_the_native_screen() {
+fn boundary_arrows_and_f7_background_while_shift_arrows_reach_the_native_screen() {
     let _serial = serialize_native_background_test();
     if std::env::var_os(CHILD_ENV).is_some() {
         run_child_scenario();
@@ -241,7 +241,7 @@ fn boundary_arrows_and_shift_shortcuts_background_and_reattach_the_native_screen
     command
         .args([
             "--exact",
-            "boundary_arrows_and_shift_shortcuts_background_and_reattach_the_native_screen",
+            "boundary_arrows_and_f7_background_while_shift_arrows_reach_the_native_screen",
             "--nocapture",
         ])
         .env(CHILD_ENV, "1")
@@ -268,6 +268,15 @@ fn boundary_arrows_and_shift_shortcuts_background_and_reattach_the_native_screen
         b"NATIVE_READY",
         Duration::from_secs(4),
     );
+    // Selection keys must reach every provider, not detach its frontend.
+    master.write_all(b"\x1b[1;2D\x1b[1;2C").unwrap();
+    read_until(
+        &mut master,
+        &mut output,
+        b"SELECTION_KEYS_RECEIVED",
+        Duration::from_secs(4),
+    );
+    assert_eq!(occurrence_count(&output, b"DASHBOARD_RETURNED"), 0);
     // A plain arrow must first reach the provider so line editing still works.
     master.write_all(b"\x1b[D").unwrap();
     read_until(
@@ -339,7 +348,7 @@ fn boundary_arrows_and_shift_shortcuts_background_and_reattach_the_native_screen
             Duration::from_secs(4),
         );
     }
-    master.write_all(b"\x1b[1;2C").unwrap();
+    master.write_all(b"\x1b[18~").unwrap();
     read_until(
         &mut master,
         &mut output,
@@ -464,7 +473,7 @@ fn run_child_scenario() {
     let mut first = Command::new("bash");
     first.args([
         "-c",
-        r"stty raw -echo; printf '\033[2J\033[HNATIVE_READY'; IFS= read -r -n 3 key; if [[ $key == $'\033[D' ]]; then printf '\r\nPLAIN_LEFT_RECEIVED'; else printf '\r\nWRONG_ARROW_BYTES'; fi; exec sleep 60",
+        r"stty raw -echo; printf '\033[2J\033[HNATIVE_READY'; IFS= read -r -n 12 selection; if [[ $selection == $'\033[1;2D\033[1;2C' ]]; then printf '\r\nSELECTION_KEYS_RECEIVED'; else printf '\r\nWRONG_SELECTION_BYTES'; fi; IFS= read -r -n 3 key; if [[ $key == $'\033[D' ]]; then printf '\r\nPLAIN_LEFT_RECEIVED'; else printf '\r\nWRONG_ARROW_BYTES'; fi; exec sleep 60",
     ]);
     assert!(matches!(
         native_session::run(first, "provider:host:test").unwrap(),
