@@ -1,0 +1,10 @@
+{
+  "status": "blocked",
+  "observed_native_error": "conversation not found, followed by sign-in; no transcript rendered",
+  "platform": "Linux-4.19.0-gvisor-aarch64-with-glibc2.39",
+  "runs": 1,
+  "messages_per_chat": 40,
+  "fixture": "Validated conversation database plus native picker summary index",
+  "version": "1.5.15",
+  "reason": "No rendered marker RENDER_BENCH_0000; see /home/cua/opening-bench/agy-terminal-0.log"
+}
