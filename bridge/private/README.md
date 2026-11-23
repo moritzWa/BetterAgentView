@@ -12,7 +12,7 @@ relocation requires neither of the following operator commands.
 ```console
 npm ci
 NEON_PROJECT_ID=<dedicated-project> node private/provision.mjs
-npx wrangler deploy --config wrangler.private.jsonc
+npm run deploy
 ```
 
 Provisioning applies both SQL schemas. It creates a runtime role without schema
