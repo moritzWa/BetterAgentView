@@ -141,16 +141,16 @@ The direct-database optimization does not need the fork; stock was not separatel
 
 #### Chat opening
 
-| Harness | Standard | [My OpenCode fork](https://github.com/moritzWa/opencode/tree/v2-parity) |
-| --- | ---: | ---: |
-| OpenCode | ~204 ms | **~52 ms (3.9× faster)** |
-| Claude Code | ~208 ms | — |
-| OpenAI Codex | ~1.35 s | — |
-| Cursor | ~1.31 s | — |
-| Pi | ~159 ms | — |
-| Devin | Not measured | — |
-| Antigravity | Not measured | — |
-| Terminal | Not applicable | — |
+| Harness | Time to open |
+| --- | ---: |
+| OpenCode | ~204 ms; **~52 ms with [my fork](https://github.com/moritzWa/opencode/tree/v2-parity) (3.9× faster)** |
+| Claude Code | ~208 ms |
+| OpenAI Codex | ~1.35 s |
+| Cursor | ~1.31 s |
+| Pi | ~159 ms |
+| Devin | Not measured |
+| Antigravity | Not measured |
+| Terminal | Not applicable |
 
 Medians on the same Apple M5 Pro, restoring identical 40-message synthetic chats
 until the last reply reaches a headless terminal. OpenCode uses a warm server
