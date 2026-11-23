@@ -1629,7 +1629,11 @@ pub fn run_dashboard(
                                 &session_aliases,
                                 &session_id,
                                 &alias,
+                                |session, title| control.rename(session, title),
                             ) {
+                                Ok(SessionAliasUpdate::ProviderRenamed) => app.set_notice(format!(
+                                    "renamed to {} in OpenCode", alias.trim()
+                                )),
                                 Ok(SessionAliasUpdate::Set) => app.set_notice(format!(
                                     "renamed locally to {alias}; the provider title was not changed"
                                 )),
@@ -1643,7 +1647,7 @@ pub fn run_dashboard(
                                     "no local name was set; refreshing the latest provider title",
                                 ),
                                 Err(error) => app
-                                    .set_notice(format!("failed to rename session locally: {error:#}")),
+                                    .set_notice(format!("failed to rename session: {error:#}")),
                             }
                             effect.refresh = true;
                         }
@@ -2339,6 +2343,7 @@ fn hide_sessions_from_app(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SessionAliasUpdate {
+    ProviderRenamed,
     Set,
     Unchanged,
     Cleared,
@@ -2350,6 +2355,7 @@ fn update_session_alias_from_app(
     session_aliases: &SessionAliases,
     session_id: &str,
     alias: &str,
+    rename_provider: impl FnOnce(&AgentSession, &str) -> Result<()>,
 ) -> Result<SessionAliasUpdate> {
     let session = app
         .snapshot
@@ -2364,6 +2370,20 @@ fn update_session_alias_from_app(
         } else {
             SessionAliasUpdate::NotSet
         });
+    }
+    if session.provider == Provider::OpenCode && session.runtime == crate::domain::Runtime::Host {
+        rename_provider(&session, alias.trim())?;
+        session_aliases.clear(session_id)?;
+        let mut snapshot = app.snapshot.clone();
+        if let Some(row) = snapshot
+            .sessions
+            .iter_mut()
+            .find(|row| row.id == session_id)
+        {
+            row.name = alias.trim().to_owned();
+        }
+        app.replace_snapshot(snapshot);
+        return Ok(SessionAliasUpdate::ProviderRenamed);
     }
     let changed = session_aliases.set_for_session(&session, alias)?;
     let mut snapshot = app.snapshot.clone();
@@ -5730,7 +5750,14 @@ mod tests {
         let mut app = app();
 
         assert_eq!(
-            update_session_alias_from_app(&mut app, &aliases, "worker", "dashboard label").unwrap(),
+            update_session_alias_from_app(
+                &mut app,
+                &aliases,
+                "worker",
+                "dashboard label",
+                |_, _| panic!("local rename must not call provider")
+            )
+            .unwrap(),
             SessionAliasUpdate::Set
         );
         assert_eq!(app.snapshot.sessions[0].name, "dashboard label");
@@ -5739,9 +5766,55 @@ mod tests {
             Some("worker")
         );
         assert_eq!(
-            update_session_alias_from_app(&mut app, &aliases, "worker", "").unwrap(),
+            update_session_alias_from_app(&mut app, &aliases, "worker", "", |_, _| panic!(
+                "clearing must not call provider"
+            ))
+            .unwrap(),
             SessionAliasUpdate::Cleared
         );
+        assert!(aliases.list().is_empty());
+    }
+
+    #[test]
+    fn opencode_rename_updates_provider_and_removes_old_alias_only_on_success() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+                .unwrap();
+        }
+        let aliases = SessionAliases::load(directory.path().join("aliases.json")).unwrap();
+        let mut app = app();
+        app.snapshot.sessions[0].provider = Provider::OpenCode;
+        let session = app.snapshot.sessions[0].clone();
+        aliases.set_for_session(&session, "old alias").unwrap();
+        assert!(update_session_alias_from_app(
+            &mut app,
+            &aliases,
+            "worker",
+            "new title",
+            |_, _| { anyhow::bail!("server unavailable") }
+        )
+        .is_err());
+        assert_eq!(app.snapshot.sessions[0].name, session.name);
+        assert_eq!(aliases.list()[0].alias, "old alias");
+        assert_eq!(
+            update_session_alias_from_app(
+                &mut app,
+                &aliases,
+                "worker",
+                " new title ",
+                |target, title| {
+                    assert_eq!(target.provider_session_id, session.provider_session_id);
+                    assert_eq!(title, "new title");
+                    Ok(())
+                }
+            )
+            .unwrap(),
+            SessionAliasUpdate::ProviderRenamed
+        );
+        assert_eq!(app.snapshot.sessions[0].name, "new title");
         assert!(aliases.list().is_empty());
     }
 

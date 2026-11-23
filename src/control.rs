@@ -231,6 +231,10 @@ pub trait ProviderController: Send + Sync {
     /// place. Best effort: a harness without one does nothing.
     fn pause_speech(&self, _session: &AgentSession) {}
 
+    fn rename(&self, _session: &AgentSession, _title: &str) -> Result<()> {
+        bail!("{} session rename is unavailable", self.provider().label())
+    }
+
     /// Stops a session's running turn even when this dashboard did not start
     /// the session.
     fn force_interrupt(&self, _session: &AgentSession) -> Result<()> {
@@ -858,6 +862,11 @@ impl ControlHub {
             bail!("archive authority was not granted for this session");
         }
         self.controller(&session.provider)?.archive(session)
+    }
+
+    pub fn rename(&self, session: &AgentSession, title: &str) -> Result<()> {
+        self.ensure_provider_io()?;
+        self.controller(&session.provider)?.rename(session, title)
     }
 
     pub fn resolve_approval(&self, session: &AgentSession, accept: bool) -> Result<ControlOutcome> {

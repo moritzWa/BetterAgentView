@@ -521,6 +521,17 @@ impl ProviderController for OpenCodeController {
             .abort_any(&session.provider_session_id, &session.cwd)
     }
 
+    fn rename(&self, session: &AgentSession, title: &str) -> Result<()> {
+        anyhow::ensure!(
+            session.runtime == Runtime::Host,
+            "only host OpenCode sessions can be renamed"
+        );
+        self.supervisor
+            .as_ref()
+            .context("managed OpenCode control is not configured")?
+            .rename_session(&session.provider_session_id, &session.cwd, title)
+    }
+
     fn running_shells(
         &self,
         session: &AgentSession,

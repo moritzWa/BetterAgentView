@@ -732,6 +732,20 @@ impl OpenCodeSupervisor {
             .context("OpenCode returned a session without a title")
     }
 
+    pub fn rename_session(&self, session_id: &str, cwd: &Path, title: &str) -> Result<()> {
+        let title = title.trim();
+        anyhow::ensure!(!title.is_empty(), "session title must not be empty");
+        let record = self.required_live_record()?;
+        let path = with_directory_query(&format!("/session/{}", url_path_segment(session_id)), cwd);
+        self.request_empty(&record, "PATCH", &path, Some(&json!({"title": title})))?;
+        let session = self.request_json(&record, "GET", &path, None)?;
+        anyhow::ensure!(
+            session["title"].as_str() == Some(title),
+            "OpenCode did not confirm the new session title"
+        );
+        Ok(())
+    }
+
     /// Every `provider/model` the live server can run, from the catalog it
     /// already holds in memory. `None` when no server is up, so the caller can
     /// fall back to `opencode models`, which boots a whole new process.
