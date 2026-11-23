@@ -73,6 +73,8 @@ own interface.
 - **Search past chats with `Ctrl+G`**, by name, harness, folder, ID, or message text
   across Claude Code, Codex, and OpenCode. Partial words and snippets help you find
   the right conversation; `Enter` restores it. An empty search shows frequently used sessions first.
+- **Find OpenCode tool activity too:** search MCP arguments, Code Mode calls,
+  and text results, including Slack messages sent without repeating them in chat.
 - **Keep work and personal chats separate.** [Work-only browsing](#work-only-browsing)
   hides personal sessions without stopping their agents. Toggle back to your previous chat or draft.
 - **Pause or schedule:** `Ctrl+T` parks a session in Paused; `/defer` puts it in Scheduled.
