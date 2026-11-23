@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::os::fd::FromRawFd;
 use std::os::unix::process::CommandExt;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -85,6 +85,7 @@ fn work_view_toggle_parks_and_resumes_the_same_native_screen() {
         });
     }
     let mut child = command.spawn().unwrap();
+    drop(command); // The parent must not keep the child's PTY slave open.
     let mut output = Vec::new();
     read_until(
         &mut master,
@@ -127,19 +128,13 @@ fn work_view_toggle_parks_and_resumes_the_same_native_screen() {
         b"WORK_SWITCH_PRESERVED",
         Duration::from_secs(10),
     );
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            assert!(status.success(), "{}", String::from_utf8_lossy(&output));
-            break;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("work toggle child did not exit");
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
+    let status = wait_for_exit(
+        &mut child,
+        &mut master,
+        &mut output,
+        Duration::from_secs(10),
+    );
+    assert!(status.success(), "{}", String::from_utf8_lossy(&output));
 }
 
 #[test]
@@ -190,6 +185,7 @@ fn notification_click_detaches_without_losing_the_target() {
         });
     }
     let mut child = command.spawn().unwrap();
+    drop(command);
     let mut output = Vec::new();
     read_until(
         &mut master,
@@ -212,19 +208,13 @@ fn notification_click_detaches_without_losing_the_target() {
         b"FOCUS_TARGET_PRESERVED",
         Duration::from_secs(10),
     );
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            assert!(status.success(), "{}", String::from_utf8_lossy(&output));
-            break;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("focus child did not exit");
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
+    let status = wait_for_exit(
+        &mut child,
+        &mut master,
+        &mut output,
+        Duration::from_secs(10),
+    );
+    assert!(status.success(), "{}", String::from_utf8_lossy(&output));
 }
 
 #[test]
@@ -260,6 +250,7 @@ fn boundary_arrows_and_f7_background_while_shift_arrows_reach_the_native_screen(
         });
     }
     let mut child = command.spawn().unwrap();
+    drop(command);
     let mut output = Vec::new();
 
     read_until(
@@ -359,14 +350,12 @@ fn boundary_arrows_and_f7_background_while_shift_arrows_reach_the_native_screen(
     // macOS CI can take several seconds to reap a stopped process group after
     // the final reattach. Keep the assertion bounded without making the
     // platform scheduler part of the behavior under test.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let status = loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            break status;
-        }
-        assert!(Instant::now() < deadline, "child test did not exit");
-        thread::sleep(Duration::from_millis(10));
-    };
+    let status = wait_for_exit(
+        &mut child,
+        &mut master,
+        &mut output,
+        Duration::from_secs(10),
+    );
     assert!(status.success(), "{}", String::from_utf8_lossy(&output));
     assert!(
         occurrence_count(&output, b"NATIVE_READY") >= 3,
@@ -436,6 +425,7 @@ printf '\r\nRECEIVED_TASK:%s' "$prompt"
     }
 
     let mut child = command.spawn().unwrap();
+    drop(command);
     let mut output = Vec::new();
     read_until(
         &mut master,
@@ -458,15 +448,8 @@ printf '\r\nRECEIVED_TASK:%s' "$prompt"
         String::from_utf8_lossy(&output)
     );
 
-    let deadline = Instant::now() + Duration::from_secs(4);
-    loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            assert!(status.success(), "{}", String::from_utf8_lossy(&output));
-            break;
-        }
-        assert!(Instant::now() < deadline, "screen-gated child did not exit");
-        thread::sleep(Duration::from_millis(10));
-    }
+    let status = wait_for_exit(&mut child, &mut master, &mut output, Duration::from_secs(4));
+    assert!(status.success(), "{}", String::from_utf8_lossy(&output));
 }
 
 fn run_child_scenario() {
@@ -550,6 +533,89 @@ fn set_nonblocking(file: &File) {
         },
         0
     );
+}
+
+fn drain_available(master: &mut File, output: &mut Vec<u8>) {
+    let mut bytes = [0_u8; 4096];
+    // A noisy child must not keep us from checking the exit deadline.
+    for _ in 0..16 {
+        match master.read(&mut bytes) {
+            Ok(0) => break,
+            Ok(count) => output.extend_from_slice(&bytes[..count]),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+            // Linux reports EIO once the last slave closes; macOS reports EOF.
+            Err(error) if error.raw_os_error() == Some(libc::EIO) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => panic!("failed to drain outer PTY: {error}"),
+        }
+    }
+}
+
+fn wait_for_exit(
+    child: &mut Child,
+    master: &mut File,
+    output: &mut Vec<u8>,
+    timeout: Duration,
+) -> ExitStatus {
+    let deadline = Instant::now() + timeout;
+    loop {
+        // Seeing the last application marker does not mean all terminal output
+        // is drained. A macOS session leader can remain in kernel exit/TTY
+        // teardown until its parent reads the remaining output.
+        drain_available(master, output);
+        if let Some(status) = child.try_wait().unwrap() {
+            drain_available(master, output);
+            return status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            // Cleanup must also drain and stay bounded, never wait() forever
+            // while holding the scenario-serialization mutex.
+            let cleanup_deadline = Instant::now() + Duration::from_secs(1);
+            while Instant::now() < cleanup_deadline {
+                drain_available(master, output);
+                if matches!(child.try_wait(), Ok(Some(_))) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            panic!(
+                "PTY child did not exit: {}",
+                String::from_utf8_lossy(output)
+            );
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn child_exit_keeps_draining_output_after_the_last_application_marker() {
+    let _serial = serialize_native_background_test();
+    let (mut master, slave) = outer_pty();
+    set_nonblocking(&master);
+    let mut command = Command::new("/bin/sh");
+    command
+        .args([
+            "-c",
+            "printf 'APPLICATION_DONE'; head -c 262144 /dev/zero; printf 'OUTPUT_DRAINED'",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(slave.try_clone().unwrap()))
+        .stderr(Stdio::from(slave));
+    let mut child = command.spawn().unwrap();
+    drop(command);
+    let mut output = Vec::new();
+    read_until(
+        &mut master,
+        &mut output,
+        b"APPLICATION_DONE",
+        Duration::from_secs(4),
+    );
+    let status = wait_for_exit(&mut child, &mut master, &mut output, Duration::from_secs(4));
+    assert!(status.success());
+    assert!(output
+        .windows(b"OUTPUT_DRAINED".len())
+        .any(|part| part == b"OUTPUT_DRAINED"));
 }
 
 fn read_until(master: &mut File, output: &mut Vec<u8>, needle: &[u8], timeout: Duration) {
