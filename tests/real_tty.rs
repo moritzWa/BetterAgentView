@@ -33,6 +33,40 @@ const CTRL_X: &[u8] = b"\x18";
 static PTY_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
+fn fresh_dashboard_starts_by_directory_and_ctrl_s_toggles_grouping() {
+    let _serial = serialize_real_tty_test();
+    let mut app = PtyApp::spawn_configured(120, 40, |command, home| {
+        fs::remove_file(home.path().join("state/agentview/last-view.json")).unwrap();
+        command.args([
+            "--fixture",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/populated-sessions.json"
+            ),
+            "--all",
+            "--refresh-ms",
+            "60000",
+        ]);
+    });
+    app.wait_for("fresh directory-grouped dashboard", |s| {
+        s.contains("/workspace/alpha") && s.contains("release-reviewer")
+    });
+    app.send(CTRL_S);
+    app.wait_for("status grouping", |s| {
+        s.lines().any(|line| line.trim() == "Needs input")
+    });
+    app.send(CTRL_S);
+    app.wait_for("directory grouping restored", |s| {
+        s.contains("/workspace/alpha") && !s.lines().any(|line| line.trim() == "Needs input")
+    });
+    assert_eq!(
+        agentview::last_view::LastView::at(app.home_path().join("state/agentview/last-view.json"))
+            .view_mode(),
+        Some(agentview::app::ViewMode::Directory)
+    );
+}
+
+#[test]
 fn work_view_global_command_hides_personal_rows_and_restores_the_draft() {
     let _serial = serialize_real_tty_test();
     let mut app = PtyApp::spawn_configured(120, 35, |command, home| {
@@ -352,6 +386,11 @@ impl PtyApp {
         let stdout = duplicate_file(slave).expect("duplicate slave for stdout");
         let stderr = unsafe { File::from_raw_fd(slave) };
         let home = tempfile::tempdir().expect("create isolated home");
+        // Most interaction scenarios below deliberately exercise status groups.
+        // Treat that as a saved preference, not an implicit startup default.
+        agentview::last_view::LastView::at(home.path().join("state/agentview/last-view.json"))
+            .save(agentview::app::ViewMode::Status)
+            .expect("seed the interaction suite's saved status view");
         let mut command = Command::new(
             std::env::var_os("AGENTVIEW_TEST_BIN")
                 .unwrap_or_else(|| env!("CARGO_BIN_EXE_agentview").into()),
