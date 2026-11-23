@@ -359,7 +359,7 @@ fn turn_hash_with_policy(session: &AgentSession, held: bool, policy: &[u8]) -> u
         .chain(activity.to_le_bytes())
         .chain(b"message-only-completion-v3".iter().copied())
         .chain(policy.iter().copied())
-        .chain(b"focused-latest-exchange-v1".iter().copied())
+        .chain(b"ordered-latest-exchange-v2".iter().copied())
         .chain(
             std::env::var("AGENTVIEW_TURN_CLASSIFIER_MODEL")
                 .unwrap_or_else(|_| DEFAULT_MODEL.into())

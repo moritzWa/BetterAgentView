@@ -293,8 +293,11 @@ takes precedence over either completion label.
 
 For OpenCode and Claude transcript history, evidence contains the initial user request and the last two
 user/final-assistant exchanges, capped at about 4,000 characters in total.
-The latest exchange is an explicit top-level field. The original request and
-previous exchange are background context, not extra requirements for the current task.
+The latest exchange is an explicit top-level ordered list: user message, then
+assistant reply. The original request and previous exchange are background context,
+not extra requirements for the current task. Ordered lists also prevent JSON key
+sorting from reversing the conversation. The replay uses the same compact, sorted-key
+serialization as production.
 Reasoning, commentary, tools, logs, synthetic messages and system instructions
 are excluded. Other adapters can supply a cached assistant reply; without safe
 message evidence, their native state stays unchanged. No raw inspection transcript
@@ -321,10 +324,12 @@ was 157 ms and average cost was about $0.000034 per request (813 input tokens).
 After the backfill exposed bad Idle labels, the latest exchange was separated
 from older context and the criteria clarified task delivery versus project closure.
 The expanded 27-case checked-in fixture matched 81/81 judgments over three replays.
-A separate 21-session real-history replay matched 61/63 judgments over three
-runs, with no false Project done labels. Both disagreements concerned a
-delivered gate whose wider CI was still running: Task done versus unconfirmed.
-Live runtime holds remain authoritative in that situation. This remains a model judgment,
+A separate 21-session real-history replay using the production ordering matched
+60/63 judgments over three runs, with no false Project done labels. All three
+disagreements concerned a benchmark status answer reporting finished judging
+but deferred generation: Task done versus unconfirmed. A live Rust-to-Decisions
+probe also verified a formerly misclassified deployed result, with its evidence
+matching the replay exactly. This remains a model judgment,
 not a correctness guarantee. These small, developer-labeled replays are not production accuracy estimates.
 No model is treated as proof that a deployment or task succeeded.
 

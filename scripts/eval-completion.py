@@ -36,6 +36,16 @@ def main():
                     "previous_exchange": turns[-2] if len(turns) > 1 else None},
                 "latest_exchange": turns[-1] if turns else None,
             }
+        messages = case["messages"]
+        def ordered(exchange):
+            if exchange is None or isinstance(exchange, list):
+                return exchange
+            return [{"role": "user", "text": exchange["user"]},
+                {"role": "assistant", "text": exchange["assistant_final"]}]
+        messages["latest_exchange"] = ordered(messages.get("latest_exchange"))
+        if "context" in messages:
+            context = messages["context"]
+            context["previous_exchange"] = ordered(context.get("previous_exchange"))
     cases = [dict(case, id=f"{case['id']}#{repeat + 1}")
         for repeat in range(args.repeat) for case in cases]
 
@@ -45,7 +55,7 @@ def main():
         started = time.monotonic()
         try:
             req = urllib.request.Request("https://openrouter.ai/api/alpha/decisions",
-                data=json.dumps(request).encode(), headers={"Authorization": f"Bearer {key}",
+                data=json.dumps(request, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode(), headers={"Authorization": f"Bearer {key}",
                 "Content-Type": "application/json", "X-Title": "AgentView completion replay"})
             with urllib.request.urlopen(req, timeout=25) as response:
                 result = json.load(response)

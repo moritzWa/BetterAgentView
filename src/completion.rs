@@ -12,10 +12,10 @@ pub const ENDPOINT: &str = "https://openrouter.ai/api/alpha/decisions";
 
 pub fn evidence(scope: &str, turns: &[SessionTurn]) -> String {
     let exchange = |turn: &SessionTurn, latest: bool| {
-        json!({
-            "user": excerpt(&turn.you, if latest { 600 } else { 300 }),
-            "assistant_final": excerpt(&turn.it, if latest { 1800 } else { 500 }),
-        })
+        json!([
+            {"role": "user", "text": excerpt(&turn.you, if latest { 600 } else { 300 })},
+            {"role": "assistant", "text": excerpt(&turn.it, if latest { 1800 } else { 500 })},
+        ])
     };
     let latest = turns.last().map(|turn| exchange(turn, true));
     let previous = turns
@@ -99,7 +99,7 @@ mod tests {
         assert!(evidence.len() < 4100);
         assert!(!evidence.contains("private progress"));
         assert_eq!(
-            serde_json::from_str::<Value>(&evidence).unwrap()["latest_exchange"]["assistant_final"],
+            serde_json::from_str::<Value>(&evidence).unwrap()["latest_exchange"][1]["text"],
             excerpt(&"y".repeat(10_000), 1800)
         );
     }
@@ -125,16 +125,16 @@ mod tests {
         ];
         let value: Value =
             serde_json::from_str(&evidence("original planning scope", &turns)).unwrap();
-        assert_eq!(value["latest_exchange"]["user"], "implement now");
+        assert_eq!(value["latest_exchange"][0]["role"], "user");
+        assert_eq!(value["latest_exchange"][0]["text"], "implement now");
+        assert_eq!(value["latest_exchange"][1]["text"], "deployed and verified");
         assert_eq!(
-            value["latest_exchange"]["assistant_final"],
-            "deployed and verified"
-        );
-        assert_eq!(
-            value["context"]["previous_exchange"]["user"],
+            value["context"]["previous_exchange"][0]["text"],
             "propose only"
         );
         assert!(!value.to_string().contains("discarded"));
+        let wire = value.to_string();
+        assert!(wire.find("implement now").unwrap() < wire.find("deployed and verified").unwrap());
     }
 
     #[test]
