@@ -579,9 +579,11 @@ fn wait_for_exit(
                 }
                 thread::sleep(Duration::from_millis(10));
             }
+            let tail = &output[output.len().saturating_sub(512)..];
             panic!(
-                "PTY child did not exit: {}",
-                String::from_utf8_lossy(output)
+                "PTY child did not exit after draining {} bytes; output tail: {:?}",
+                output.len(),
+                String::from_utf8_lossy(tail)
             );
         }
         thread::sleep(Duration::from_millis(10));
@@ -597,7 +599,7 @@ fn child_exit_keeps_draining_output_after_the_last_application_marker() {
     command
         .args([
             "-c",
-            "printf 'APPLICATION_DONE'; head -c 262144 /dev/zero; printf 'OUTPUT_DRAINED'",
+            "printf 'APPLICATION_DONE'; printf '%08192d' 0; printf 'OUTPUT_DRAINED'",
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::from(slave.try_clone().unwrap()))
@@ -611,6 +613,12 @@ fn child_exit_keeps_draining_output_after_the_last_application_marker() {
         b"APPLICATION_DONE",
         Duration::from_secs(4),
     );
+    // More than one read_until buffer, but not a throughput benchmark. The
+    // trailing marker cannot have arrived in the read that satisfied the
+    // application marker; wait_for_exit must keep reading to observe it.
+    assert!(!output
+        .windows(b"OUTPUT_DRAINED".len())
+        .any(|part| part == b"OUTPUT_DRAINED"));
     let status = wait_for_exit(&mut child, &mut master, &mut output, Duration::from_secs(4));
     assert!(status.success());
     assert!(output
