@@ -144,13 +144,20 @@ The direct-database optimization does not need the fork; stock was not separatel
 | Harness | Standard | [My OpenCode fork](https://github.com/moritzWa/opencode/tree/v2-parity) |
 | --- | ---: | ---: |
 | OpenCode | ~204 ms | **~52 ms (3.9× faster)** |
+| Claude Code | ~208 ms | — |
+| OpenAI Codex | ~1.35 s | — |
+| Cursor | ~1.31 s | — |
+| Pi | ~159 ms | — |
+| Devin | Not measured | — |
+| Antigravity | Not measured | — |
+| Terminal | Not applicable | — |
 
-First visit to another chat with a warm server: a new native interface in stock
-OpenCode versus the fork's prewarmed shared interface. Medians over 40 openings
-per build on the same Apple M5 Pro, using identical
-40-message synthetic chats, timed until the last reply reaches a headless terminal.
-These are native launch/switch timings, not full dashboard or model-response timings.
-Other harnesses' chat-opening times have not been measured yet.
+Medians on the same Apple M5 Pro, restoring identical 40-message synthetic chats
+until the last reply reaches a headless terminal. OpenCode uses a warm server
+(40 openings per build); the other measured harnesses use new native processes
+after one warm-up (30 openings each). These exclude dashboard dispatch and model responses.
+Devin entered sign-in and Antigravity rejected the fixture, so neither gets a timing.
+Terminal has no chat transcript to restore.
 [Versions, raw samples, and reproduction](docs/performance.md).
 
 ## Work-only browsing

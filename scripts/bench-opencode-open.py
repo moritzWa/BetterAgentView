@@ -35,11 +35,23 @@ ANSI = re.compile(rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]")
 
 def stop(process):
     if process.poll() is None:
-        os.killpg(process.pid, signal.SIGTERM)
+        try:
+            if os.getpgid(process.pid) == process.pid:
+                os.killpg(process.pid, signal.SIGTERM)
+        except (PermissionError, ProcessLookupError):
+            pass
+        # Native CLIs can change process groups after launch. Always signal the
+        # direct child as well, rather than assuming its original group exists.
+        process.terminate()
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
+            try:
+                if os.getpgid(process.pid) == process.pid:
+                    os.killpg(process.pid, signal.SIGKILL)
+            except (PermissionError, ProcessLookupError):
+                pass
+            process.kill()
             process.wait(timeout=5)
 
 
@@ -84,8 +96,12 @@ class Terminal:
         raise TimeoutError(f"No rendered marker {marker}; see {self.log}")
 
     def close(self):
+        # Drop the terminal first so a CLI's shutdown cannot block on a full
+        # output buffer while this thread waits for it to exit.
+        if self.master is not None:
+            os.close(self.master)
+            self.master = None
         stop(self.process)
-        os.close(self.master)
 
 
 class Server:
