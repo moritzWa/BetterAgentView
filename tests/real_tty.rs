@@ -1057,13 +1057,17 @@ printf '%s\n' '[{"id":"first","cwd":"/workspace/one","kind":"background","sessio
 #[test]
 fn slow_initial_provider_does_not_hide_fast_provider_results() {
     let _serial = serialize_real_tty_test();
-    let startup_started = Instant::now();
     let mut app = PtyApp::spawn_configured(100, 28, |command, home| {
         let fake_claude = home.path().join("slow-claude");
         fs::write(
             &fake_claude,
             r#"#!/bin/sh
-sleep 2
+attempt=0
+while [ ! -f "$AGENTVIEW_SLOW_PROVIDER_RELEASE" ]; do
+  attempt=$((attempt + 1))
+  [ "$attempt" -lt 600 ] || exit 72
+  sleep 0.05
+done
 printf '%s\n' '[{"id":"slow","cwd":"/workspace/slow","kind":"background","sessionId":"11111111-1111-4111-8111-111111111111","name":"slow-claude-session","status":"busy","state":"working"}]'
 "#,
         )
@@ -1111,6 +1115,10 @@ printf '%s\n' '[{"id":"slow","cwd":"/workspace/slow","kind":"background","sessio
             "--refresh-ms",
             "60000",
         ]);
+        command.env(
+            "AGENTVIEW_SLOW_PROVIDER_RELEASE",
+            home.path().join("release-slow-provider"),
+        );
     });
 
     let partial = app.wait_for("fast provider partial startup", |screen| {
@@ -1118,11 +1126,16 @@ printf '%s\n' '[{"id":"slow","cwd":"/workspace/slow","kind":"background","sessio
             && screen.contains("loading remaining providers…")
             && !screen.contains("slow-claude-session")
     });
+    // Do not use a 750ms wall-clock budget that includes fixture creation and
+    // hosted-runner scheduling. The stronger invariant is that fast results
+    // are visible while the slow provider is still unable to return at all.
+    let release = app.home_path().join("release-slow-provider");
     assert!(
-        startup_started.elapsed() < Duration::from_millis(750),
-        "fast provider was hidden behind the slow initial provider"
+        !release.exists(),
+        "slow provider was released before partial startup"
     );
     assert_lines_fit(&partial, 100);
+    fs::write(release, b"ready").expect("release slow provider after partial startup");
 
     app.wait_for("complete initial provider snapshot", |screen| {
         screen.contains("fast (last conversation)") && screen.contains("slow-claude-session")
@@ -2745,7 +2758,9 @@ if [ "${1:-}" = db ] && [ "${2:-}" != path ]; then
     *"FROM part p JOIN session s"*|*"FROM main.session_message m"*) printf 'record\n'; exit 0 ;;
   esac
   printf '%s\n' "$@" > "$AGENTVIEW_OPENCODE_HISTORY_CALLED"
-  sleep 2
+  # Longer than wait_for's unchanged 10s deadline. A dashboard that waits on
+  # external history must fail, independently of runner startup speed.
+  sleep 30
 fi
 exit 1
 "#,
@@ -2773,8 +2788,6 @@ exit 1
                 home.path().join("opencode-history-called"),
             );
     });
-    let startup = Instant::now();
-
     app.wait_for("OpenCode history-free default startup", |screen| {
         screen.contains("Finished sessions wait here for you to review")
             && !screen.contains("loading provider sessions")
@@ -2786,11 +2799,9 @@ exit 1
         "OpenCode external history ran without --include-external: {}",
         fs::read_to_string(app.home_path().join("opencode-history-called")).unwrap_or_default()
     );
-    assert!(
-        startup.elapsed() < Duration::from_millis(750),
-        "default dashboard waited on OpenCode completed history: {:?}",
-        startup.elapsed()
-    );
+    // The trap cannot complete inside the startup deadline. Together with the
+    // no-query assertion above this checks the dependency directly, rather
+    // than treating a loaded runner's 751ms first paint as a history query.
     app.exit_cleanly();
 }
 

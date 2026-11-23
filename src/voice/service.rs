@@ -2063,6 +2063,21 @@ mod tests {
         );
         call.service.toggle();
         say(&call, id, json!({"type": "offer", "sdp": "x"}));
+        // A real page cannot report session.started before receiving the SDP
+        // answer. Otherwise the first request's worker can still be pending
+        // when the test pauses and starts its second request, reversing them.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let message: Value = serde_json::from_str(
+                &inbox
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    .expect("the first call's SDP answer"),
+            )
+            .unwrap();
+            if message["type"] == "answer" {
+                break;
+            }
+        }
         say(
             &call,
             id,
