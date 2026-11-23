@@ -2,9 +2,10 @@ import {digest,SyncError} from '../sync/projection.mjs';
 import {contextMessage} from './excerpt.mjs';
 import {attentionReason,buildDigest,finalAsk,followUp,matchesQuery,SOON_MS,FOLLOW_MS} from './attention.mjs';
 import {liveHealth} from './health.mjs';
+import {Status,statusRank} from '../contracts/contract.mjs';
 
 const scope=p=>[p.owner_id,p.device_id,p.database_epoch];
-const rank={needs_you:0,working:1,unknown:2,scheduled:3,done:4};
+const rank=statusRank;
 const humanTime=s=>Math.max(Number(s.last_user_ms??0),Number(s.user_created_at??0))||Number(s.updated_at??0);
 const byHuman=(a,b)=>humanTime(b)-humanTime(a)||a.session_id.localeCompare(b.session_id);
 const busy=s=>s.status==='working'||s.status==='needs_you';
@@ -22,7 +23,7 @@ export async function listSessions({db,gate,principal},{status='all',view='recen
  return db.transaction(async tx=>{
   await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
   const all=await loadInventory(tx,principal,runtime);
-  const counts={total:all.length,working:0,needs_you:0,done:0,scheduled:0,unknown:0,unassessed_idle:0};
+   const counts={total:all.length,...Object.fromEntries(Status.options.map(s=>[s,0])),unassessed_idle:0};
   for(const row of all){counts[row.status]++;if(row.status==='done'&&!row.attention_assessed)counts.unassessed_idle++;}
   counts.active=counts.working+counts.needs_you;
   const review=all.filter(s=>s.status==='done'&&!s.attention_assessed&&Date.now()-humanTime(s)<=86400_000).sort(byHuman).slice(0,10);

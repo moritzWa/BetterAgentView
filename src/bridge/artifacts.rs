@@ -1,10 +1,10 @@
 //! Explicit file publication only. History sync never discovers or uploads files.
 use anyhow::{bail, Context, Result};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::io::Read;
 use std::path::Path;
 
-const MAX_BYTES: u64 = 512_000;
+const MAX_BYTES: u64 = super::contract::ARTIFACT_BYTES as u64;
 
 fn encode(bytes: &[u8]) -> String {
     const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -81,10 +81,20 @@ fn payload(session_id: &str, path: &Path, title: Option<&str>) -> Result<Value> 
     if mime.starts_with("text/") {
         std::str::from_utf8(&bytes).context("text artifacts must be UTF-8; nothing uploaded")?;
     }
-    let mut value = json!({"session_id":session_id,"title":title,"name":name,"mime_type":mime,"blob":encode(&bytes),"confirmed":true});
+    let mut value = super::contract::ArtifactUpload {
+        artifact_id: String::new(),
+        session_id: session_id.to_owned(),
+        title: title.to_owned(),
+        name: name.to_owned(),
+        mime_type: mime.parse()?,
+        blob: encode(&bytes),
+        confirmed: true,
+    };
     // The same exact approved revision is retryable without duplicate uploads.
-    value["artifact_id"] = Value::String(super::hash(&value)[..32].to_owned());
-    Ok(value)
+    let mut identity = serde_json::to_value(&value)?;
+    identity.as_object_mut().unwrap().remove("artifact_id");
+    value.artifact_id = super::hash(&identity)[..32].to_owned();
+    Ok(serde_json::to_value(value)?)
 }
 
 pub fn publish(
@@ -102,7 +112,7 @@ pub fn publish(
     let credential = super::token(&config)?;
     super::http::request(
         &config.endpoint,
-        "/v1/artifacts",
+        super::contract::ROUTE_ARTIFACT,
         Some(&credential),
         Some(&value),
         60,

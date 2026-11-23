@@ -1,4 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose';
+import {PairStart,PairToken,routes} from '../contracts/contract.mjs';
 import { digest, SyncError } from '../sync/projection.mjs';
 
 const GOOGLE_KEYS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
@@ -66,9 +67,10 @@ export class OwnerAuth {
         || !/^[A-Za-z0-9_-]{43}$/.test(p.code_challenge??'') || (p.resource && p.resource!==this.resource) || (p.state?.length??0)>2000) throw new SyncError('invalid_authorization_request',400);
       return this.startGoogle(request,{kind:'oauth',client_id:p.client_id,redirect_uri:p.redirect_uri,challenge:p.code_challenge,scopes:asScopes(p.scope),resource:this.resource,state:p.state??''});
     }
-    if (path==='/pair/start' && request.method==='POST') {
-      const p=await request.json();
-      if (![p.device_id,p.database_epoch].every(v=>typeof v==='string' && /^[A-Za-z0-9_-]{8,100}$/.test(v)) || typeof p.label!=='string' || p.label.length>100) throw new SyncError('invalid_pairing',400);
+    if (path===routes.pairStart && request.method==='POST') {
+      const parsed=PairStart.safeParse(await request.json());
+      if(!parsed.success)throw new SyncError('invalid_pairing',400);
+      const p=parsed.data;
       const code=randomToken(),userCode=randomToken(9);
       await this.db.query('INSERT INTO av_pairings VALUES ($1,$2,$3,$4,$5,false,$6)',[await digest(code),userCode,p.device_id,p.database_epoch,p.label,Date.now()+600_000]);
       return json({device_code:code,verification_uri:`${this.issuer}/pair?code=${userCode}`,expires_in:600,interval:5});
@@ -120,8 +122,10 @@ export class OwnerAuth {
       const dest=new URL(p.redirect_uri);dest.searchParams.set('code',code);dest.searchParams.set('iss',this.issuer);if(p.state)dest.searchParams.set('state',p.state);
       return redirect(dest.href);
     }
-    if(path==='/pair/token' && request.method==='POST') {
-      const body=await request.json(),hash=await digest(String(body.device_code??''));
+    if(path===routes.pairToken && request.method==='POST') {
+      const parsed=PairToken.safeParse(await request.json());
+      if(!parsed.success)throw new SyncError('invalid_pairing',400);
+      const body=parsed.data,hash=await digest(body.device_code);
       const pairing=await this.db.transaction(async tx=>{
         const row=(await tx.query('SELECT * FROM av_pairings WHERE code_hash=$1 AND expires_at>$2 FOR UPDATE',[hash,Date.now()])).rows[0];
         if(!row)throw new SyncError('pairing_expired',400);

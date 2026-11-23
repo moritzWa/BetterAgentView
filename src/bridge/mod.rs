@@ -1,6 +1,18 @@
 //! Opt-in private mobile history bridge. The dashboard does not own its lifecycle.
 mod artifacts;
 mod context;
+/// Generated shared bridge wire types.
+///
+/// ```
+/// use agentview::bridge::contract::Status;
+/// let _status = Status::Working;
+/// ```
+///
+/// ```compile_fail
+/// use agentview::bridge::contract::Status;
+/// let _status = Status::InventedStatus;
+/// ```
+pub mod contract;
 mod health;
 mod http;
 mod journal;
@@ -127,11 +139,13 @@ pub fn pair(
     let epoch = random_id()?;
     let started = http::request(
         endpoint,
-        "/pair/start",
+        contract::ROUTE_PAIR_START,
         None,
-        Some(
-            &json!({"device_id":device_id,"database_epoch":epoch,"label":std::env::var("USER").unwrap_or_else(|_|"Mac".into())+" BetterAgentView"}),
-        ),
+        Some(&serde_json::to_value(contract::PairStart {
+            device_id: device_id.clone(),
+            database_epoch: epoch.clone(),
+            label: std::env::var("USER").unwrap_or_else(|_| "Mac".into()) + " BetterAgentView",
+        })?),
         30,
     )?;
     let code = started["device_code"]
@@ -147,9 +161,11 @@ pub fn pair(
     loop {
         match http::request(
             endpoint,
-            "/pair/token",
+            contract::ROUTE_PAIR_TOKEN,
             None,
-            Some(&json!({"device_code":code})),
+            Some(&serde_json::to_value(contract::PairToken {
+                device_code: code.to_owned(),
+            })?),
             30,
         ) {
             Ok(response) => {
@@ -297,7 +313,7 @@ fn flush_isolating(journal: &mut Journal, config: &Config, token: &str) -> Resul
         let session = body["session_id"].as_str().unwrap_or_default().to_owned();
         let sent = http::request(
             &config.endpoint,
-            "/v1/sync/batches",
+            contract::ROUTE_BATCHES,
             Some(token),
             Some(&body),
             60,
@@ -481,15 +497,18 @@ pub fn sync_once(dir: &Path) -> Result<usize> {
     if let Ok(local) = journal.checkpoints() {
         if !local.is_empty() {
             for chunk in local.chunks(CURSOR_BATCH_SIZE) {
-                let sessions: Vec<Value> = chunk
+                let sessions: Vec<contract::CursorPointer> = chunk
                     .iter()
-                    .map(|(id, cursor)| json!({"session_id": id, "cursor": cursor}))
+                    .map(|(id, cursor)| contract::CursorPointer {
+                        session_id: id.clone(),
+                        cursor: *cursor,
+                    })
                     .collect();
                 match http::request(
                     &config.endpoint,
-                    "/v1/sync/cursors",
+                    contract::ROUTE_CURSORS,
                     Some(&credential),
-                    Some(&json!({"sessions": sessions})),
+                    Some(&serde_json::to_value(contract::CursorRequest { sessions })?),
                     60,
                 ) {
                     Ok(report) => {
@@ -540,11 +559,19 @@ pub fn sync_once(dir: &Path) -> Result<usize> {
     // A scan with stuck sessions must not stamp history as fresh.
     http::request(
         &config.endpoint,
-        "/v1/connector/checked",
+        contract::ROUTE_CHECKED,
         Some(&credential),
-        Some(
-            &json!({"complete":health.failing.is_empty(),"skipped":health.failing.len(),"behind":health.failing.len(),"behind_since":health.failing.iter().map(|f| f.since).min().map(|s| s * 1000)}),
-        ),
+        Some(&serde_json::to_value(contract::CheckedRequest {
+            complete: Some(health.failing.is_empty()),
+            skipped: Some(health.failing.len() as i64),
+            behind: Some(health.failing.len() as i64),
+            behind_since: health
+                .failing
+                .iter()
+                .map(|f| f.since)
+                .min()
+                .map(|s| (s * 1000) as i64),
+        })?),
         30,
     )?;
     if let Err(error) = publish_runtime(dir, &config, &credential) {
@@ -580,7 +607,7 @@ fn publish_runtime(dir: &Path, config: &Config, credential: &str) -> Result<()> 
     };
     http::request(
         &config.endpoint,
-        "/v1/connector/runtime",
+        contract::ROUTE_RUNTIME,
         Some(credential),
         Some(&serde_json::to_value(snapshot)?),
         35,
@@ -639,9 +666,9 @@ pub fn deliver_once(dir: &Path) -> Result<bool> {
     } else {
         let lease = http::request(
             &config.endpoint,
-            "/v1/connector/lease",
+            contract::ROUTE_LEASE,
             Some(&credential),
-            Some(&json!({})),
+            Some(&serde_json::to_value(contract::EmptyRequest {})?),
             30,
         )?;
         if lease["message"].is_null() || lease["message"].get("needs_confirmation").is_some() {
@@ -714,9 +741,13 @@ pub fn deliver_once(dir: &Path) -> Result<bool> {
     }
     http::request(
         &config.endpoint,
-        "/v1/connector/ack",
+        contract::ROUTE_ACK,
         Some(&credential),
-        Some(&json!({"operation_id":operation,"message_id":mid,"status":status})),
+        Some(&serde_json::to_value(contract::AckRequest {
+            operation_id: operation.to_owned(),
+            message_id: mid.to_owned(),
+            status: status.parse()?,
+        })?),
         30,
     )?;
     journal
@@ -735,11 +766,14 @@ fn ack_start(
 ) -> Result<()> {
     http::request(
         endpoint,
-        "/v1/connector/start-ack",
+        contract::ROUTE_START_ACK,
         Some(credential),
-        Some(
-            &json!({"operation_id": operation, "status": status, "session_id": session_id, "reason": if reason.is_empty() { Value::Null } else { json!(reason) }}),
-        ),
+        Some(&serde_json::to_value(contract::StartAckRequest {
+            operation_id: operation.to_owned(),
+            status: status.parse()?,
+            session_id: session_id.map(str::to_owned),
+            reason: (!reason.is_empty()).then(|| reason.to_owned()),
+        })?),
         30,
     )?;
     Ok(())
@@ -798,9 +832,9 @@ pub fn start_once(dir: &Path) -> Result<bool> {
     }
     let lease = http::request(
         &config.endpoint,
-        "/v1/connector/start-lease",
+        contract::ROUTE_START_LEASE,
         Some(&credential),
-        Some(&json!({})),
+        Some(&serde_json::to_value(contract::EmptyRequest {})?),
         30,
     )?;
     if lease["start"].is_null() {
@@ -973,9 +1007,9 @@ pub fn run(dir: &Path) -> Result<()> {
                 let credential = token(&config)?;
                 let poll = http::request(
                     &config.endpoint,
-                    "/v1/connector/poll",
+                    contract::ROUTE_POLL,
                     Some(&credential),
-                    Some(&json!({})),
+                    Some(&serde_json::to_value(contract::EmptyRequest {})?),
                     35,
                 )?;
                 // A recovered connection must catch history up even when the phone
@@ -1095,7 +1129,7 @@ pub fn run(dir: &Path) -> Result<()> {
 const STALE_AFTER_SECS: u64 = 30 * 60;
 // The Worker accepts at most 4,000 pointers and bounds request bytes. History
 // includes legacy sessions too, so a whole-source inventory can exceed that.
-const CURSOR_BATCH_SIZE: usize = 1000;
+const CURSOR_BATCH_SIZE: usize = contract::CURSOR_BATCH;
 const STUCK_ALERT_AFTER: Duration = Duration::from_secs(30 * 60);
 const STUCK_ALERT_EVERY: Duration = Duration::from_secs(6 * 3600);
 
@@ -1303,11 +1337,14 @@ pub fn verify(dir: &Path) -> Result<Value> {
         let local_hash = format!("{:x}", md5::Md5::digest(text.as_bytes()));
         let report = match http::request(
             &config.endpoint,
-            "/v1/sync/verify",
+            contract::ROUTE_VERIFY,
             Some(&credential),
-            Some(
-                &json!({"session_id": id, "hash": local_hash, "cursor": capture.through, "count": capture.messages.len()}),
-            ),
+            Some(&serde_json::to_value(contract::VerifyRequest {
+                session_id: id.to_owned(),
+                hash: local_hash,
+                cursor: Some(capture.through),
+                count: Some(capture.messages.len() as i64),
+            })?),
             60,
         ) {
             Ok(report) => report,

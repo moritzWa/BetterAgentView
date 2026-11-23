@@ -19,6 +19,25 @@ permissions:
   contents: read
 
 jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: dtolnay/rust-toolchain@1.75.0
+        with:
+          components: rustfmt
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: bridge/package-lock.json
+      - run: npm ci
+        working-directory: bridge
+      - run: npm test
+        working-directory: bridge
+
   build:
     strategy:
       fail-fast: true
@@ -69,7 +88,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: build
+    needs: [build, contract]
     runs-on: ubuntu-latest
     permissions:
       contents: write

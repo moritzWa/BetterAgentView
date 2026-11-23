@@ -1,0 +1,15 @@
+{
+  "Message": {"id":"msg_fixture","role":"user","order":1,"created_at":1,"updated_at":1,"text":"Synthetic visible text"},
+  "Session": {"title":"Synthetic fixture","archived":false,"deleted":false,"visible_before":null},
+  "Batch": {"version":1,"batch_id":"batch_fixture","session_id":"ses_fixture","kind":"delta","from":1,"through":2,"session":{"title":"Synthetic fixture","archived":false,"deleted":false,"visible_before":null},"messages":[],"delete_ids":[]},
+  "ReadContext": {"version":1,"anchor_order":1,"anchor_bytes":1,"prefix_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","visible_before":null},
+  "CursorRequest": {"sessions":[{"session_id":"ses_fixture","cursor":2}]},
+  "CheckedRequest": {"complete":true,"skipped":0,"behind":0},
+  "EmptyRequest": {},
+  "AckRequest": {"operation_id":"operation_fixture","message_id":"msg_fixture","status":"accepted"},
+  "StartAckRequest": {"operation_id":"operation_fixture","status":"failed","session_id":null,"reason":"fixture"},
+  "VerifyRequest": {"session_id":"ses_fixture","hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","cursor":2,"count":1},
+  "PairStart": {"device_id":"device_fixture","database_epoch":"epoch_fixture","label":"Fixture Mac"},
+  "PairToken": {"device_code":"fixture_code"},
+  "ArtifactUpload": {"artifact_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","session_id":"ses_fixture","title":"Fixture","name":"fixture.txt","mime_type":"text/plain","blob":"aGk=","confirmed":true}
+}

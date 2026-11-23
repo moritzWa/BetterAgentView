@@ -90,6 +90,13 @@ test('MCP exposes real read/search tools but rejects ungranted sends and bypass 
     assert.equal(response.status,200);return response.json();
   };
   const tools=(await rpc('tools/list')).result.tools;
+  const sharedInputs=JSON.parse(await readFile(new URL('../contracts/mcp-inputs.schema.json',import.meta.url),'utf8'));
+  assert.deepEqual(tools.map(t=>t.name).sort(),Object.keys(sharedInputs).sort());
+  for(const tool of tools) {
+    const expected=sharedInputs[tool.name];
+    assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(),Object.keys(expected.properties).sort(),tool.name);
+    assert.deepEqual([...(tool.inputSchema.required??[])].sort(),[...(expected.required??[])].sort(),tool.name);
+  }
   assert.equal(tools.find(t=>t.name==='send_session_message').annotations.readOnlyHint,false);
   await gate.poll(await digest(writerToken));
   await gate.setRuntime(await digest(writerToken),{available:true,partial:false,statuses:[{session_id:'ses_fixture',status:'needs_you',reason:'question',updated_at:123,can_message:false}]});

@@ -6,6 +6,42 @@ use source::{Capture, Message};
 use tempfile::tempdir;
 
 #[test]
+fn generated_wire_types_roundtrip_the_same_fixtures_as_the_worker() {
+    let fixtures: Value = serde_json::from_str(include_str!(
+        "../../bridge/test/fixtures/wire-payloads.json"
+    ))
+    .unwrap();
+    macro_rules! check {
+        ($name:ident) => {{
+            let value = fixtures[stringify!($name)].clone();
+            let typed: contract::$name = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(
+                serde_json::to_value(typed).unwrap(),
+                value,
+                stringify!($name)
+            );
+        }};
+    }
+    check!(Message);
+    check!(Session);
+    check!(Batch);
+    check!(ReadContext);
+    check!(CursorRequest);
+    check!(CheckedRequest);
+    check!(EmptyRequest);
+    check!(AckRequest);
+    check!(StartAckRequest);
+    check!(VerifyRequest);
+    check!(PairStart);
+    check!(PairToken);
+    check!(ArtifactUpload);
+    assert!(serde_json::from_value::<contract::CursorRequest>(
+        json!({"sessions":[],"invented":true})
+    )
+    .is_err());
+}
+
+#[test]
 fn an_unknown_source_event_reconciles_visible_text_instead_of_stalling_sync() {
     let mut db = fixture();
     db.execute_batch(
