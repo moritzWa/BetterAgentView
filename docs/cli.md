@@ -290,6 +290,10 @@ model. `AGENTVIEW_TURN_CLASSIFIER=off` disables the model.
 One request asks two independent questions over the same evidence: whether the
 agent is blocked on the user, and what scope of work is finished. A human blocker
 takes precedence over either completion label.
+If an unheld session is judged unclear, one bounded second check reads only the
+latest exchange, without older project context. It can confirm Task done, never
+promote Project done. Failed or still-unclear reviews remain unconfirmed. This
+keeps an older unfinished project from obscuring a completed summary or answer.
 
 For OpenCode and Claude transcript history, evidence contains the initial user request and the last two
 user/final-assistant exchanges, capped at about 4,000 characters in total.
@@ -325,9 +329,10 @@ After the backfill exposed bad Idle labels, the latest exchange was separated
 from older context and the criteria clarified task delivery versus project closure.
 The expanded 27-case checked-in fixture matched 81/81 judgments over three replays.
 A separate 21-session real-history replay using the production ordering matched
-60/63 judgments over three runs, with no false Project done labels. All three
-disagreements concerned a benchmark status answer reporting finished judging
-but deferred generation: Task done versus unconfirmed. A live Rust-to-Decisions
+57/63 judgments over three runs, with no false Project done labels. The six
+disagreements concerned two mixed-progress reports: a delivered gate with wider
+CI pending and finished benchmark judging with deferred generation. Neither was
+called Project done. A live Rust-to-Decisions
 probe also verified a formerly misclassified deployed result, with its evidence
 matching the replay exactly. This remains a model judgment,
 not a correctness guarantee. These small, developer-labeled replays are not production accuracy estimates.

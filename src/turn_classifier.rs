@@ -359,7 +359,11 @@ fn turn_hash_with_policy(session: &AgentSession, held: bool, policy: &[u8]) -> u
         .chain(activity.to_le_bytes())
         .chain(b"message-only-completion-v3".iter().copied())
         .chain(policy.iter().copied())
-        .chain(b"ordered-latest-exchange-v2".iter().copied())
+        .chain(
+            b"ordered-latest-exchange-v3-uncertain-review"
+                .iter()
+                .copied(),
+        )
         .chain(
             std::env::var("AGENTVIEW_TURN_CLASSIFIER_MODEL")
                 .unwrap_or_else(|_| DEFAULT_MODEL.into())
@@ -417,6 +421,14 @@ fn openrouter_api_key() -> Option<String> {
 }
 
 fn ask_openrouter(key: &str, model: &str, messages: &str, held: bool) -> Result<Verdict> {
+    let verdict = ask_decisions_once(key, model, messages, held)?;
+    Ok(crate::completion::review_unclear(verdict, held, || {
+        let latest = crate::completion::latest_only(messages)?;
+        ask_decisions_once(key, model, &latest, false)
+    }))
+}
+
+fn ask_decisions_once(key: &str, model: &str, messages: &str, held: bool) -> Result<Verdict> {
     let body = crate::completion::request(model, messages, held)?;
     // The key travels on stdin so it never appears in the process list.
     let config = format!(

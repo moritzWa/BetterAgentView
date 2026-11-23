@@ -57,6 +57,27 @@ pub fn request(model: &str, messages: &str, held: bool) -> Result<Value> {
     }))
 }
 
+/// Recheck only task delivery when older project context made it uncertain.
+/// This can establish a delivered task, never full workstream closure.
+pub fn latest_only(messages: &str) -> Result<String> {
+    let evidence: Value = serde_json::from_str(messages)?;
+    Ok(json!({"latest_exchange": evidence.get("latest_exchange").context("missing latest exchange")?}).to_string())
+}
+
+pub fn review_unclear(
+    primary: Verdict,
+    held: bool,
+    review: impl FnOnce() -> Result<Verdict>,
+) -> Verdict {
+    if primary != Verdict::Unclear || held {
+        return primary;
+    }
+    match review() {
+        Ok(Verdict::Done | Verdict::ProjectDone) => Verdict::Done,
+        _ => Verdict::Unclear,
+    }
+}
+
 pub fn parse(response: &[u8]) -> Result<Verdict> {
     let response: Value = serde_json::from_slice(response)?;
     if let Some(error) = response.pointer("/error/message").and_then(Value::as_str) {
@@ -135,6 +156,44 @@ mod tests {
         assert!(!value.to_string().contains("discarded"));
         let wire = value.to_string();
         assert!(wire.find("implement now").unwrap() < wire.find("deployed and verified").unwrap());
+    }
+
+    #[test]
+    fn uncertain_delivery_gets_one_focused_review_but_never_project_promotion() {
+        for reviewed in [Verdict::Done, Verdict::ProjectDone] {
+            assert_eq!(
+                review_unclear(Verdict::Unclear, false, || Ok(reviewed)),
+                Verdict::Done
+            );
+        }
+        assert_eq!(
+            review_unclear(Verdict::Unclear, false, || bail!("network failure")),
+            Verdict::Unclear
+        );
+        for primary in [Verdict::NeedsInput, Verdict::Done, Verdict::ProjectDone] {
+            assert_eq!(
+                review_unclear(primary, false, || panic!("must not spend a second request")),
+                primary
+            );
+        }
+        assert_eq!(
+            review_unclear(Verdict::Unclear, true, || panic!(
+                "live hold remains authoritative"
+            )),
+            Verdict::Unclear
+        );
+        let full = evidence(
+            "old scope",
+            &[SessionTurn {
+                you: "tldr".into(),
+                it: "Delivered summary".into(),
+                ..Default::default()
+            }],
+        );
+        let focused = latest_only(&full).unwrap();
+        assert!(!focused.contains("old scope"));
+        assert!(focused.contains("Delivered summary"));
+        assert!(!focused.contains("context"));
     }
 
     #[test]

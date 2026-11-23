@@ -53,16 +53,36 @@ def main():
         request = {"model": model, "state": {"messages": case["messages"],
             "automatic_followup_pending": case.get("held", False)}, "questions": questions}
         started = time.monotonic()
-        try:
+        def send(payload):
             req = urllib.request.Request("https://openrouter.ai/api/alpha/decisions",
-                data=json.dumps(request, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode(), headers={"Authorization": f"Bearer {key}",
+                data=json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode(), headers={"Authorization": f"Bearer {key}",
                 "Content-Type": "application/json", "X-Title": "AgentView completion replay"})
-            with urllib.request.urlopen(req, timeout=25) as response:
-                result = json.load(response)
+            with urllib.request.urlopen(req, timeout=20) as response:
+                return json.load(response)
+        def decision(result):
             attention = result["answers"]["attention"]["choice"]
-            choice = "needs_input" if attention == "needs_input" else result["answers"]["completion"]["choice"]
+            return "needs_input" if attention == "needs_input" else result["answers"]["completion"]["choice"]
+        try:
+            result = send(request)
+            choice = decision(result)
+            reviewed = choice == "unclear" and not case.get("held", False)
+            usage = result.get("usage", {})
+            if reviewed:
+                try:
+                    review = send({**request, "state": {"automatic_followup_pending": False,
+                        "messages": {"latest_exchange": case["messages"]["latest_exchange"]}}})
+                    if decision(review) in ("task_done", "project_done"):
+                        choice = "task_done"  # A focused review never establishes project closure.
+                    extra = review.get("usage", {})
+                    usage = {"input_tokens": usage.get("input_tokens", 0) + extra.get("input_tokens", 0),
+                        "cost": usage.get("cost", 0) + extra.get("cost", 0),
+                        "cost_details": {"upstream_inference_cost":
+                            usage.get("cost_details", {}).get("upstream_inference_cost", 0) +
+                            extra.get("cost_details", {}).get("upstream_inference_cost", 0)}}
+                except (urllib.error.URLError, KeyError, ValueError):
+                    pass  # Same fail-closed behavior as production's bounded review.
             return {"case": case["id"], "expected": case["expected"], "actual": choice,
-                "ms": round((time.monotonic() - started) * 1000), "usage": result.get("usage", {})}
+                "ms": round((time.monotonic() - started) * 1000), "usage": usage, "reviewed": reviewed}
         except (urllib.error.URLError, KeyError, ValueError) as e:
             return {"case": case["id"], "expected": case["expected"], "error": type(e).__name__ + ": " + str(e),
                 "ms": round((time.monotonic() - started) * 1000)}
@@ -74,6 +94,7 @@ def main():
         report = {"model": model, "cases": len(rows),
             "correct": sum(r.get("actual") == r["expected"] for r in rows),
             "false_project_done": sum(r.get("actual") == "project_done" and r["expected"] != "project_done" for r in rows),
+            "focused_reviews": sum(r.get("reviewed", False) for r in rows),
             "median_ms": statistics.median(r["ms"] for r in rows),
             "total_cost": sum(r.get("usage", {}).get("cost", 0) for r in rows),
             "upstream_cost": sum(r.get("usage", {}).get("cost_details", {}).get("upstream_inference_cost", 0) for r in rows),
