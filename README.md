@@ -141,23 +141,26 @@ The direct-database optimization does not need the fork; stock was not separatel
 
 #### Chat opening
 
-| Harness | Time to open |
+| Harness | Opening / returning |
 | --- | ---: |
 | OpenCode | ~204 ms; **~52 ms with [my fork](https://github.com/moritzWa/opencode/tree/v2-parity) (3.9× faster)** |
 | Claude Code | ~208 ms |
-| OpenAI Codex | ~1.35 s |
-| Cursor | ~1.31 s |
+| OpenAI Codex | ~1.35 s first visit; **~16 ms returning** |
+| Cursor | ~1.31 s first visit; **~20 ms returning** |
 | Pi | ~159 ms |
-| Devin | Not measured |
+| Devin | ~675 ms (Linux Space) |
 | Antigravity | Not measured |
-| Terminal | Not applicable |
+| Terminal | ~14 ms to a shell prompt |
 
-Medians on the same Apple M5 Pro, restoring identical 40-message synthetic chats
+Chat-opening medians on the same Apple M5 Pro, restoring 40-message synthetic chats
 until the last reply reaches a headless terminal. OpenCode uses a warm server
-(40 openings per build); the other measured harnesses use new native processes
-after one warm-up (30 openings each). These exclude dashboard dispatch and model responses.
-Devin entered sign-in and Antigravity rejected the fixture, so neither gets a timing.
-Terminal has no chat transcript to restore.
+(40 openings per build); the other measured harnesses start new native processes
+after one warm-up (30 openings each). Returning reuses the interface BetterAgentView
+already keeps open: **~16 ms for Codex and ~20 ms for Cursor**, measured through the
+actual dashboard over 30 returns each. No model response is generated.
+Devin uses a separate Linux Space, so its result is not directly comparable to the Mac runs.
+Antigravity rejected the fixture, so it gets no timing.
+Terminal measures 30 clean-profile zsh starts to a usable prompt, not chat restoration.
 [Versions, raw samples, and reproduction](docs/performance.md).
 
 ## Work-only browsing

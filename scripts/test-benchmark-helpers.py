@@ -84,6 +84,23 @@ class BenchmarkHelpers(unittest.TestCase):
             terminal.close()
         self.assertEqual(events, ["terminal", "process", "process"])
 
+    def test_linux_cleanup_uses_exact_environment_marker_not_process_names(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            proc = Path(temporary)
+            for pid, marker in [("123", "ours"), ("456", "someone-else")]:
+                (proc / pid).mkdir()
+                (proc / pid / "environ").write_bytes(b"HOME=/fixture\0AV_HARNESS_BENCH_ID=" + marker.encode() + b"\0")
+            original_path = Path
+            def path(value):
+                return proc if value == "/proc" else original_path(value)
+            def terminate(pid, sig):
+                self.assertEqual(pid, 123)
+                (proc / str(pid) / "environ").unlink()
+            with patch.object(harness.platform, "system", return_value="Linux"), patch.object(harness, "Path", side_effect=path), patch.object(harness.os, "kill", side_effect=terminate) as kill, patch.object(harness.time, "sleep"):
+                harness.cleanup({"AV_HARNESS_BENCH_ID": "ours"})
+            kill.assert_called_once_with(123, signal.SIGTERM)
+            self.assertTrue((proc / "456" / "environ").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

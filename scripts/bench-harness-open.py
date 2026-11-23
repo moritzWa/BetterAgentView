@@ -87,6 +87,16 @@ def cleanup(env):
     """Reap only processes with this run's unique environment marker."""
     marker = "AV_HARNESS_BENCH_ID=" + env["AV_HARNESS_BENCH_ID"]
     def owned():
+        if platform.system() == "Linux":
+            found = []
+            for entry in Path("/proc").iterdir():
+                if entry.name.isdecimal():
+                    try:
+                        if marker.encode() in (entry / "environ").read_bytes().split(b"\0"):
+                            found.append(int(entry.name))
+                    except OSError:
+                        pass
+            return found
         output = subprocess.check_output(["ps", "eww", "-axo", "pid=,command="], text=True)
         return [int(line.split()[0]) for line in output.splitlines() if marker in line]
     for sig in [signal.SIGTERM, signal.SIGKILL]:

@@ -1,0 +1,59 @@
+{
+  "date": "2026-11-23",
+  "cpu": "Apple M5 Pro",
+  "platform": "macOS 26.6.2 arm64",
+  "agentview_version": "0.3.0",
+  "agentview_sha256": "ebe61199132f7418c5ac7dff17da969ef98f2c6499d56f1e716079fffe03c824",
+  "terminal": { "columns": 140, "rows": 40 },
+  "return_endpoint": "Enter sent to the actual dashboard until the retained native last reply is visible in a terminal emulator",
+  "return_setup": "Open one synthetic 40-message chat, detach with the existing F13 gesture, reopen the same frontend without restarting it",
+  "harnesses": {
+    "codex": {
+      "version": "0.163.0",
+      "runs": 30,
+      "return_median_ms": 16.289,
+      "return_samples_ms": [
+        22.959, 16.493, 18.699, 16.185, 16.537,
+        15.569, 15.468, 16.155, 17.306, 21.472,
+        20.090, 16.542, 16.008, 15.670, 15.975,
+        16.131, 16.283, 16.012, 16.208, 16.208,
+        16.209, 16.496, 16.177, 15.932, 18.719,
+        19.187, 16.295, 17.416, 16.850, 16.986
+      ],
+      "dashboard_first_open_observation_ms": 738.260,
+      "first_open_observation_count": 1
+    },
+    "cursor": {
+      "version": "2026.09.28-64d2043",
+      "runs": 30,
+      "return_median_ms": 20.383,
+      "return_samples_ms": [
+        17.450, 22.153, 18.655, 22.456, 20.010,
+        20.135, 21.998, 19.455, 20.511, 20.563,
+        18.735, 19.222, 18.582, 20.267, 20.006,
+        20.653, 24.989, 20.499, 25.738, 20.792,
+        20.160, 18.852, 20.576, 18.241, 19.826,
+        20.650, 20.955, 24.233, 20.186, 21.850
+      ],
+      "dashboard_first_open_observation_ms": 814.632,
+      "first_open_observation_count": 1
+    },
+    "terminal": {
+      "shell": "/bin/zsh",
+      "version": "zsh 5.9 (arm64-apple-darwin25.0)",
+      "endpoint": "New interactive shell process until usable prompt, outside dashboard",
+      "setup": "Private HOME and a .zshrc setting only the benchmark prompt; no inherited user dotfiles",
+      "runs": 30,
+      "startup_median_ms": 13.972,
+      "startup_samples_ms": [
+        14.031, 13.479, 13.515, 14.472, 13.342,
+        14.025, 13.643, 13.958, 13.887, 15.033,
+        14.665, 14.089, 12.855, 13.251, 13.310,
+        14.044, 19.721, 14.029, 13.474, 13.164,
+        13.986, 14.157, 14.590, 13.743, 13.439,
+        13.144, 13.551, 14.946, 14.223, 14.104
+      ],
+      "dashboard_return_status": "Not accepted: separate row-selection checkpoint in the dashboard experiment did not complete; shell startup samples are independent"
+    }
+  }
+}
