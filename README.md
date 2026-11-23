@@ -119,30 +119,38 @@ sessions needs targeted TUI switching, available in my [OpenCode fork](https://g
 BetterAgentView detects that capability. Without it, chats still open, but the first
 open of each session can take longer because it starts a separate interface.
 
-#### Refresh and chat-opening times
+#### Dashboard refresh
 
 betteragentview is fast because it skips each harness's CLI wherever it can and
 reads the data itself: OpenCode's SQLite database directly instead of starting
 `opencode db` for every query, and which Cursor chats are open straight from
 macOS instead of running `lsof`.
 
-| Harness | Dashboard refresh¹ | Native chat opening, stock² | Native chat opening, [my OpenCode fork](https://github.com/moritzWa/opencode/tree/v2-parity)² |
-| --- | ---: | ---: | ---: |
-| OpenCode | ~130 ms | ~204 ms | **~52 ms (3.9× faster)** |
-| Claude Code | ~180 ms | — | — |
-| OpenAI Codex | ~80 ms | — | — |
-| Cursor | ~3 ms | — | — |
-| Devin | ~6 ms | — | — |
-| Pi, Antigravity, Terminal | under 1 ms | — | — |
+| Harness | Time per refresh |
+| --- | ---: |
+| OpenCode | ~130 ms |
+| Claude Code | ~180 ms |
+| OpenAI Codex | ~80 ms |
+| Cursor | ~3 ms |
+| Devin | ~6 ms |
+| Pi, Antigravity, Terminal | under 1 ms |
 
-¹ Median refresh over 30 s on an Apple M5 Pro with a 17 GB OpenCode history,
+Median refresh over 30 s on an Apple M5 Pro with a 17 GB OpenCode history,
 recorded using my setup. Refreshes read harnesses in parallel, off the input thread.
 The direct-database optimization does not need the fork; stock was not separately timed on that history.
 
-² First visit to another chat with a warm server: a new native interface in stock
-OpenCode versus the fork's prewarmed shared interface. Medians over 40 openings per build, using identical
+#### Chat opening
+
+| Harness | Standard | [My OpenCode fork](https://github.com/moritzWa/opencode/tree/v2-parity) |
+| --- | ---: | ---: |
+| OpenCode | ~204 ms | **~52 ms (3.9× faster)** |
+
+First visit to another chat with a warm server: a new native interface in stock
+OpenCode versus the fork's prewarmed shared interface. Medians over 40 openings
+per build on the same Apple M5 Pro, using identical
 40-message synthetic chats, timed until the last reply reaches a headless terminal.
 These are native launch/switch timings, not full dashboard or model-response timings.
+Other harnesses' chat-opening times have not been measured yet.
 [Versions, raw samples, and reproduction](docs/performance.md).
 
 ## Work-only browsing
