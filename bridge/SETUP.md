@@ -46,6 +46,27 @@ This updates the same Worker, not a new service. Keep `name`, `ISSUER`, the
 Durable Object binding/class and migration history unchanged. Do not delete or
 recreate the Worker or replace its secrets. No push or PR automatically deploys.
 
+`npm run deploy` now runs the installed-connector live gate after deployment.
+Do not deploy directly with Wrangler: that bypasses the gate. A failed gate means
+the rollout is not healthy, even if Cloudflare accepted the upload.
+
+The gate requires the paired Mac, its running installed bridge, native OpenCode V2,
+and the existing operator `neonctl` login. It creates one disposable session and a
+bounded sleep process. Fresh MCP reads must show idle, working, idle, then removal.
+It never calls a model or changes another session. Temporary read credentials are
+removed on success and failure. Cleanup failure also fails the gate.
+
+Run `npm run verify:live` to repeat it without deploying. Your Mac's
+`~/.claude/scripts/install-latest.sh agentview` runs this same gate after replacing
+the binary and restarting only the bridge. It reports installation success only
+after the gate passes. A receipt in `~/.local/state/agentview/bridge/release-check.json`
+records the running binary hash and cloud observation timestamps, not secrets.
+The receipt proves that rollout, not perpetual health. Failed checks remove it.
+
+This is an operator gate for the private bridge. Public GitHub release jobs do not
+have the owner's Mac or account credentials; their synthetic tests are not a live
+private-bridge pass.
+
 ## Provisioning is not migration
 
 `private/provision.mjs` is an operator tool for initial setup or explicit schema

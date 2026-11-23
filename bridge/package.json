@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "deploy": "wrangler deploy --config wrangler.private.jsonc",
+    "deploy": "node release/deploy.mjs",
+    "verify:live": "node release/live.mjs",
     "build": "wrangler deploy --config wrangler.private.jsonc --dry-run --outdir dist"
   },
   "dependencies": {
