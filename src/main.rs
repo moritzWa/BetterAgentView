@@ -2233,14 +2233,14 @@ fn run_harness_setup(provider: LaunchProvider, confirmed: bool, cli: &Cli) -> Re
 
     if !executable_available(executable) {
         println!(
-            "The installer completed, but `{executable}` is not visible in this process's PATH yet. Open a new terminal, then run `agentview setup {}` to continue login.",
+            "The installer completed, but `{executable}` is not visible in this process's PATH yet. Open a new terminal, then run `bav setup {}` to continue login.",
             launch_provider_value(provider)
         );
         return Ok(());
     }
     if !io::stdin().is_terminal() {
         println!(
-            "Installation check passed. Complete authentication interactively with `agentview setup {}`.",
+            "Installation check passed. Complete authentication interactively with `bav setup {}`.",
             launch_provider_value(provider)
         );
         return Ok(());
@@ -2252,7 +2252,7 @@ fn run_harness_setup(provider: LaunchProvider, confirmed: bool, cli: &Cli) -> Re
         io::stdin().read_line(&mut answer)?;
         if matches!(answer.trim().to_ascii_lowercase().as_str(), "n" | "no") {
             println!(
-                "Login deferred. Run `agentview setup {}` when ready.",
+                "Login deferred. Run `bav setup {}` when ready.",
                 launch_provider_value(provider)
             );
             return Ok(());
@@ -2528,7 +2528,7 @@ fn run_self_update() -> Result<()> {
         #[cfg(not(windows))]
         {
             if !status.success() {
-                bail!("agentview update exited with status {status}");
+                bail!("bav update exited with status {status}");
             }
             let installed_version = installed_agentview_version(&install_dir)?;
             if installed_version == previous_version {
