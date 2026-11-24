@@ -56,7 +56,7 @@ def main():
     poster.resize((1920, 1080), Image.Resampling.LANCZOS).save(ROOT / "site/film-poster.jpg", quality=92)
     frame(5.3).resize((1200, 675), Image.Resampling.LANCZOS).crop((0, 22, 1200, 652)).save(ROOT / "site/og.png")
     shutil.copyfile(args.film / "agentview-film-x.mp4", ROOT / "site/film.mp4")
-    print("Exported reviewed film, poster and seven public feature visuals.")
+    print("Exported reviewed film, poster and eight public feature visuals.")
 
 
 if __name__ == "__main__":
