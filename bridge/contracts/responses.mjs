@@ -1,6 +1,6 @@
 // Generated. Edit the .mts source, not this file.
 import { z } from 'zod';
-import { ReadContext, Status, Health, Reason, DashboardSnapshot, DashboardSession, routes } from './contract.mjs';
+import { ReadContext, Status, Health, Reason, DashboardCategory, routes } from './contract.mjs';
 const id = z.string().min(1).max(200), counter = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 // Consumers tolerate additive response fields, but known fields never change type.
 const object = (shape) => z.object(shape);
@@ -38,10 +38,10 @@ const message = extensible({ message_id: id, role: z.enum(['user', 'assistant'])
 const delivery = ReceiptResponse.extend({ delivery_state: z.string(), claim_ceiling: z.string(), say_to_owner: z.string(), report_rule: z.string(), ...freshness }).passthrough();
 const start = StartReceiptResponse.extend({ delivery_state: z.string(), claim_ceiling: z.string(), say_to_owner: z.string(), report_rule: z.string(), ...freshness }).passthrough();
 const categoryCounts = z.record(z.string(), counter);
-const contextSession = DashboardSession.extend({ recent_messages: z.array(message.extend({ truncated: z.boolean(), total_characters: counter })).max(3).optional(), context_state: z.enum(['available', 'unsupported_provider', 'budget_limited', 'not_synced_or_hidden']).optional(), context_fresh: z.boolean().optional(), context_synced_at: z.union([counter, z.string()]).nullable().optional() });
-const directoryGroup = object({ directory_id: z.string(), path: z.string(), label: z.string(), counts: categoryCounts, displayed_counts: categoryCounts, sessions: z.array(contextSession), working: z.array(contextSession), review_ids: z.array(id) });
+const voiceSession = z.object({ id, title: z.string(), status: DashboardCategory, user: z.string().nullable(), agent: z.string().nullable(), review: z.literal(true).optional() }).strict();
+const directoryGroup = z.object({ path: z.string(), label: z.string(), counts: categoryCounts, sessions: z.array(voiceSession), working: z.array(voiceSession) }).strict();
 export const toolOutputs = {
-    list_visible_sessions: extensible({ available: z.boolean(), exact: z.boolean(), status_fresh: z.boolean(), dashboard: DashboardSnapshot.nullable(), counts: categoryCounts.nullable(), displayed_counts: categoryCounts.nullable(), directories: z.array(directoryGroup), review_ids: z.array(id), note: z.string() }),
+    list_visible_sessions: z.object({ counts: categoryCounts.nullable(), directories: z.array(directoryGroup), warning: z.string().optional() }).strict(),
     list_artifacts: extensible({ artifacts: z.array(artifactMetadata) }),
     mac_presence: extensible({ bridge: z.enum(['online', 'offline', 'unknown']), internet: z.enum(['reachable', 'unknown']), history_sync: z.enum(['fresh', 'stale', 'partial', 'unknown']), last_heartbeat_at: counter.nullable(), last_successful_sync_at: counter.nullable() }),
     new_since_last_check: extensible({ available: z.boolean(), changes: z.array(extensible({ session_id: id, change: z.enum(['needs_you', 'finished']), reason: Reason.nullable() })), note: z.string() }),

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {visibleView,listVisibleSessions,REVIEW_RULES} from '../private/visible.mjs';
 import {addVisibleContext,CONTEXT_CHARACTERS} from '../private/visible-context.mjs';
+import {voiceView,readableExcerpt} from '../private/voice-view.mjs';
 const dashboard=JSON.parse(await readFile(new URL('./fixtures/dashboard.json',import.meta.url)));
 const directoryDashboard=JSON.parse(await readFile(new URL('./fixtures/dashboard-directories.json',import.meta.url)));
 const runtime={available:true,partial:false,checked_at:100000,dashboard,statuses:Array.from({length:381},(_,i)=>({session_id:`old-${i}`,status:'done'}))};
@@ -46,8 +47,9 @@ test('inventory stays UI-owned; history enrichment only queries the selected dir
   assert.equal(result.counts.total,4);
   assert.deepEqual(selected.slice(0,3),['owner','d','e']);
   assert.deepEqual(selected[3].sort(),['idle','needs','task','working']);
-  assert(result.directories[0].sessions.every(s=>s.context_state==='not_synced_or_hidden'));
-  assert(result.dashboard.sessions.every(s=>!('recent_messages' in s)));
+  assert(result.directories[0].sessions.every(s=>s.user===null&&s.agent===null));
+  assert.match(result.warning,/context is unavailable/);
+  assert(fresh.dashboard.sessions.every(s=>!('recent_messages' in s)));
 });
 
 test('directory grouping matches actual UI directory headers, counts, membership and worktree folding',()=>{
@@ -86,7 +88,7 @@ test('overview context has a shared Unicode budget and never leaks a matching ID
  const rows=Array.from({length:400},(_,i)=>({...dashboard.sessions[0],id:`opencode:host:s${i}`,session_id:`s${i}`}));
  rows.push({...rows[0],id:'codex:host:s0',provider:'Codex'});
  const view=visibleView({...runtime,dashboard:{...dashboard,sessions:rows}},{mac_seen_recently:true},100001);
- const db={transaction:async fn=>fn({query:async(sql,args)=>({rows:args?args[3].map(session_id=>({session_id,synced_at:new Date(100000),recent_messages:Array.from({length:3},(_,i)=>({message_id:`m${i}`,message_order:i,role:i%2?'assistant':'user',total_characters:10000,text_head:'🧪'.repeat(args[4]),text_tail:'🧪'.repeat(args[4])}))})):[]})})};
+ const db={transaction:async fn=>fn({query:async(sql,args)=>({rows:args?args[3].map(session_id=>({session_id,synced_at:new Date(100000),recent_messages:Array.from({length:2},(_,i)=>({message_id:`m${i}`,message_order:i,role:i%2?'assistant':'user',total_characters:10000,text_head:'🧪'.repeat(args[4])}))})):[]})})};
  const result=await addVisibleContext({db,principal:{owner_id:'o',device_id:'d',database_epoch:'e'},runtime,freshness:{}},view);
  const sessions=result.directories.flatMap(d=>[...d.sessions,...d.working]);
  const characters=sessions.flatMap(s=>s.recent_messages).reduce((n,m)=>n+[...m.text].length,0);
@@ -96,4 +98,38 @@ test('overview context has a shared Unicode budget and never leaks a matching ID
  const other=sessions.find(s=>s.provider==='Codex');
  assert.equal(other.context_state,'unsupported_provider');assert.deepEqual(other.recent_messages,[]);
  assert(result.dashboard.sessions.every(s=>!('recent_messages' in s)));
+});
+
+test('voice response keeps UI membership and ordering without duplicate IDs, zero counts or debugger fields',()=>{
+ const internal=visibleView(runtime,{mac_seen_recently:true},100001);
+ for(const d of internal.directories)for(const s of [...d.sessions,...d.working]) {
+  s.context_state='available';s.context_fresh=true;
+  s.recent_messages=[{role:'user',text:'Ship the layout.'},{role:'assistant',text:'Deployed and verified.'}];
+ }
+ const result=voiceView(internal);
+ assert.deepEqual(Object.keys(result),['counts','directories']);
+ assert(!('scheduled' in result.counts));
+ const work=result.directories.find(d=>d.path==='/work');
+ assert.deepEqual(Object.keys(work),['path','label','counts','sessions','working']);
+ assert.deepEqual(work.sessions.map(s=>s.status),['needs_input','task_done','idle']);
+ assert.deepEqual(Object.keys(work.sessions[0]),['id','title','status','user','agent']);
+ assert.equal(work.sessions[0].agent,'Deployed and verified.');
+ assert(!JSON.stringify(result).includes('review_ids'));
+ const stalled=voiceView(visibleView({...runtime,statuses:[{session_id:'working',health:'potentially_stalled'}]},{mac_seen_recently:true},100001));
+ assert.equal(stalled.directories.find(d=>d.path==='/work').working[0].review,true);
+ const missing=voiceView(visibleView({...runtime,dashboard:undefined},{},100001));
+ assert.equal(missing.counts,null);assert.deepEqual(missing.directories,[]);assert.match(missing.warning,/unavailable/);
+ const stale=voiceView(visibleView(runtime,{mac_seen_recently:true},140001));
+ assert.match(stale.warning,/stale or partial/);
+});
+
+test('readable excerpts stop at sentences or whole words, never splice unrelated fragments',()=>{
+ const text='The shared layout is deployed. Final checks passed for the hero, cards and responsive layout. Additional implementation detail follows.';
+ const cut=readableExcerpt({text_head:text.slice(0,100),total_characters:text.length},100);
+ assert.equal(cut,'The shared layout is deployed. Final checks passed for the hero, cards and responsive layout.…');
+ const word=readableExcerpt({text_head:'Updated the research page without changing',total_characters:200},34);
+ assert.equal(word,'Updated the research page without…');
+ assert.equal(readableExcerpt({text_head:'Done 🧪',total_characters:6},600),'Done 🧪');
+ const unicode=readableExcerpt({text_head:'🧪'.repeat(100),total_characters:200},40);
+ assert.equal([...unicode].length,40);assert(!/[\uD800-\uDBFF]$/.test(unicode));
 });

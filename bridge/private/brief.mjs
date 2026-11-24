@@ -27,7 +27,8 @@ async function resolve({inventory,session_id,query}) {
  * @param {any} dependencies
  * @param {import('../contracts/contract.mjs').ToolInput<'session_brief'>} input */
 export async function sessionBrief({db,gate,principal},input) {
-  const {session_id,query}=input;
+  const query=input.query;
+  const session_id=input.session_id?.startsWith('opencode:host:')?input.session_id.slice('opencode:host:'.length):input.session_id;
   if(!session_id&&!query?.trim())throw new SyncError('session_id_or_query_required',400);
   const source=`${principal.device_id}|${principal.database_epoch}`;
   const started=Date.now();
