@@ -102,9 +102,9 @@ saved, betteragentview uses OpenAI, or Grok when only an xAI key exists.
 does the badge in an OpenCode session's footer (`● voice 2:13  −  1.2x  +`).
 Click the `−` or `+` to change it in steps of 0.1x, like the controls of the
 read-aloud plugin. It changes while the voice is talking and is remembered.
-`/voice speed 1.2` sets it by typing. The dashboard only asks your terminal for
-clicks while such a call is live, so selecting text works as usual otherwise
-(Shift-drag still selects while it is). OpenAI has no speed setting, so its
+`/voice speed 1.2` sets it by typing. The dashboard captures mouse clicks for
+session navigation too; use your terminal's selection override (usually
+Shift-drag) to select text. OpenAI has no speed setting, so its
 badge has no buttons.
 
 ## Reading sessions and searching

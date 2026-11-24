@@ -397,6 +397,7 @@ impl PtyApp {
         );
         command
             .env("TERM", "xterm-256color")
+            .env_remove("AGENTVIEW_MOUSE_HOVER")
             .env("HOME", home.path())
             .env("XDG_STATE_HOME", home.path().join("state"));
         configure(&mut command, &home);
@@ -2860,14 +2861,17 @@ fn wide_real_tty_exercises_primary_interactions_and_restores_terminal() {
     assert_eq!(
         startup
             .lines()
-            .filter(|line| line.trim_start().starts_with('✱'))
+            .filter(|line| line.trim_start_matches([' ', '❯']).starts_with('✱'))
             .count(),
         3
     );
     assert_eq!(
         startup
             .lines()
-            .filter(|line| line.trim_start().starts_with('✳') || line.trim_start().starts_with('·'))
+            .filter(|line| {
+                let row = line.trim_start_matches([' ', '❯']);
+                row.starts_with('✳') || row.starts_with('·')
+            })
             .count(),
         3
     );
@@ -3397,13 +3401,64 @@ fn arrow_navigation_and_group_collapse_are_real_terminal_events() {
 }
 
 #[test]
+fn mouse_motion_does_not_steal_real_keyboard_navigation() {
+    let _serial = serialize_real_tty_test();
+    let mut app = PtyApp::spawn(90, 24);
+    let screen = app.wait_for("startup", |screen| screen.contains("release-reviewer"));
+    let row = screen
+        .lines()
+        .position(|line| line.contains("needs-environment"))
+        .unwrap()
+        + 1;
+    // SGR button 35 is motion with no button pressed, not an intentional click.
+    app.send(format!("\x1b[<35;12;{row}M").as_bytes());
+    app.send(DOWN);
+    app.send(ENTER);
+    app.wait_for("keyboard still collapses the next heading", |screen| {
+        screen.contains("Needs input 2") && !screen.contains("approval-needed")
+    });
+    app.exit_cleanly();
+}
+
+#[test]
+fn mouse_hover_can_be_enabled_for_real_terminal_motion_events() {
+    let _serial = serialize_real_tty_test();
+    let mut app = PtyApp::spawn_configured(90, 24, |command, _| {
+        command.args([
+            "--fixture",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/populated-sessions.json"
+            ),
+            "--all",
+            "--mouse-hover",
+            "--refresh-ms",
+            "60000",
+        ]);
+    });
+    let screen = app.wait_for("startup", |screen| screen.contains("release-reviewer"));
+    let row = screen
+        .lines()
+        .position(|line| line.contains("needs-environment"))
+        .unwrap()
+        + 1;
+    app.send(format!("\x1b[<35;12;{row}M").as_bytes());
+    app.wait_for("pointer selected the target row", |screen| {
+        screen
+            .lines()
+            .any(|line| line.starts_with('❯') && line.contains("needs-environment"))
+    });
+    app.exit_cleanly();
+}
+
+#[test]
 fn clicking_a_row_activates_it_like_enter() {
     let _serial = serialize_real_tty_test();
     let mut app = PtyApp::spawn(90, 24);
     let screen = app.wait_for("startup", |screen| screen.contains("release-reviewer"));
     let row = screen
         .lines()
-        .position(|line| line.starts_with("Needs input"))
+        .position(|line| line.trim_start().starts_with("Needs input"))
         .expect("Needs input heading is on screen")
         + 1;
 
