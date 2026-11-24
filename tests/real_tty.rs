@@ -3436,7 +3436,9 @@ fn mouse_hover_can_be_enabled_for_real_terminal_motion_events() {
             "60000",
         ]);
     });
-    let screen = app.wait_for("startup", |screen| screen.contains("release-reviewer"));
+    let screen = app.wait_for("hover target rendered", |screen| {
+        screen.contains("release-reviewer") && screen.contains("needs-environment")
+    });
     let row = screen
         .lines()
         .position(|line| line.contains("needs-environment"))
