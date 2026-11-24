@@ -156,10 +156,25 @@ test('server instructions put mode rules in the first 512 characters, and the ne
  const init=await method('initialize',{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'test',version:'1'}});
  const head=init.result.instructions.slice(0,512);
  assert.equal(init.result.instructions,SERVER_INSTRUCTIONS);
- for(const word of ['list_sessions','digest.say','session_brief','send_session_message','brief'])assert(head.includes(word),word);
+ for(const word of ['list_visible_sessions','Needs Input','Task Done','Project Done','session_brief','send_session_message','brief'])assert(head.includes(word),word);
  const tools=(await method('tools/list')).result.tools,byName=Object.fromEntries(tools.map(t=>[t.name,t]));
  assert(byName.session_brief.annotations.readOnlyHint);assert.equal(byName.send_session_message.annotations.readOnlyHint,false);
+ assert(byName.list_visible_sessions.annotations.readOnlyHint);
  assert(byName.list_sessions.description.includes('digest.say'));assert(byName.read_session.description.includes('session_brief'));
+});
+
+test('actual MCP tool returns the UI render fixture, not the historical inventory',async()=>{
+ const old=runtime;
+ try {
+  const dashboard=JSON.parse(await readFile(new URL('./fixtures/dashboard.json',import.meta.url)));
+  dashboard.captured_at=Date.now();
+  runtime={available:true,partial:false,checked_at:Date.now(),dashboard,statuses:Array.from({length:381},(_,i)=>status(`historical-${i}`))};
+  const result=await rpc('list_visible_sessions',{});
+  assert.equal(result.exact,true);
+  assert.equal(result.counts.total,5);
+  assert.deepEqual(result.dashboard,dashboard);
+  assert.deepEqual(result.review_ids,['opencode:host:needs','opencode:host:task','opencode:host:project']);
+ } finally { runtime=old; }
 });
 
 test('a finished turn with a stated next step is a follow-up, and a closed one is not',()=>{

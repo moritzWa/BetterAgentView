@@ -3232,6 +3232,94 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dashboard_snapshot_matches_rendered_ui_and_mcp_fixture() {
+        let expected: crate::bridge::contract::DashboardSnapshot =
+            serde_json::from_str(include_str!("../bridge/test/fixtures/dashboard.json")).unwrap();
+        let sessions = expected
+            .sessions
+            .iter()
+            .map(|row| {
+                let state = match row.category {
+                    crate::bridge::contract::DashboardCategory::NeedsInput => {
+                        SessionState::NeedsInput
+                    }
+                    crate::bridge::contract::DashboardCategory::Working => SessionState::Working,
+                    crate::bridge::contract::DashboardCategory::TaskDone => SessionState::TaskDone,
+                    crate::bridge::contract::DashboardCategory::ProjectDone => {
+                        SessionState::ProjectDone
+                    }
+                    _ => SessionState::Completed,
+                };
+                let mut s = session(&row.id, state);
+                s.provider = Provider::OpenCode;
+                s.provider_session_id = row.session_id.clone();
+                s.name = row.title.clone();
+                s.cwd = row.directory.clone().into();
+                s
+            })
+            .collect();
+        let mut app = App::new(SessionSnapshot {
+            sessions,
+            warnings: vec![],
+        });
+        let mut terminal = Terminal::new(TestBackend::new(140, 50)).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let rendered = buffer_text(terminal.backend().buffer());
+        let mut actual = crate::dashboard_snapshot::capture(&app);
+        actual.captured_at = expected.captured_at;
+        actual.dashboard_id = expected.dashboard_id.clone();
+        assert_eq!(actual, expected);
+        for row in &actual.sessions {
+            assert!(rendered.contains(&row.title), "{rendered}");
+        }
+        for group in &actual.groups {
+            assert!(rendered.contains(&group.label), "{rendered}");
+        }
+
+        app.collapsed.insert("state:TaskDone".into());
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let rendered = buffer_text(terminal.backend().buffer());
+        let snapshot = crate::dashboard_snapshot::capture(&app);
+        assert!(
+            !snapshot
+                .sessions
+                .iter()
+                .find(|s| s.session_id == "task")
+                .unwrap()
+                .listed
+        );
+        assert!(!rendered.contains("Task test"));
+        assert_eq!(
+            snapshot
+                .groups
+                .iter()
+                .find(|g| g.key == "state:TaskDone")
+                .unwrap()
+                .total,
+            1
+        );
+
+        app.set_filter("Needs test");
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let snapshot = crate::dashboard_snapshot::capture(&app);
+        assert_eq!(snapshot.sessions.len(), 1);
+        assert_eq!(snapshot.sessions[0].session_id, "needs");
+        assert!(!buffer_text(terminal.backend().buffer()).contains("Project test"));
+
+        app.set_filter("");
+        app.set_view_mode(crate::app::ViewMode::Directory);
+        app.set_session_page_size(1);
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let rendered = buffer_text(terminal.backend().buffer());
+        let snapshot = crate::dashboard_snapshot::capture(&app);
+        assert_eq!(snapshot.sessions.len(), 5);
+        assert_eq!(snapshot.sessions.iter().filter(|s| s.listed).count(), 1);
+        for row in snapshot.sessions {
+            assert_eq!(rendered.contains(&row.title), row.listed, "{rendered}");
+        }
+    }
+
+    #[test]
     fn paused_voice_shows_nothing_in_the_dashboard_footer() {
         let mut app = App::new(SessionSnapshot {
             sessions: Vec::new(),

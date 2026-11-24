@@ -22,7 +22,11 @@ export const RuntimeStatus = z.object({
     turn_started_at: counter.nullable().optional(), last_progress_at: counter.nullable().optional(),
     last_progress_kind: ProgressKind.nullable().optional(), in_flight: InFlight.nullable().optional(),
 }).strict().meta({ id: 'RuntimeStatus' });
-export const RuntimeSnapshot = z.object({ available: z.boolean(), partial: z.boolean(), truncated: z.boolean().default(false), statuses: z.array(RuntimeStatus).max(limits.snapshotStatuses) }).strict().meta({ id: 'RuntimeSnapshot' });
+export const DashboardCategory = z.enum(['needs_input', 'working', 'task_done', 'project_done', 'idle', 'ready_for_review', 'scheduled', 'paused', 'unknown']).meta({ id: 'DashboardCategory' });
+export const DashboardSession = z.object({ id, session_id: id, title: z.string().max(1000), provider: z.string().max(100), directory: z.string().max(4096), category: DashboardCategory, group_key: z.string().max(4096), listed: z.boolean() }).strict().meta({ id: 'DashboardSession' });
+export const DashboardGroup = z.object({ key: z.string().max(4096), label: z.string().max(4096), total: counter, listed: counter }).strict().meta({ id: 'DashboardGroup' });
+export const DashboardSnapshot = z.object({ dashboard_id: id, captured_at: counter, terminal_title: z.string().max(4096), filter: z.string().max(4096), view: z.enum(['status', 'directory']), partial: z.boolean(), sessions: z.array(DashboardSession).max(1000), groups: z.array(DashboardGroup).max(1000) }).strict().meta({ id: 'DashboardSnapshot' });
+export const RuntimeSnapshot = z.object({ available: z.boolean(), partial: z.boolean(), truncated: z.boolean().default(false), statuses: z.array(RuntimeStatus).max(limits.snapshotStatuses), dashboard: DashboardSnapshot.optional() }).strict().meta({ id: 'RuntimeSnapshot' });
 export const ObservedRuntimeSnapshot = RuntimeSnapshot.extend({ checked_at: counter.nullable().default(null) }).meta({ id: 'ObservedRuntimeSnapshot' });
 export const Role = z.enum(['user', 'assistant']).meta({ id: 'Role' });
 export const BatchKind = z.enum(['baseline', 'delta', 'replace']).meta({ id: 'BatchKind' });
@@ -69,6 +73,7 @@ export const ArtifactUpload = z.object({ artifact_id: z.string().regex(/^[a-f0-9
 // MCP advertises these same schemas and parses them before a typed handler runs.
 // Keep input defaults here, not in a second registration-site schema.
 export const toolInputs = {
+    list_visible_sessions: z.object({}),
     list_artifacts: z.object({ session_id: id }),
     preview_artifact: z.object({ artifact_id: id }),
     mac_presence: z.object({}), new_since_last_check: z.object({}),

@@ -60,3 +60,4 @@ pub(crate) mod test_support {
 }
 pub mod bridge;
 pub mod completion;
+pub mod dashboard_snapshot;

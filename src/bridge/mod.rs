@@ -598,13 +598,34 @@ fn publish_runtime(dir: &Path, config: &Config, credential: &str) -> Result<()> 
             runtime::snapshot(config)?
         }
     };
-    http::request::<contract::OkResponse>(
+    let mut payload = serde_json::to_value(snapshot)?;
+    let published = http::request::<contract::OkResponse>(
         &config.endpoint,
         contract::ROUTE_RUNTIME,
         Some(credential),
-        Some(&serde_json::to_value(snapshot)?),
+        Some(&payload),
         35,
-    )?;
+    );
+    match published {
+        // A rolling upgrade may still reach the previous strict Worker. Keep
+        // native status publishing intact; never substitute inventory for UI.
+        Err(error)
+            if error.to_string() == "bridge HTTP 400 invalid_runtime_snapshot"
+                && payload.get("dashboard").is_some() =>
+        {
+            payload.as_object_mut().unwrap().remove("dashboard");
+            http::request::<contract::OkResponse>(
+                &config.endpoint,
+                contract::ROUTE_RUNTIME,
+                Some(credential),
+                Some(&payload),
+                35,
+            )?;
+        }
+        other => {
+            other?;
+        }
+    }
     crate::fs_util::write_private_json(&stamp, &json!({"checked":true}))?;
     if started.elapsed() > Duration::from_secs(3) {
         eprintln!(

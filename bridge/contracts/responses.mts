@@ -1,5 +1,5 @@
 import {z} from 'zod';
-import {ReadContext,Status,Health,Reason,routes} from './contract.mjs';
+import {ReadContext,Status,Health,Reason,DashboardSnapshot,routes} from './contract.mjs';
 const id=z.string().min(1).max(200),counter=z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 // Consumers tolerate additive response fields, but known fields never change type.
 const object=<T extends z.ZodRawShape>(shape:T)=>z.object(shape);
@@ -37,6 +37,7 @@ const message=extensible({message_id:id,role:z.enum(['user','assistant']),messag
 const delivery=ReceiptResponse.extend({delivery_state:z.string(),claim_ceiling:z.string(),say_to_owner:z.string(),report_rule:z.string(),...freshness}).passthrough();
 const start=StartReceiptResponse.extend({delivery_state:z.string(),claim_ceiling:z.string(),say_to_owner:z.string(),report_rule:z.string(),...freshness}).passthrough();
 export const toolOutputs={
+  list_visible_sessions:extensible({available:z.boolean(),exact:z.boolean(),status_fresh:z.boolean(),dashboard:DashboardSnapshot.nullable(),counts:z.record(z.string(),counter).nullable(),displayed_counts:z.record(z.string(),counter).nullable(),review_ids:z.array(id),note:z.string()}),
   list_artifacts:extensible({artifacts:z.array(artifactMetadata)}),
   mac_presence:extensible({bridge:z.enum(['online','offline','unknown']),internet:z.enum(['reachable','unknown']),history_sync:z.enum(['fresh','stale','partial','unknown']),last_heartbeat_at:counter.nullable(),last_successful_sync_at:counter.nullable()}),
   new_since_last_check:extensible({available:z.boolean(),changes:z.array(extensible({session_id:id,change:z.enum(['needs_you','finished']),reason:Reason.nullable()})),note:z.string()}),

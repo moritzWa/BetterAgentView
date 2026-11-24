@@ -454,11 +454,100 @@ pub enum DeliveryStatus {
 pub struct RuntimeSnapshot {
     pub available: bool,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dashboard: Option<DashboardSnapshot>,
+
     pub partial: bool,
 
     pub statuses: Vec<RuntimeStatus>,
 
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DashboardSnapshot {
+    pub captured_at: i64,
+
+    pub dashboard_id: String,
+
+    pub filter: String,
+
+    pub groups: Vec<DashboardGroup>,
+
+    pub partial: bool,
+
+    pub sessions: Vec<DashboardSession>,
+
+    pub terminal_title: String,
+
+    pub view: View,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DashboardGroup {
+    pub key: String,
+
+    pub label: String,
+
+    pub listed: i64,
+
+    pub total: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DashboardSession {
+    pub category: DashboardCategory,
+
+    pub directory: String,
+
+    pub group_key: String,
+
+    pub id: String,
+
+    pub listed: bool,
+
+    pub provider: String,
+
+    pub session_id: String,
+
+    pub title: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DashboardCategory {
+    Idle,
+
+    #[serde(rename = "needs_input")]
+    NeedsInput,
+
+    Paused,
+
+    #[serde(rename = "project_done")]
+    ProjectDone,
+
+    #[serde(rename = "ready_for_review")]
+    ReadyForReview,
+
+    Scheduled,
+
+    #[serde(rename = "task_done")]
+    TaskDone,
+
+    Unknown,
+
+    Working,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum View {
+    Directory,
+
+    Status,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -741,6 +830,13 @@ impl std::str::FromStr for ProgressKind {
 }
 
 impl std::str::FromStr for InFlight {
+    type Err = serde_json::Error;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        serde_json::from_value(serde_json::Value::String(value.to_owned()))
+    }
+}
+
+impl std::str::FromStr for DashboardCategory {
     type Err = serde_json::Error;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         serde_json::from_value(serde_json::Value::String(value.to_owned()))

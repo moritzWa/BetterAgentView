@@ -181,6 +181,8 @@ enum ScopeMode {
 
 #[derive(Clone, Debug, Eq, PartialEq, Subcommand)]
 enum SessionCommand {
+    /// Read the live dashboard's exact filtered groups and session rows as JSON.
+    Visible,
     /// Open an exact session in the most recently started running dashboard.
     Open {
         #[arg(value_name = "SESSION_ID")]
@@ -1515,6 +1517,12 @@ fn run_opencode_command(command: &OpenCodeCommand, cli: &Cli) -> Result<()> {
 
 fn run_session_command(command: &SessionCommand, cli: &Cli) -> Result<()> {
     match command {
+        SessionCommand::Visible => {
+            let snapshot = agentview::dashboard_snapshot::latest()
+                .context("No fresh dashboard snapshot. Restart an updated Agent View dashboard.")?;
+            println!("{}", serde_json::to_string_pretty(&snapshot)?);
+            Ok(())
+        }
         SessionCommand::Open { session_id } => agentview::session_focus::send(session_id),
         SessionCommand::Archive {
             cwd,
