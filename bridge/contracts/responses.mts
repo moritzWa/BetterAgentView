@@ -37,7 +37,8 @@ const message=extensible({message_id:id,role:z.enum(['user','assistant']),messag
 const delivery=ReceiptResponse.extend({delivery_state:z.string(),claim_ceiling:z.string(),say_to_owner:z.string(),report_rule:z.string(),...freshness}).passthrough();
 const start=StartReceiptResponse.extend({delivery_state:z.string(),claim_ceiling:z.string(),say_to_owner:z.string(),report_rule:z.string(),...freshness}).passthrough();
 const categoryCounts=z.record(z.string(),counter);
-const directoryGroup=object({directory_id:z.string(),path:z.string(),label:z.string(),counts:categoryCounts,displayed_counts:categoryCounts,sessions:z.array(DashboardSession),working:z.array(DashboardSession),review_ids:z.array(id)});
+const contextSession=DashboardSession.extend({recent_messages:z.array(message.extend({truncated:z.boolean(),total_characters:counter})).max(6).optional(),context_state:z.enum(['available','unsupported_provider','budget_limited','not_synced_or_hidden']).optional(),context_fresh:z.boolean().optional(),context_synced_at:z.union([counter,z.string()]).nullable().optional()});
+const directoryGroup=object({directory_id:z.string(),path:z.string(),label:z.string(),counts:categoryCounts,displayed_counts:categoryCounts,sessions:z.array(contextSession),working:z.array(contextSession),review_ids:z.array(id)});
 export const toolOutputs={
   list_visible_sessions:extensible({available:z.boolean(),exact:z.boolean(),status_fresh:z.boolean(),dashboard:DashboardSnapshot.nullable(),counts:categoryCounts.nullable(),displayed_counts:categoryCounts.nullable(),directories:z.array(directoryGroup),review_ids:z.array(id),note:z.string()}),
   list_artifacts:extensible({artifacts:z.array(artifactMetadata)}),

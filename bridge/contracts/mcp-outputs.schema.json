@@ -97,13 +97,287 @@
             "sessions": {
               "type": "array",
               "items": {
-                "$ref": "#/definitions/DashboardSession"
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "session_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "title": {
+                    "type": "string",
+                    "maxLength": 1000
+                  },
+                  "provider": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "directory": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "directory_id": {
+                    "type": "string",
+                    "maxLength": 4100
+                  },
+                  "directory_path": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "directory_label": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "category": {
+                    "$ref": "#/definitions/DashboardCategory"
+                  },
+                  "group_key": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "listed": {
+                    "type": "boolean"
+                  },
+                  "recent_messages": {
+                    "maxItems": 6,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "message_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "user",
+                            "assistant"
+                          ]
+                        },
+                        "message_order": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        },
+                        "total_characters": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "message_id",
+                        "role",
+                        "message_order",
+                        "text",
+                        "truncated",
+                        "total_characters"
+                      ],
+                      "additionalProperties": {}
+                    }
+                  },
+                  "context_state": {
+                    "type": "string",
+                    "enum": [
+                      "available",
+                      "unsupported_provider",
+                      "budget_limited",
+                      "not_synced_or_hidden"
+                    ]
+                  },
+                  "context_fresh": {
+                    "type": "boolean"
+                  },
+                  "context_synced_at": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "session_id",
+                  "title",
+                  "provider",
+                  "directory",
+                  "directory_id",
+                  "directory_path",
+                  "directory_label",
+                  "category",
+                  "group_key",
+                  "listed"
+                ],
+                "additionalProperties": false
               }
             },
             "working": {
               "type": "array",
               "items": {
-                "$ref": "#/definitions/DashboardSession"
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "session_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "title": {
+                    "type": "string",
+                    "maxLength": 1000
+                  },
+                  "provider": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "directory": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "directory_id": {
+                    "type": "string",
+                    "maxLength": 4100
+                  },
+                  "directory_path": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "directory_label": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "category": {
+                    "$ref": "#/definitions/DashboardCategory"
+                  },
+                  "group_key": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "listed": {
+                    "type": "boolean"
+                  },
+                  "recent_messages": {
+                    "maxItems": 6,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "message_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "user",
+                            "assistant"
+                          ]
+                        },
+                        "message_order": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        },
+                        "total_characters": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "message_id",
+                        "role",
+                        "message_order",
+                        "text",
+                        "truncated",
+                        "total_characters"
+                      ],
+                      "additionalProperties": {}
+                    }
+                  },
+                  "context_state": {
+                    "type": "string",
+                    "enum": [
+                      "available",
+                      "unsupported_provider",
+                      "budget_limited",
+                      "not_synced_or_hidden"
+                    ]
+                  },
+                  "context_fresh": {
+                    "type": "boolean"
+                  },
+                  "context_synced_at": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "session_id",
+                  "title",
+                  "provider",
+                  "directory",
+                  "directory_id",
+                  "directory_path",
+                  "directory_label",
+                  "category",
+                  "group_key",
+                  "listed"
+                ],
+                "additionalProperties": false
               }
             },
             "review_ids": {
