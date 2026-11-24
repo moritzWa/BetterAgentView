@@ -1,11 +1,13 @@
 import {DashboardSnapshot} from '../contracts/contract.mjs';
+import {addVisibleContext} from './visible-context.mjs';
 
 export const REVIEW_RULES='Review one directory at a time using directories and its review_ids; select it with directory=directory_id or its exact path. Within it review one session at a time: Needs Input first, Task Done second, Project Done last. Working is listed separately; skip it unless fresh native health says potentially_stalled or a decision is pending. Track reviewed stable id values, refresh before the next item, and skip IDs no longer present. Read session_brief using session_id only for paired host OpenCode rows. Task Done leaves the project open. Never ask whether to close after each review, and never hide, archive or close based on a completion label. Idle is unconfirmed completion, not Task Done.';
-export async function listVisibleSessions({gate,principal},{directory}={}) {
+export async function listVisibleSessions({db,gate,principal},{directory}={}) {
   const source=`${principal.device_id}|${principal.database_epoch}`;
   const freshness=await gate.activity(source,true,'runtime',{max_wait:8000});
   const runtime=await gate.runtime(source);
-  return visibleView(runtime,freshness,Date.now(),{directory});
+  const view=visibleView(runtime,freshness,Date.now(),{directory});
+  return view.available?addVisibleContext({db,principal,runtime,freshness},view):view;
 }
 
 export function visibleView(runtime,freshness={},now=Date.now(),{directory}={}) {
