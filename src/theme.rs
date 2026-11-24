@@ -69,7 +69,7 @@ impl Palette {
             bg: Color::Rgb(255, 255, 255),
             fg: Color::Rgb(59, 59, 59),
             dim: Color::Rgb(102, 102, 102),
-            selected_bg: Color::Rgb(232, 232, 232),
+            selected_bg: Color::Rgb(240, 240, 240),
             selected_fg: Color::Rgb(30, 30, 30),
             accent: Color::Rgb(40, 75, 245),
             focus: Color::Rgb(96, 112, 247),
@@ -799,6 +799,11 @@ mod tests {
     fn contrast_ratio(first: Color, second: Color) -> f64 {
         let (first, second) = (relative_luminance(first), relative_luminance(second));
         (first.max(second) + 0.05) / (first.min(second) + 0.05)
+    }
+
+    #[test]
+    fn light_focus_background_is_a_subtle_gray() {
+        assert_eq!(Palette::light().selected_bg, Color::Rgb(0xf0, 0xf0, 0xf0));
     }
 
     #[test]
