@@ -2864,7 +2864,7 @@ impl App {
         })
     }
 
-    fn directory_groups(&self) -> Vec<Group> {
+    pub(crate) fn directory_groups(&self) -> Vec<Group> {
         let needle = self.filter.to_ascii_lowercase();
         let mut paused = Vec::new();
         let mut scheduled = Vec::new();

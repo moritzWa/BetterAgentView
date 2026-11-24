@@ -9,6 +9,20 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub fn capture(app: &App) -> DashboardSnapshot {
     let keys = app.selectable_keys();
+    // Equivalent slash spellings on Windows share the representative UI key.
+    let directory_groups = app.directory_groups();
+    let directories = directory_groups
+        .iter()
+        .filter_map(|group| group.key.strip_prefix("cwd:").map(|path| (group, path)))
+        .flat_map(|(group, path)| {
+            group.sessions.iter().map(move |index| {
+                (
+                    *index,
+                    (group.key.clone(), path.to_owned(), group.label.clone()),
+                )
+            })
+        })
+        .collect::<std::collections::HashMap<_, _>>();
     let mut sessions = Vec::new();
     let mut groups = Vec::new();
     for group in app.groups() {
@@ -33,14 +47,19 @@ pub fn capture(app: &App) -> DashboardSnapshot {
                     SessionState::Unknown => Category::Unknown,
                 }
             };
+            let (directory_id, directory_path, directory_label) =
+                directories.get(index).cloned().unwrap_or_else(|| {
+                    let path = crate::app::project_group_path(&s.cwd);
+                    (
+                        format!("cwd:{}", path.display()),
+                        path.to_string_lossy().into_owned(),
+                        crate::app::abbreviate_home(&path),
+                    )
+                });
             sessions.push(DashboardSession {
-                directory_id: format!("cwd:{}", crate::app::project_group_path(&s.cwd).display()),
-                directory_path: crate::app::project_group_path(&s.cwd)
-                    .to_string_lossy()
-                    .into_owned(),
-                directory_label: crate::app::abbreviate_home(&crate::app::project_group_path(
-                    &s.cwd,
-                )),
+                directory_id,
+                directory_path,
+                directory_label,
                 id: s.id.clone(),
                 session_id: s.provider_session_id.clone(),
                 title: s.name.clone(),
