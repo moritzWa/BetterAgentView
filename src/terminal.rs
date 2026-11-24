@@ -510,6 +510,7 @@ pub fn run_dashboard(
     let _focus_registration = crate::session_focus::register().ok();
     watchdog::spawn();
 
+    let mut dashboard_publisher = crate::dashboard_snapshot::Publisher::new();
     let result = 'dashboard: loop {
         watchdog::set_phase(watchdog::Phase::Updates);
         if let Ok(enabled) = work_store.read() {
@@ -1099,6 +1100,10 @@ pub fn run_dashboard(
                     crate::perf_log::ms(dashboard_started.elapsed())
                 );
             }
+        }
+
+        if control.provider_io_enabled() {
+            dashboard_publisher.publish(&app);
         }
 
         let until_refresh = if refresh_in_flight {

@@ -86,6 +86,7 @@ pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
         .is_none()
     {
         return Ok(Snapshot {
+            dashboard: crate::dashboard_snapshot::latest(),
             available: false,
             partial: false,
             truncated: false,
@@ -216,7 +217,12 @@ pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
     }
     // Full directory metadata can make a count-bounded snapshot too large.
     // Keep its serialized body safely inside the existing 850 KB transport cap.
-    let mut bytes = 1024;
+    let dashboard = crate::dashboard_snapshot::latest();
+    let mut bytes = 1024
+        + dashboard
+            .as_ref()
+            .map(|s| serde_json::to_vec(s).map_or(0, |b| b.len()))
+            .unwrap_or(0);
     let mut keep = 0;
     for status in &statuses {
         let size = serde_json::to_vec(status)?.len() + 1;
@@ -230,6 +236,7 @@ pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
     partial |= statuses.iter().skip(keep).any(|s| s.status != Status::Done);
     statuses.truncate(keep);
     Ok(Snapshot {
+        dashboard,
         available: true,
         partial,
         truncated,

@@ -1,4 +1,15 @@
 {
+  "list_visible_sessions": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "directory": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4100
+      }
+    }
+  },
   "list_artifacts": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",

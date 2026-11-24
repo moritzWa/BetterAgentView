@@ -96,7 +96,7 @@ export async function listSessions({db,gate,principal},{status='all',view='recen
     
    attention=buildDigest({rows:digestRows,followRows:followDone,tails,now,counts,statusFresh:status_fresh,freshness,statusObservedAt:runtime.checked_at,timing:{freshness_wait:waited,db_and_digest:Date.now()-started-waited}});
   }
-  return {...(attention?{digest:attention}:{}),sessions,source:sourceInfo,counts,counts_complete:!runtime.partial&&!runtime.truncated,active_counts_complete:!runtime.partial,counts_scope:runtime.truncated?'available runtime snapshot (truncated)':'all visible top-level paired sessions, before query/filter/pagination',selection:view,status_filter:status,
+  return {...(attention?{digest:attention}:{}),sessions,source:sourceInfo,counts,counts_complete:!runtime.partial&&!runtime.truncated,active_counts_complete:!runtime.partial,counts_scope:runtime.truncated?'historical runtime inventory (truncated), NOT UI counts':'historical top-level paired inventory before query/filter/pagination, NOT the UI set; use list_visible_sessions',selection:view,status_filter:status,
    total_matching:candidates.length,inventory_matching:totalMatching,shown:sessions.length,remaining_in_selection:Math.max(0,candidates.length-start-sessions.length),
    outside_selection:{total:outside.length,working:outside.filter(s=>s.status==='working').length,needs_you:outside.filter(s=>s.status==='needs_you').length},
    next_after:start+limit<candidates.length?`page2_${snapshot}_${start+limit}`:null,...freshness,status_observed_at:runtime.checked_at,status_fresh,...(slim?{}:{context_fresh:sessions.every(s=>s.context_fresh)}),partial:Boolean(runtime.partial),truncated:Boolean(runtime.truncated),

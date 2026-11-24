@@ -106,6 +106,8 @@ own interface.
 - **ChatGPT mobile voice:** opt-in OpenCode history search and queued replies
   through a private MCP server, even without the dashboard. Approved output files
   open in ChatGPT's file viewer. [Setup and privacy](docs/mobile-bridge.md).
+- **Review what is on your dashboard:** the mobile MCP exposes exact filtered UI
+  counts and a one-at-a-time review order, separate from historical session counts.
 
 ### Performance
 
