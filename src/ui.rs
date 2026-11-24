@@ -444,11 +444,26 @@ fn render_session_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
         selectable.push((lines.len(), SelectionKey::Group(group.key.clone())));
         let collapsed = app.collapsed.contains(&group.key);
         let suffix = collapsed.then(|| format!(" {}", group.sessions.len()));
-        let mut spans = vec![Span::raw(format!(
-            "{}{}",
-            sanitize_inline(&group.label),
-            suffix.unwrap_or_default()
-        ))];
+        let mut spans = vec![
+            Span::styled(
+                if is_selected { "❯ " } else { "  " },
+                Style::default().fg(palette().focus),
+            ),
+            Span::styled(
+                format!(
+                    "{}{}",
+                    sanitize_inline(&group.label),
+                    suffix.unwrap_or_default()
+                ),
+                Style::default()
+                    .fg(if is_selected {
+                        palette().focus
+                    } else {
+                        palette().fg
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ];
         if let Some(verb) = is_selected.then(|| app.pending_removal_verb()).flatten() {
             spans.push(Span::styled(
                 format!("  ctrl+x again to {verb}"),
@@ -761,6 +776,10 @@ fn empty_state_lines(includes_completed: bool) -> Vec<Line<'static>> {
             "Hand off a substantial task below. BetterAgentView will organize it by status so you can see when it needs you.",
             Style::default().fg(palette().dim),
         )),
+        Line::from(Span::styled(
+            "/onboarding copies a setup prompt for your agent. /setup installs a harness.",
+            Style::default().fg(palette().dim),
+        )),
     ]
 }
 
@@ -989,8 +1008,19 @@ fn render_tree_session_row(
     // Indent the status marker with its session, keeping later columns aligned.
     let name = pad_to_width(truncate(&session.name, name_width), name_width);
     let mut spans = vec![
-        Span::styled(format!("{} {symbol} ", " ".repeat(indent)), symbol_style),
-        Span::raw(name),
+        Span::styled(
+            if selected { "❯" } else { " " },
+            Style::default().fg(palette().focus),
+        ),
+        Span::styled(format!("{}{symbol} ", " ".repeat(indent)), symbol_style),
+        Span::styled(
+            name,
+            Style::default().fg(if selected {
+                palette().focus
+            } else {
+                palette().fg
+            }),
+        ),
         Span::styled(
             format!("{name_gap}{provider_column}"),
             Style::default().fg(palette().dim),
@@ -2155,6 +2185,7 @@ fn help_sections(app: &App) -> Vec<HelpSection> {
             ("/model name", "pick model or Terminal shell"),
             ("/shell name", "pick Terminal shell"),
             ("/setup", "install or sign in"),
+            ("/onboarding", "copy setup prompt"),
             ("/login", "open native setup"),
             ("/migrate", "copy selected to another harness"),
             ("/usage", "subscription limits and resets"),
@@ -3797,8 +3828,8 @@ mod tests {
             render_session_row(&working, ViewMode::Status, 120, true, false, true, None, 0);
         let dimmed =
             render_session_row(&working, ViewMode::Status, 120, true, false, false, None, 0);
-        assert_eq!(visible.spans[0].content, " ✳ ");
-        assert_eq!(dimmed.spans[0].content, " · ");
+        assert_eq!(visible.spans[1].content, "✳ ");
+        assert_eq!(dimmed.spans[1].content, "· ");
 
         let completed = session("done", SessionState::Completed);
         let completed = render_session_row(
@@ -3811,7 +3842,7 @@ mod tests {
             None,
             0,
         );
-        assert_eq!(completed.spans[0].content, " • ");
+        assert_eq!(completed.spans[1].content, "• ");
     }
 
     #[test]
@@ -3942,12 +3973,12 @@ mod tests {
                 let buffer = terminal.backend().buffer();
                 let rendered = buffer_text(buffer);
                 let lines = rendered.lines().collect::<Vec<_>>();
-                assert!(lines[0].starts_with("Scheduled"), "{rendered}");
+                assert!(lines[0].starts_with("  Scheduled"), "{rendered}");
                 assert!(lines[1].starts_with("  /work/alpha"), "{rendered}");
                 assert!(lines[2].starts_with("   • first reminder"), "{rendered}");
                 assert!(lines[3].trim().is_empty(), "{rendered}");
                 assert!(lines[4].starts_with("  /work/beta"), "{rendered}");
-                assert!(lines[5].starts_with("   • second reminder"), "{rendered}");
+                assert!(lines[5].starts_with("❯  • second reminder"), "{rendered}");
                 assert!(lines[2].contains("Mon 09:00:"), "{rendered}");
                 assert!(lines[5].contains("Tue 10:00:"), "{rendered}");
                 assert!(!rendered.contains("wake-later"), "{rendered}");
@@ -4078,6 +4109,62 @@ mod tests {
             assert!(text.contains(&format!("{label} · latest summary from worker")));
             assert_eq!(display_width(&text), 120);
         }
+    }
+
+    #[test]
+    fn focused_session_has_a_purple_caret_and_name_without_recoloring_status() {
+        for scheme in [
+            crate::theme::ColorScheme::Light,
+            crate::theme::ColorScheme::Dark,
+        ] {
+            crate::theme::set_active_palette(crate::theme::Palette::for_scheme(scheme));
+            let item = session("worker", SessionState::NeedsInput);
+            let focused =
+                render_session_row(&item, ViewMode::Directory, 120, false, true, true, None, 0);
+            assert_eq!(focused.spans[0].content, "❯");
+            assert_eq!(focused.spans[0].style.fg, Some(palette().focus));
+            assert_eq!(focused.spans[2].style.fg, Some(palette().focus));
+            assert_eq!(
+                focused.spans[1].style.fg,
+                Some(state_color(SessionState::NeedsInput))
+            );
+            assert_eq!(focused.style.bg, Some(palette().selected_bg));
+            let normal =
+                render_session_row(&item, ViewMode::Directory, 120, false, false, true, None, 0);
+            assert_eq!(normal.spans[0].content, " ");
+            assert_eq!(normal.spans[2].style.fg, Some(palette().fg));
+            let text = |line: &Line<'_>| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            };
+            assert_eq!(
+                display_width(&text(&focused)),
+                display_width(&text(&normal))
+            );
+        }
+    }
+
+    #[test]
+    fn focused_directory_has_a_purple_caret_and_bold_label() {
+        let mut app = App::new(SessionSnapshot {
+            sessions: vec![session("worker", SessionState::Working)],
+            warnings: vec![],
+        });
+        let group = app.groups()[0].clone();
+        app.selection = Some(SelectionKey::Group(group.key));
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let caret = buffer
+            .content
+            .iter()
+            .position(|cell| cell.symbol() == "❯")
+            .expect("selected heading caret");
+        assert_eq!(buffer.content[caret].fg, palette().focus);
+        assert_eq!(buffer.content[caret + 2].fg, palette().focus);
+        assert!(buffer.content[caret + 2].modifier.contains(Modifier::BOLD));
     }
 
     #[test]
@@ -5442,7 +5529,7 @@ mod tests {
     }
 
     #[test]
-    fn light_theme_uses_a_paper_background_and_dark_selected_text() {
+    fn light_theme_uses_a_paper_background_and_purple_selected_text() {
         let mut app = App::new(SessionSnapshot {
             sessions: vec![session("worker", SessionState::Completed)],
             warnings: vec![],
@@ -5458,21 +5545,21 @@ mod tests {
         assert_eq!(buffer.get(0, 0).bg, light.bg);
         assert_ne!(buffer.get(0, 0).bg, crate::theme::Palette::dark().bg);
         let mut saw_selection = false;
-        let mut saw_dark_text = false;
+        let mut saw_focused_text = false;
         for y in 0..buffer.area.height {
             for x in 0..buffer.area.width {
                 let cell = buffer.get(x, y);
                 if cell.bg == light.selected_bg {
                     saw_selection = true;
                     assert_ne!(cell.fg, Color::White);
-                    if cell.fg == light.selected_fg {
-                        saw_dark_text = true;
+                    if cell.fg == light.focus {
+                        saw_focused_text = true;
                     }
                 }
             }
         }
         assert!(saw_selection);
-        assert!(saw_dark_text);
+        assert!(saw_focused_text);
     }
 
     fn busy_queue() -> crate::queue::Queue {

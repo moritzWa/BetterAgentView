@@ -4,6 +4,10 @@ The opt-in bridge copies visible conversation text to a private MCP server.
 ChatGPT can search the copy while the Mac is offline. An explicit send enters a
 separate queue. OpenCode receives it when the connector reconnects.
 
+For a new installation, follow [self-hosting](../bridge/SELF-HOSTING.md) with your
+own Neon database, Cloudflare Worker and Google OAuth client. The private endpoint
+below belongs to the original operator and is not a public service.
+
 The cloud implementation lives in [bridge](../bridge/README.md). Operators can
 [deploy it and configure owner login](../bridge/SETUP.md) before pairing. Existing
 paired installations need no changes after the repository move.

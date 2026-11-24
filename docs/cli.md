@@ -599,6 +599,18 @@ and mount details.
 
 ## TUI keys and mode behavior
 
+`/onboarding` copies a setup prompt for your coding agent. The same prompt is
+available from `betteragentview onboarding` (print) or
+`betteragentview onboarding --copy` (clipboard). See [Getting started](onboarding.md)
+for harness login, optional desktop voice keys, shortcut configuration and
+self-hosted mobile MCP sync.
+
+Moving the mouse does not change the selected session or directory. Click a row
+to open it; the mouse wheel still moves selection. `--mouse-hover` opts into the
+old hover-to-select behavior. Set `AGENTVIEW_MOUSE_HOVER=true` in your shell
+profile to keep that preference. This changes only the dashboard, not mouse
+behavior inside a harness's own interface.
+
 Every session row spells out its provider name, including Oh My Pi, Grok, Kilo
 Code, and OpenHands. Provider identity takes priority over task summary width on narrow
 terminals. Peek expands the selected row with the full host or container runtime

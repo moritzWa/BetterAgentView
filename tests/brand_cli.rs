@@ -1,6 +1,35 @@
 use std::process::Command;
 
 #[test]
+fn onboarding_prints_the_shipped_markdown_without_provider_access() {
+    for binary in [
+        env!("CARGO_BIN_EXE_betteragentview"),
+        env!("CARGO_BIN_EXE_agentview"),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let output = Command::new(binary)
+            .arg("onboarding")
+            .env("HOME", home.path())
+            .env("XDG_STATE_HOME", home.path().join("state"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            agentview::onboarding::PROMPT
+        );
+        assert!(!home
+            .path()
+            .join("state/agentview/bridge/config.json")
+            .exists());
+    }
+}
+
+#[test]
 fn public_command_reports_the_new_name() {
     let output = Command::new(env!("CARGO_BIN_EXE_betteragentview"))
         .arg("--version")

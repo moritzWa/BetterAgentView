@@ -49,6 +49,11 @@ works from the session list before you type.
 `anthropic/claude-opus-5-5` and `cursor/claude-opus-5-5`; the model you pick is
 remembered across restarts.
 
+**First time?** [Getting started](docs/onboarding.md) covers harness login,
+optional voice keys, shortcuts, and self-hosted MCP sync. Paste the
+[setup prompt](docs/SETUP-PROMPT.md) into your coding agent, or copy it with
+`av onboarding --copy` (`/onboarding` in the dashboard).
+
 ## Why
 
 Five agents means five terminal tabs, and the one waiting on you is in the tab
@@ -86,12 +91,14 @@ own interface.
 
 ### Start and switch work
 
+- **Keyboard focus stays put:** moving the mouse never changes selection.
+  Click a row to open it, or opt into hover focus with `--mouse-hover`.
 - **Jump into the harness's own interface and back** while work keeps running.
   Background-capable harnesses launch without leaving the dashboard.
   OpenCode sessions outlive it; Cursor chats show live state on every platform.
 - **Start in any folder** with `/cd` or `Ctrl+O`. Write multi-line drafts, paste
   long text, attach clipboard images with `Ctrl+V`, and select text with `Shift+arrow`
-  or words with `Option+Shift+arrow`.
+   or words with `Option+Shift+arrow`.
 - **Move or migrate a session:** `F6` changes folders; `/migrate` changes
   harnesses through [session-migrate](https://session-migrate.github.io/).
   OpenCode folder moves preserve the session ID and history.
@@ -248,7 +255,7 @@ that survive Cursor dropping out.
 
 ## Docs
 
-[Install](docs/install.md) · [CLI](docs/cli.md) · [Voice Mode](docs/voice.md) ·
+[Getting started](docs/onboarding.md) · [Install](docs/install.md) · [CLI](docs/cli.md) · [Voice Mode](docs/voice.md) ·
 [Troubleshooting](docs/troubleshooting.md) ·
 [Architecture](docs/architecture.md) · [Testing](docs/testing.md) ·
 [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)

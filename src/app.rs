@@ -59,6 +59,7 @@ const DASHBOARD_COMMANDS: &[&str] = &[
     "/shell",
     "/login",
     "/setup",
+    "/onboarding",
     "/cd",
     "/completed",
     "/scheduled",
@@ -217,6 +218,7 @@ pub enum AppAction {
     SetupProvider {
         provider: Provider,
     },
+    CopyOnboarding,
     SetupLaunchOption {
         provider: Provider,
         option: String,
@@ -3610,6 +3612,7 @@ impl App {
             .unwrap_or((input.as_str(), ""));
         match command.to_ascii_lowercase().as_str() {
             "/help" => self.toggle_help(),
+            "/onboarding" => return AppAction::CopyOnboarding,
             "/scheduled" => self.toggle_scheduled(),
             "/keep" if argument.is_empty() => return self.schedule_visibility(None),
             "/defer" => return self.schedule_visibility(Some(argument.to_owned())),
@@ -7314,6 +7317,10 @@ mod tests {
                 provider: Provider::GitHubCopilot
             }
         );
+
+        app.start_new_session(None);
+        app.input = "/onboarding".into();
+        assert_eq!(app.activate(), AppAction::CopyOnboarding);
 
         app.start_new_session(None);
         app.input = "/setup shell".into();
