@@ -72,6 +72,12 @@ enum LaunchProvider {
 
 #[derive(Clone, Debug, Eq, PartialEq, Subcommand)]
 enum Commands {
+    /// Print a setup prompt to paste into your coding agent.
+    Onboarding {
+        /// Copy the prompt to the system clipboard instead of printing it.
+        #[arg(long)]
+        copy: bool,
+    },
     /// Switch all running dashboards between work repos and every session.
     View {
         #[arg(value_enum)]
@@ -318,6 +324,10 @@ struct Cli {
     /// Dashboard colors. Auto follows the terminal background, then the OS appearance.
     #[arg(long, value_enum, default_value = "auto")]
     theme: ThemePreference,
+
+    /// Let mouse movement select dashboard rows. Off by default; clicks still open rows.
+    #[arg(long, env = "AGENTVIEW_MOUSE_HOVER")]
+    mouse_hover: bool,
 
     /// Compatibility flag; completed sessions are shown by default.
     #[arg(long)]
@@ -661,6 +671,14 @@ fn main() -> Result<()> {
                     ),
                     BridgeCommand::Install => agentview::bridge::install(&dir)?,
                     BridgeCommand::Stop => agentview::bridge::stop(&dir)?,
+                }
+            }
+            Commands::Onboarding { copy } => {
+                if *copy {
+                    agentview::clipboard::copy_text(agentview::onboarding::PROMPT)?;
+                    println!("Setup prompt copied. Paste it into your coding agent.");
+                } else {
+                    print!("{}", agentview::onboarding::PROMPT);
                 }
             }
             Commands::Update => run_self_update()?,
@@ -1345,6 +1363,7 @@ fn main() -> Result<()> {
         MigrationServices::new(migration_client, migration_registry),
         cli.theme,
         theme::resolve(cli.theme),
+        cli.mouse_hover,
     )?;
 
     Ok(())
@@ -3138,6 +3157,16 @@ mod tests {
             })
         );
         assert!(Cli::try_parse_from(["agentview", "setup", "unknown"]).is_err());
+    }
+
+    #[test]
+    fn onboarding_can_print_or_copy_without_starting_the_dashboard() {
+        let cli = Cli::try_parse_from(["agentview", "onboarding"]).unwrap();
+        assert_eq!(cli.command, Some(Commands::Onboarding { copy: false }));
+        let cli = Cli::try_parse_from(["agentview", "onboarding", "--copy"]).unwrap();
+        assert_eq!(cli.command, Some(Commands::Onboarding { copy: true }));
+        let cli = Cli::try_parse_from(["agentview", "--mouse-hover"]).unwrap();
+        assert!(cli.mouse_hover);
     }
 
     #[test]

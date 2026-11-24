@@ -273,6 +273,7 @@ pub fn run_dashboard(
     migrations: MigrationServices,
     theme_preference: ThemePreference,
     color_scheme: ColorScheme,
+    mouse_hover: bool,
 ) -> Result<()> {
     let dashboard_started = Instant::now();
     let mut first_draw_logged = false;
@@ -1130,7 +1131,7 @@ pub fn run_dashboard(
                     }
                     // A click on a row opens it like Enter does, so it takes the
                     // same path as the key.
-                    Event::Mouse(mouse) => match dashboard_mouse(&mut app, mouse) {
+                    Event::Mouse(mouse) => match dashboard_mouse(&mut app, mouse, mouse_hover) {
                         MouseEffect::Activate => {
                             Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
                         }
@@ -1863,15 +1864,16 @@ fn toggle_voice(app: &mut App, voice: &crate::voice::VoiceService) {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum MouseEffect {
     None,
     Redraw,
     Activate,
 }
 
-/// The mouse on the dashboard: hovering a row selects it, a left click opens
-/// it, and the wheel moves the selection through the list.
-fn dashboard_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) -> MouseEffect {
+/// Clicks open rows and the wheel moves selection. Hover is opt-in so crossing
+/// the dashboard with the pointer cannot steal keyboard focus.
+fn dashboard_mouse(app: &mut App, mouse: crossterm::event::MouseEvent, hover: bool) -> MouseEffect {
     const WHEEL_ROWS: isize = 3;
     let before = app.selection.clone();
     let moved = |app: &App| {
@@ -1882,7 +1884,7 @@ fn dashboard_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) -> MouseE
         }
     };
     match mouse.kind {
-        MouseEventKind::Moved => {
+        MouseEventKind::Moved if hover => {
             app.select_list_row(mouse.row);
             moved(app)
         }
@@ -3204,6 +3206,13 @@ fn dispatch_action<T: DashboardTerminal, C: DashboardControl>(
                 }
             }
         }
+        AppAction::CopyOnboarding => {
+            match crate::clipboard::copy_text(crate::onboarding::PROMPT) {
+                Ok(()) => app.set_notice("Setup prompt copied. Paste it into your coding agent."),
+                Err(error) => app.set_notice(format!("{error:#}")),
+            }
+            ActionEffect::default()
+        }
         AppAction::SetupProvider { provider } => {
             if let Err(error) = terminal.suspend_dashboard() {
                 app.set_notice(format!("failed to suspend dashboard: {error:#}"));
@@ -3372,6 +3381,7 @@ fn handle_action_legacy<T: DashboardTerminal, C: DashboardControl>(
         | AppAction::LoadModels { .. }
         | AppAction::Authenticate { .. }
         | AppAction::SetupProvider { .. }
+        | AppAction::CopyOnboarding
         | AppAction::SetupLaunchOption { .. }
         | AppAction::Migrate { .. }
         | AppAction::Hide { .. }
@@ -4098,6 +4108,44 @@ mod tests {
             kind: KeyEventKind::Press,
             state: crossterm::event::KeyEventState::NONE,
         }
+    }
+
+    #[test]
+    fn pointer_motion_preserves_keyboard_selection_unless_hover_is_enabled() {
+        let mut app = app();
+        let original = app.selection.clone();
+        let group = SelectionKey::Group("test-directory".into());
+        app.set_list_view(0, vec![(4, group.clone())]);
+        let mouse = crossterm::event::MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 2,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert_eq!(dashboard_mouse(&mut app, mouse, false), MouseEffect::None);
+        assert_eq!(app.selection, original);
+        assert_eq!(dashboard_mouse(&mut app, mouse, true), MouseEffect::Redraw);
+        assert_eq!(app.selection, Some(group));
+    }
+
+    #[test]
+    fn click_opens_the_clicked_row_without_hover_focus() {
+        let mut app = app();
+        let group = SelectionKey::Group("test-directory".into());
+        app.set_list_view(0, vec![(4, group.clone())]);
+        let click = crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert_eq!(
+            dashboard_mouse(&mut app, click, false),
+            MouseEffect::Activate
+        );
+        assert_eq!(app.selection, Some(group));
+        let outside = crossterm::event::MouseEvent { row: 20, ..click };
+        assert_eq!(dashboard_mouse(&mut app, outside, false), MouseEffect::None);
     }
 
     #[test]

@@ -9,6 +9,12 @@ The normal installation downloads a verified
 prebuilt binary: Rust and Cargo are not user prerequisites. An unrelated
 existing command at the alias path is never overwritten.
 
+## Guided setup
+
+After installing, run `av onboarding --copy` or type `/onboarding` in the
+dashboard. Paste the prompt into your coding agent to connect harnesses and
+choose optional voice and sync features. See [Getting started](onboarding.md).
+
 ## Supported platforms
 
 Releases cover:
