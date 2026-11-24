@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {visibleView,listVisibleSessions,REVIEW_RULES} from '../private/visible.mjs';
 import {addVisibleContext,CONTEXT_CHARACTERS} from '../private/visible-context.mjs';
+import {voiceView,readableExcerpt} from '../private/voice-view.mjs';
 const dashboard=JSON.parse(await readFile(new URL('./fixtures/dashboard.json',import.meta.url)));
 const directoryDashboard=JSON.parse(await readFile(new URL('./fixtures/dashboard-directories.json',import.meta.url)));
 const runtime={available:true,partial:false,checked_at:100000,dashboard,statuses:Array.from({length:381},(_,i)=>({session_id:`old-${i}`,status:'done'}))};
@@ -46,8 +47,9 @@ test('inventory stays UI-owned; history enrichment only queries the selected dir
   assert.equal(result.counts.total,4);
   assert.deepEqual(selected.slice(0,3),['owner','d','e']);
   assert.deepEqual(selected[3].sort(),['idle','needs','task','working']);
-  assert(result.directories[0].sessions.every(s=>s.context_state==='not_synced_or_hidden'));
-  assert(result.dashboard.sessions.every(s=>!('recent_messages' in s)));
+  assert(result.directories[0].sessions.every(s=>s.user===null&&s.agent===null));
+  assert.match(result.warning,/context is unavailable/);
+  assert(fresh.dashboard.sessions.every(s=>!('recent_messages' in s)));
 });
 
 test('directory grouping matches actual UI directory headers, counts, membership and worktree folding',()=>{
@@ -86,14 +88,63 @@ test('overview context has a shared Unicode budget and never leaks a matching ID
  const rows=Array.from({length:400},(_,i)=>({...dashboard.sessions[0],id:`opencode:host:s${i}`,session_id:`s${i}`}));
  rows.push({...rows[0],id:'codex:host:s0',provider:'Codex'});
  const view=visibleView({...runtime,dashboard:{...dashboard,sessions:rows}},{mac_seen_recently:true},100001);
- const db={transaction:async fn=>fn({query:async(sql,args)=>({rows:args?args[3].map(session_id=>({session_id,synced_at:new Date(100000),recent_messages:Array.from({length:3},(_,i)=>({message_id:`m${i}`,message_order:i,role:i%2?'assistant':'user',total_characters:10000,text_head:'🧪'.repeat(args[4]),text_tail:'🧪'.repeat(args[4])}))})):[]})})};
+ const db={transaction:async fn=>fn({query:async(sql,args)=>({rows:args?args[3].map(session_id=>({session_id,synced_at:new Date(100000),recent_messages:Array.from({length:2},(_,i)=>({message_id:`m${i}`,message_order:i,role:i%2?'assistant':'user',total_characters:10000,text_head:'🧪'.repeat(args[4])}))})):[]})})};
  const result=await addVisibleContext({db,principal:{owner_id:'o',device_id:'d',database_epoch:'e'},runtime,freshness:{}},view);
  const sessions=result.directories.flatMap(d=>[...d.sessions,...d.working]);
- const characters=sessions.flatMap(s=>s.recent_messages).reduce((n,m)=>n+[...m.text].length,0);
+ const characters=sessions.flatMap(s=>s.recent_messages).reduce((n,m)=>n+[...(m.text??'')].length,0);
  assert(characters<=CONTEXT_CHARACTERS);
  assert(result.context_budget.budget_limited_sessions>0);
  assert(sessions.some(s=>s.context_synced_at===new Date(100000).toISOString()));
  const other=sessions.find(s=>s.provider==='Codex');
  assert.equal(other.context_state,'unsupported_provider');assert.deepEqual(other.recent_messages,[]);
  assert(result.dashboard.sessions.every(s=>!('recent_messages' in s)));
+});
+
+test('voice response keeps UI membership and ordering without duplicate IDs, zero counts or debugger fields',()=>{
+ const internal=visibleView(runtime,{mac_seen_recently:true},100001);
+ for(const d of internal.directories)for(const s of [...d.sessions,...d.working]) {
+  s.context_state='available';s.context_fresh=true;
+  s.recent_messages=[{role:'user',text:'Ship the layout.'},{role:'assistant',text:'Deployed and verified.'}];
+ }
+ const result=voiceView(internal);
+ assert.deepEqual(Object.keys(result),['counts','directories']);
+ assert(!('scheduled' in result.counts));
+ const work=result.directories.find(d=>d.path==='/work');
+ assert.deepEqual(Object.keys(work),['path','label','counts','sessions','working']);
+ assert.deepEqual(work.sessions.map(s=>s.status),['needs_input','task_done','idle']);
+ assert.deepEqual(Object.keys(work.sessions[0]),['id','title','status','user','agent']);
+ assert.equal(work.sessions[0].agent,'Deployed and verified.');
+ assert(!JSON.stringify(result).includes('review_ids'));
+ const stalled=voiceView(visibleView({...runtime,statuses:[{session_id:'working',health:'potentially_stalled'}]},{mac_seen_recently:true},100001));
+ assert.equal(stalled.directories.find(d=>d.path==='/work').working[0].review,true);
+ const missing=voiceView(visibleView({...runtime,dashboard:undefined},{},100001));
+ assert.equal(missing.counts,null);assert.deepEqual(missing.directories,[]);assert.match(missing.warning,/unavailable/);
+ const stale=voiceView(visibleView(runtime,{mac_seen_recently:true},140001));
+ assert.match(stale.warning,/stale or partial/);
+});
+
+test('long excerpts preserve complete opening and concluding units, never chopped fragments',()=>{
+ const text='The shared layout is deployed. Final checks passed for the hero, cards and responsive layout. Additional implementation detail follows.';
+ const cut=readableExcerpt({text_head:text.slice(0,100),total_characters:text.length},100);
+ assert.equal(cut,'The shared layout is deployed. Final checks passed for the hero, cards and responsive layout. …');
+ const word=readableExcerpt({text_head:'Updated the research page without changing',total_characters:200},34);
+ assert.equal(word,null);
+ assert.equal(readableExcerpt({text_head:'Done 🧪',total_characters:6},600),'Done 🧪');
+ const unicode=readableExcerpt({text_head:'🧪'.repeat(100),total_characters:200},40);
+ assert.equal(unicode,null);
+ const long='Opening task delivered. '+'More implementation details. '.repeat(30)+'Final checks passed. No work remains.';
+ const balanced=readableExcerpt({text_head:long.slice(0,100),text_tail:long.slice(-100),total_characters:long.length},100);
+ assert(balanced.startsWith('Opening task delivered.'));assert(balanced.endsWith('No work remains.'));assert([...balanced].length<=100);
+ const markdown=readableExcerpt({text_head:'**Scheduled for November 30.** '+'Implementation continues '.repeat(20),text_tail:'some cut fragment\n\n**Final checks passed.** Nothing remains.',total_characters:1000},120);
+ assert(markdown.includes('**Scheduled for November 30.**'));assert(markdown.endsWith('**Final checks passed.** Nothing remains.'));
+});
+
+test('Scheduled and Paused are excluded by default; opt-in still cannot reveal hidden history',()=>{
+ const shelved=[{...dashboard.sessions[0],id:'opencode:host:scheduled',session_id:'scheduled',category:'scheduled'},{...dashboard.sessions[0],id:'opencode:host:paused',session_id:'paused',category:'paused'}];
+ const r={...runtime,dashboard:{...dashboard,sessions:[...dashboard.sessions,...shelved]},statuses:[...runtime.statuses,{session_id:'hidden-history',status:'done'}]};
+ const main=voiceView(visibleView(r,{mac_seen_recently:true},100001));
+ assert.equal(main.counts.total,5);assert(!('scheduled' in main.counts));assert(!('paused' in main.counts));
+ const all=voiceView(visibleView(r,{mac_seen_recently:true},100001,{include_scheduled_and_paused:true}));
+ assert.equal(all.counts.total,7);assert.equal(all.counts.scheduled,1);assert.equal(all.counts.paused,1);
+ assert(!all.directories.flatMap(d=>[...d.sessions,...d.working]).some(s=>s.id.includes('hidden-history')));
 });

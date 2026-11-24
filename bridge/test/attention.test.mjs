@@ -170,50 +170,50 @@ test('actual MCP tool returns the UI render fixture, not the historical inventor
   dashboard.captured_at=Date.now();
   runtime={available:true,partial:false,checked_at:Date.now(),dashboard,statuses:Array.from({length:381},(_,i)=>status(`historical-${i}`))};
   const result=await rpc('list_visible_sessions',{});
-  assert.equal(result.exact,true);
   assert.equal(result.counts.total,5);
-  assert.deepEqual(result.dashboard,dashboard);
-  assert.deepEqual(result.review_ids,['opencode:host:needs','opencode:host:task','opencode:host:project']);
+  assert.deepEqual(result.directories.flatMap(d=>[...d.sessions,...d.working]).map(s=>s.id).sort(),dashboard.sessions.map(s=>s.id).sort());
+  assert(!('dashboard' in result));assert(!('review_ids' in result));
   for(const directory of ['cwd:/work','/work']) {
    const selected=await rpc('list_visible_sessions',{directory});
    assert.equal(selected.directories.length,1);
    assert.equal(selected.directories[0].path,'/work');
    assert.equal(selected.counts.total,4);
-   assert.deepEqual(selected.review_ids,['opencode:host:needs','opencode:host:task']);
+   assert.deepEqual(selected.directories[0].sessions.map(s=>s.status),['needs_input','task_done','idle']);
   }
  } finally { runtime=old; }
 });
 
-test('visible MCP includes three messages total, bounded and unreverted, without changing UI rows',async()=>{
+test('visible MCP includes one latest user and agent excerpt, without debug clutter or progress-message crowding',async()=>{
  const old=runtime,activity=gate.activity;
  try {
-  await seed('context-tail','Context test',Array.from({length:12},(_,i)=>turn(i+1,i%2===0?'user':'assistant',`start${i+1} `+'detail 🧪 '.repeat(1000)+` end${i+1}`)));
+  await seed('context-tail','Context test',Array.from({length:12},(_,i)=>turn(i+1,i%2===0?'user':'assistant',`start${i+1}. `+'Detail 🧪. '.repeat(1000)+` end${i+1}.`)));
   const fixture=JSON.parse(await readFile(new URL('./fixtures/dashboard.json',import.meta.url)));
   const row={...fixture.sessions[0],id:'opencode:host:context-tail',session_id:'context-tail'};
   runtime={available:true,partial:false,checked_at:Date.now(),dashboard:{...fixture,captured_at:Date.now(),sessions:[row]},statuses:[status('context-tail',{status:'needs_you',last_user_message_id:'msg_11'})]};
   gate.activity=async()=>({mac_seen_recently:true,history_fresh:true,source_checked_at:Date.now()});
   const result=await rpc('list_visible_sessions',{}),s=result.directories[0].sessions[0];
-  assert.equal(s.context_state,'available');assert.equal(s.context_fresh,true);
-  assert.deepEqual(s.recent_messages.map(m=>m.message_order),[10,11,12]);
-  assert.equal(s.recent_messages.filter(m=>m.role==='user').length,1);
-  assert.equal(s.recent_messages.filter(m=>m.role==='assistant').length,2);
-  assert(s.recent_messages.every(m=>m.truncated&&m.text.includes('middle omitted')&&[...m.text].length<=300));
-  assert(s.recent_messages.at(-1).text.endsWith('end12'));
-  assert(result.dashboard.sessions.every(s=>!('recent_messages' in s)));
+  assert.equal(result.warning,undefined);
+  assert.deepEqual(Object.keys(s),['id','title','status','user','agent']);
+  assert(s.user.startsWith('start11.'));assert(s.agent.startsWith('start12.'));
+  assert(s.user.endsWith('end11.'));assert(s.agent.endsWith('end12.'));
+  assert([s.user,s.agent].every(text=>[...text].length<=600&&!text.includes('middle omitted')));
+  const full=await rpc('session_brief',{session_id:s.id});assert.equal(full.found,true);
   await db.query("UPDATE av_messages SET role='assistant' WHERE session_id=$1 AND message_order=11",['context-tail']);
   runtime.statuses[0].last_user_message_id='msg_9';
   const assistantTail=await rpc('list_visible_sessions',{});
-  assert(assistantTail.directories[0].sessions[0].recent_messages.every(m=>m.role==='assistant'));
-  assert.equal(assistantTail.directories[0].sessions[0].context_fresh,true);
+  assert(assistantTail.directories[0].sessions[0].user.startsWith('start9.'));
+  assert(assistantTail.directories[0].sessions[0].agent.startsWith('start12.'));
+  assert.equal(assistantTail.warning,undefined);
   await db.query("UPDATE av_messages SET role='user' WHERE session_id=$1 AND message_order=11",['context-tail']);
   runtime.statuses[0].last_user_message_id='msg_11';
   await db.query("UPDATE av_sessions SET state=jsonb_set(state,'{visible_before}','9'::jsonb) WHERE session_id=$1",['context-tail']);
   const reverted=await rpc('list_visible_sessions',{}),r=reverted.directories[0].sessions[0];
-  assert.deepEqual(r.recent_messages.map(m=>m.message_order),[6,7,8]);
-  assert.equal(r.context_fresh,false);
+  assert(r.user.startsWith('start7.'));assert(r.agent.startsWith('start8.'));
+  assert.match(reverted.warning,/may lag/);
   await db.query("UPDATE av_sessions SET state=jsonb_set(state,'{archived}','true'::jsonb) WHERE session_id=$1",['context-tail']);
   const archived=await rpc('list_visible_sessions',{});
-  assert.deepEqual(archived.directories[0].sessions[0].recent_messages,[]);
+  assert.equal(archived.directories[0].sessions[0].user,null);
+  assert.equal(archived.directories[0].sessions[0].agent,null);
   assert.equal(archived.counts.total,1);
  } finally {runtime=old;gate.activity=activity;}
 });

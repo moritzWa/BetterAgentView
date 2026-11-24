@@ -7,6 +7,10 @@
         "type": "string",
         "minLength": 1,
         "maxLength": 4100
+      },
+      "include_scheduled_and_paused": {
+        "default": false,
+        "type": "boolean"
       }
     }
   },
