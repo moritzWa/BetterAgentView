@@ -9,7 +9,7 @@ betteragentview doctor
 betteragentview --json --all
 ```
 
-If the installed betteragentview itself is stale, `av update` (or `av upgrade`)
+If the installed betteragentview itself is stale, `bav update` (or `bav upgrade`)
 downloads and verifies the latest published release.
 
 Add the provider's `--no-host-*` flag to isolate one host adapter, and

@@ -1,6 +1,6 @@
 # Installation
 
-BetterAgentView provides the `betteragentview` command and the `av` shorthand.
+BetterAgentView provides the `bav` shorthand and the `betteragentview` command.
 The old `agentview` command and `AGENTVIEW_*` environment variables still work.
 Settings and state stay in their existing `agentview` directories, so upgrading
 does not reset session visibility, models, voice settings or history.
@@ -11,9 +11,10 @@ existing command at the alias path is never overwritten.
 
 ## Guided setup
 
-After installing, run `av onboarding --copy` or type `/onboarding` in the
-dashboard. Paste the prompt into your coding agent to connect harnesses and
-choose optional voice and sync features. See [Getting started](onboarding.md).
+After installing, run `bav`. The first launch guides harness installation/login,
+optional voice, and your first task. Reopen it with `bav setup`.
+For agent-assisted setup, `bav onboarding --copy` or `/onboarding` copies a prompt.
+See [Getting started](onboarding.md).
 
 ## Supported platforms
 
@@ -26,7 +27,7 @@ Releases cover:
 - Windows x64
 
 The PowerShell installer selects the `x86_64-pc-windows-msvc` archive,
-verifies SHA-256, installs `betteragentview.exe` and `av.exe` without administrator privileges, and adds
+verifies SHA-256, installs `betteragentview.exe`, `bav.exe` and legacy `av.exe` without administrator privileges, and adds
 the user-local directory to `PATH`.
 
 Apple-silicon installation is exercised natively. The Intel archive is built
@@ -98,7 +99,7 @@ ConPTY background/resume is not claimed yet. Session discovery, filtering,
 renaming, model selection, provider login handoff, foreground launch, JSON
 output, and the built-in PowerShell/Command Prompt terminal picker run natively.
 
-The Unix installer writes `~/.local/bin/agentview`, creates an `av`
+The Unix installer writes `~/.local/bin/agentview`, creates a `bav` (and legacy `av`)
 symlink. The Windows installer writes the equivalent two executable names to
 `%LOCALAPPDATA%\Programs\agentview\bin` and adds that directory to the user
 `PATH`. It never requires administrator privileges or edits a PowerShell
@@ -123,7 +124,7 @@ Start with checks that do not contact an agent provider:
 
 ```console
 betteragentview --version
-av --version
+bav --version
 betteragentview --help
 betteragentview --json --no-host-providers
 ```
@@ -147,8 +148,8 @@ interactive test.
 Use the installed shorthand:
 
 ```console
-av update
-# or: av upgrade
+bav update
+# or: bav upgrade
 ```
 
 The updater downloads this repository's installer, which resolves the latest
@@ -159,7 +160,7 @@ or says that the installed version is already current. Re-running the
 installation command above is equivalent.
 
 Release builds check for a newer release once a day and show it in the dashboard
-header, such as `v0.3.4 available, run av update`. Set
+header, such as `Update v0.3.4 available · run bav update, then restart bav`. Set
 `AGENTVIEW_NO_UPDATE_CHECK=1` to turn the check off.
 
 Pin `--version` in automation; the default `latest` channel can change whenever
@@ -167,7 +168,7 @@ a new stable release is published.
 
 ## Uninstall
 
-Remove the executable installed at `~/.local/bin/agentview`, its `av`
+Remove the executable installed at `~/.local/bin/agentview`, its `bav` and `av`
 symlink, or their equivalents
 under the custom path passed to `--install-dir`.
 

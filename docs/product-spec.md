@@ -73,7 +73,7 @@ capability; no integration is described as having a uniform full lifecycle.
 ## Delivery
 
 - Rust and Ratatui, with Rust 1.75 as the initial MSRV.
-- A single binary named `betteragentview`, installed with `av` as its shorthand.
+- A single binary named `betteragentview`, installed with `bav` as its shorthand (`av` remains compatible).
 - Public repository at `moritzWa/betteragentview`, suitable for a
   later public release under the MIT license.
 - Frequent coherent commits, exploration records, architectural decisions,

@@ -332,6 +332,7 @@ struct WorkReturn {
 
 #[derive(Debug)]
 pub struct App {
+    pub update_available: Option<String>,
     pub work_only: bool,
     pub work_roots: crate::work_view::WorkRoots,
     work_return: Option<WorkReturn>,
@@ -494,6 +495,7 @@ impl App {
             .position(|target| target.provider == launch_provider)
             .unwrap_or(0);
         let mut app = Self {
+            update_available: None,
             work_only: false,
             work_roots: Default::default(),
             work_return: None,

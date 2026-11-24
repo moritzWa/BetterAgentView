@@ -33,6 +33,101 @@ const CTRL_X: &[u8] = b"\x18";
 static PTY_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
+fn a_fresh_launch_guides_setup_before_showing_an_empty_dashboard() {
+    let _serial = serialize_real_tty_test();
+    let mut app = PtyApp::spawn_configured(120, 35, |command, home| {
+        fs::remove_file(home.path().join("state/agentview/last-view.json")).unwrap();
+        let bin = home.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        fs::write(bin.join("security"), "#!/bin/sh\nexit 44\n").unwrap();
+        fs::set_permissions(bin.join("security"), fs::Permissions::from_mode(0o700)).unwrap();
+        command
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("XDG_CONFIG_HOME", home.path().join("config"))
+            .env_remove("AGENTVIEW_OPENCODE_SERVICE_FILE")
+            .env_remove("AGENTVIEW_OPENCODE_URL")
+            .args(["--refresh-ms", "60000"]);
+    });
+    let screen = app.wait_for("automatic getting started", |s| {
+        s.contains("Choose a harness [1]")
+    });
+    assert!(screen.contains("OpenCode (recommended)"));
+    assert!(screen.contains("bav setup"));
+    assert!(!screen.contains("Describe a task"));
+    app.send(b"s\r");
+    app.wait_for("skipped setup reaches dashboard", |s| {
+        s.contains("BetterAgentView v")
+    });
+    assert!(app
+        .home_path()
+        .join("state/agentview/onboarding.json")
+        .is_file());
+    app.exit_cleanly();
+}
+
+#[test]
+fn guided_setup_uses_native_login_and_keeps_voice_optional_without_calling_a_model() {
+    let _serial = serialize_real_tty_test();
+    let mut app = PtyApp::spawn_configured(120, 45, |command, home| {
+        let bin = home.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        let opencode = bin.join("opencode");
+        fs::write(&opencode, "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$HOME/native-login.args\"\necho 'Native login completed (test)'\n").unwrap();
+        fs::set_permissions(&opencode, fs::Permissions::from_mode(0o700)).unwrap();
+        command
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .args(["--opencode-bin", opencode.to_str().unwrap(), "setup"]);
+    });
+    app.wait_for("choose installed harness", |s| {
+        s.contains("Choose a harness [1]")
+    });
+    app.send(ENTER);
+    let screen = app.wait_for("native login handoff", |s| {
+        s.contains("interactive login now?")
+    });
+    assert!(screen.contains("moritzWa/opencode/tree/v2-parity"));
+    app.send(ENTER);
+    app.wait_for("voice choice", |s| {
+        s.contains("Voice provider: openai, grok, or skip")
+    });
+    app.send(b"grok\r");
+    let screen = app.wait_for("ready to finish", |s| {
+        s.contains("Press Enter to finish setup")
+    });
+    assert!(screen.contains("https://console.x.ai/"));
+    assert!(screen.contains("No microphone or paid voice call starts"));
+    assert!(screen.contains("F7 returns"));
+    app.send(ENTER);
+    assert_eq!(
+        fs::read_to_string(app.home_path().join("native-login.args"))
+            .unwrap()
+            .trim(),
+        "auth login"
+    );
+    assert!(!app
+        .home_path()
+        .join("state/agentview/voice/key.json")
+        .exists());
+    let prefs = agentview::last_harness::LastHarness::at(
+        app.home_path().join("state/agentview/last-harness.json"),
+    );
+    assert_eq!(
+        prefs.provider(),
+        Some(agentview::domain::Provider::OpenCode)
+    );
+    let deadline = Instant::now() + Duration::from_secs(4);
+    loop {
+        app.drain();
+        if let Some(status) = app.child.try_wait().unwrap() {
+            assert!(status.success());
+            break;
+        }
+        assert!(Instant::now() < deadline, "guided setup did not finish");
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
 fn fresh_dashboard_starts_by_directory_and_ctrl_s_toggles_grouping() {
     let _serial = serialize_real_tty_test();
     let mut app = PtyApp::spawn_configured(120, 40, |command, home| {

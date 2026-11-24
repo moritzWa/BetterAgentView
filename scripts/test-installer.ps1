@@ -13,10 +13,13 @@ try {
     & (Join-Path $repo "install.ps1") -Version $version -InstallDir $install -ReleaseBaseUrl (Join-Path $temporary "releases") -SkipPathUpdate
     $canonical = Join-Path $install "agentview.exe"
     $alias = Join-Path $install "av.exe"
+    $bav = Join-Path $install "bav.exe"
+    if (-not (Test-Path -LiteralPath $bav)) { throw "bav shorthand was not installed" }
     if (-not (Test-Path -LiteralPath $canonical)) { throw "canonical executable was not installed" }
     if (-not (Test-Path -LiteralPath $alias)) { throw "av shorthand was not installed" }
     if ((& $canonical --version | Out-String).Trim() -ne "agentview $version") { throw "canonical executable version mismatch" }
     if ((& $alias --version | Out-String).Trim() -ne "betteragentview $version") { throw "av shorthand version mismatch" }
+    if ((& $bav --version | Out-String).Trim() -ne "bav $version") { throw "bav shorthand version mismatch" }
     $publicCommand = Join-Path $install "betteragentview.exe"
     if (-not (Test-Path -LiteralPath $publicCommand)) { throw "betteragentview command was not installed" }
     if ((& $publicCommand --version | Out-String).Trim() -ne "betteragentview $version") { throw "public command version mismatch" }
@@ -24,10 +27,13 @@ try {
     $collisionInstall = Join-Path $temporary "collision"
     New-Item -ItemType Directory -Path $collisionInstall -Force | Out-Null
     $collisionAlias = Join-Path $collisionInstall "av.exe"
+    $collisionBav = Join-Path $collisionInstall "bav.exe"
     Copy-Item -LiteralPath $env:ComSpec -Destination $collisionAlias
+    Copy-Item -LiteralPath $env:ComSpec -Destination $collisionBav
     $collisionAgentviewHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $collisionAlias).Hash
     & (Join-Path $repo "install.ps1") -Version $version -InstallDir $collisionInstall -ReleaseBaseUrl (Join-Path $temporary "releases") -SkipPathUpdate
     if ((Get-FileHash -Algorithm SHA256 -LiteralPath $collisionAlias).Hash -ne $collisionAgentviewHash) { throw "installer replaced an unrelated av.exe" }
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $collisionBav).Hash -ne $collisionAgentviewHash) { throw "installer replaced an unrelated bav.exe" }
 
     $waiter = Start-Process powershell.exe -ArgumentList "-NoProfile", "-Command", "Start-Sleep -Seconds 2" -PassThru
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -35,6 +41,7 @@ try {
     $timer.Stop()
     if ($timer.Elapsed.TotalSeconds -lt 1.5) { throw "installer did not wait for the running process before replacement" }
     if ((& $canonical --version | Out-String).Trim() -ne "agentview $version") { throw "waited replacement produced the wrong executable" }
+    if ((& $bav --version | Out-String).Trim() -ne "bav $version") { throw "waited replacement produced the wrong bav executable" }
 
     $checksum = Get-ChildItem -LiteralPath $release -Filter '*.sha256' | Select-Object -First 1
     $original = [System.IO.File]::ReadAllText($checksum.FullName)

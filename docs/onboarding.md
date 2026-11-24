@@ -1,5 +1,11 @@
 # Getting started
 
+**Install, then run `bav`.** Your first launch opens guided setup: choose a
+detected coding harness or install OpenCode, sign in through its own login,
+choose optional desktop voice, and try a first task. You can skip and return
+with `bav setup`. Existing users keep their selected harness and are not forced
+through setup. Nothing starts a paid call or uploads history during this guide.
+
 **Paste the [setup prompt](SETUP-PROMPT.md) into your coding agent** to have it
 check your computer and walk you through setup. In the dashboard, `/onboarding`
 copies the same prompt. From a terminal:
@@ -13,7 +19,7 @@ needs `wl-copy` or `xclip`. You can also follow the steps below yourself.
 
 ## 1. Install and connect a coding harness
 
-Use the [installer](../README.md#install), then run `av`. Existing local sessions
+Use the [installer](../README.md#install), then run `bav`. Existing local sessions
 are discovered automatically. No BetterAgentView account or cloud backend is
 needed for the dashboard.
 
@@ -36,7 +42,7 @@ also link a [Cursor provider fork](https://github.com/moritzWa/cursor-opencode-p
 for Cursor subscription models inside OpenCode. Use the current V2 section,
 not the legacy V1 snippets. These are optional source-based additions, not
 prerequisites or bundled accounts. Keep stock OpenCode and launch the fork with
-`av --opencode-bin /absolute/path/to/opencode-dev`.
+`bav --opencode-bin /absolute/path/to/opencode-dev`.
 
 Type a task, use `Tab` to pick the harness and `Shift+Tab` to pick its model, then
 press `Enter`. A login completing is not proof that a model call works: send a
@@ -67,7 +73,7 @@ first call. See [Voice Mode](voice.md) for settings, costs and troubleshooting.
 Arrow keys select sessions and directory headings. `Enter` opens a session;
 `F7` returns to the dashboard. `?` shows the full shortcut list.
 Mouse movement does not change selection. Clicking a row opens it, and the wheel
-moves through the list. Run `av --mouse-hover` to restore hover-to-select, or set
+moves through the list. Run `bav --mouse-hover` to restore hover-to-select, or set
 `AGENTVIEW_MOUSE_HOVER=true` in your shell profile.
 
 Shortcuts have two layers: BetterAgentView handles terminal keys, while the

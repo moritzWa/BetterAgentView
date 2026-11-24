@@ -1,7 +1,7 @@
 name: auto-release
 
 # Every push to main that changes the app gets the next patch version, so the
-# public installer and `av update` always serve current main. Docs, site and
+# public installer and `bav update` always serve current main. Docs, site and
 # test-only pushes do not release.
 on:
   push:
