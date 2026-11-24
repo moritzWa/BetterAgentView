@@ -34,6 +34,13 @@ pub fn capture(app: &App) -> DashboardSnapshot {
                 }
             };
             sessions.push(DashboardSession {
+                directory_id: format!("cwd:{}", crate::app::project_group_path(&s.cwd).display()),
+                directory_path: crate::app::project_group_path(&s.cwd)
+                    .to_string_lossy()
+                    .into_owned(),
+                directory_label: crate::app::abbreviate_home(&crate::app::project_group_path(
+                    &s.cwd,
+                )),
                 id: s.id.clone(),
                 session_id: s.provider_session_id.clone(),
                 title: s.name.clone(),

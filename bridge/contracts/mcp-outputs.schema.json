@@ -58,6 +58,76 @@
           }
         ]
       },
+      "directories": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "directory_id": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "counts": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "displayed_counts": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "sessions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/DashboardSession"
+              }
+            },
+            "working": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/DashboardSession"
+              }
+            },
+            "review_ids": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            }
+          },
+          "required": [
+            "directory_id",
+            "path",
+            "label",
+            "counts",
+            "displayed_counts",
+            "sessions",
+            "working",
+            "review_ids"
+          ],
+          "additionalProperties": false
+        }
+      },
       "review_ids": {
         "type": "array",
         "items": {
@@ -77,6 +147,7 @@
       "dashboard",
       "counts",
       "displayed_counts",
+      "directories",
       "review_ids",
       "note"
     ],
@@ -165,6 +236,18 @@
             "type": "string",
             "maxLength": 4096
           },
+          "directory_id": {
+            "type": "string",
+            "maxLength": 4100
+          },
+          "directory_path": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "directory_label": {
+            "type": "string",
+            "maxLength": 4096
+          },
           "category": {
             "$ref": "#/definitions/DashboardCategory"
           },
@@ -182,6 +265,9 @@
           "title",
           "provider",
           "directory",
+          "directory_id",
+          "directory_path",
+          "directory_label",
           "category",
           "group_key",
           "listed"

@@ -3255,6 +3255,7 @@ mod tests {
                 s.provider_session_id = row.session_id.clone();
                 s.name = row.title.clone();
                 s.cwd = row.directory.clone().into();
+                s.started_at = None;
                 s
             })
             .collect();
@@ -3308,12 +3309,26 @@ mod tests {
 
         app.set_filter("");
         app.set_view_mode(crate::app::ViewMode::Directory);
+        let expected_directories: crate::bridge::contract::DashboardSnapshot =
+            serde_json::from_str(include_str!(
+                "../bridge/test/fixtures/dashboard-directories.json"
+            ))
+            .unwrap();
+        let mut grouped = crate::dashboard_snapshot::capture(&app);
+        grouped.captured_at = expected_directories.captured_at;
+        grouped.dashboard_id = expected_directories.dashboard_id.clone();
+        assert_eq!(grouped, expected_directories);
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let rendered = buffer_text(terminal.backend().buffer());
+        for group in &grouped.groups {
+            assert!(rendered.contains(&group.label));
+        }
         app.set_session_page_size(1);
         terminal.draw(|frame| render(frame, &app)).unwrap();
         let rendered = buffer_text(terminal.backend().buffer());
         let snapshot = crate::dashboard_snapshot::capture(&app);
         assert_eq!(snapshot.sessions.len(), 5);
-        assert_eq!(snapshot.sessions.iter().filter(|s| s.listed).count(), 1);
+        assert_eq!(snapshot.sessions.iter().filter(|s| s.listed).count(), 2);
         for row in snapshot.sessions {
             assert_eq!(rendered.contains(&row.title), row.listed, "{rendered}");
         }

@@ -428,6 +428,18 @@
           "type": "string",
           "maxLength": 4096
         },
+        "directory_id": {
+          "type": "string",
+          "maxLength": 4100
+        },
+        "directory_path": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "directory_label": {
+          "type": "string",
+          "maxLength": 4096
+        },
         "category": {
           "$ref": "#/definitions/DashboardCategory"
         },
@@ -445,6 +457,9 @@
         "title",
         "provider",
         "directory",
+        "directory_id",
+        "directory_path",
+        "directory_label",
         "category",
         "group_key",
         "listed"

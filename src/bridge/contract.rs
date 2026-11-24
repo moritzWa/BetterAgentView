@@ -503,6 +503,12 @@ pub struct DashboardSession {
 
     pub directory: String,
 
+    pub directory_id: String,
+
+    pub directory_label: String,
+
+    pub directory_path: String,
+
     pub group_key: String,
 
     pub id: String,

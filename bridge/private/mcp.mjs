@@ -44,7 +44,7 @@ export async function privateMcp(request, { db, store, principal, outbox, gate, 
             return { isError: true, content: [{ type: 'text', text: structuredErrors ? JSON.stringify(errorView(code)) : code }] };
         }
     });
-    register('list_visible_sessions', 'Exact current Agent View dashboard sessions, stable IDs, UI categories and group counts. Use FIRST for current counts, attention and one-at-a-time voice review. Not historical inventory. Includes UI filters, collapsed/paged row flags and review order. No running updated dashboard means unavailable, never hundreds of historical done rows.', () => listVisibleSessions({ gate, principal }));
+    register('list_visible_sessions', 'Exact Agent View dashboard sessions grouped by UI project directory, with stable directory_id/path/label, status counts, sessions and separate Working rows. Use FIRST for current counts and one-directory-at-a-time review. Select with directory=exact directory_id or path; counts and review_ids follow that selection. dashboard remains the full source snapshot. Includes UI filters, collapse/page flags and review order. No updated running UI means unavailable, never historical done counts.', args => listVisibleSessions({ gate, principal }, args));
     register('list_artifacts', 'List explicitly published artifacts for a session. Returns metadata and artifact IDs, not file bytes. Use before preview_artifact when the artifact ID is unknown. Never infer an artifact from a path mentioned in chat.', args => listArtifacts(db, principal, args));
     server.registerTool('preview_artifact', { description: PREVIEW_INSTRUCTIONS, inputSchema: toolInputs.preview_artifact.shape, annotations: safeRead }, async (args) => {
         try {

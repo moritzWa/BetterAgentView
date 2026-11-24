@@ -4,6 +4,34 @@
 not rediscover sessions or count the history database. The local equivalent is
 `agentview sessions visible`. Both return the same typed dashboard payload.
 
+## Directory-by-directory review
+
+`directories` groups the selected visible rows by Agent View's own project-path
+helper, with `directory_id`, absolute `path`, UI `label`, `counts`,
+`displayed_counts`, `sessions`, separate `working` rows, and `review_ids`.
+The path helper folds `/project/.claude/worktrees/feature` into `/project`, exactly
+as the UI does. Labels use the UI's home abbreviation, not a guessed folder name.
+The original working directory stays in each session's `directory` field.
+
+Call `list_visible_sessions(directory="cwd:/project")` or pass the exact project
+path. Selection intersects the current UI set; it never discovers hidden, archived,
+filtered-out or historical sessions. An unmatched directory returns empty selected
+results and `directory_found=false`. IDs do not change when filtering or switching
+UI views. Select a returned identifier rather than matching a spoken basename.
+
+Within each directory, `sessions` puts Needs Input first, Task Done next and Project
+Done last. `working` is separate and normally skipped. A fresh stalled/decision
+Working ID can join that directory's review queue before Project Done. Paused,
+scheduled and unconfirmed categories retain their labels and stay out of review.
+Sessions from the UI's pause/schedule shelves retain their original `group_key`
+even when associated with their source directory here.
+
+`counts`, `displayed_counts`, `directories` and `review_ids` follow the directory
+selection. `dashboard_counts` and the unmodified `dashboard` payload preserve the
+whole source UI snapshot for comparison; do not mistake those for selected counts.
+Review one directory's queue before moving to another. Refresh with the same
+directory selection on "next", preserving the already-reviewed stable IDs.
+
 ## Why the old counts differed
 
 The bridge discovers up to 5,000 OpenCode history records. The dashboard defaults
@@ -81,7 +109,7 @@ expire rather than silently claiming exactness.
 ## One-at-a-time review
 
 1. Call `list_visible_sessions`. If unavailable or inexact, report that limitation.
-2. Use `review_ids`: Needs Input first, Task Done second, Project Done last.
+2. Choose a directory and use its `review_ids`: Needs Input first, Task Done second, Project Done last.
    Normally skip Working. Fresh native evidence of a stall or pending decision
    admits a Working row before Project Done. A long-running tool is not a stall.
 3. Read a brief for the first unreviewed supported ID. Explain that session only.

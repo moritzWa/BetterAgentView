@@ -174,6 +174,13 @@ test('actual MCP tool returns the UI render fixture, not the historical inventor
   assert.equal(result.counts.total,5);
   assert.deepEqual(result.dashboard,dashboard);
   assert.deepEqual(result.review_ids,['opencode:host:needs','opencode:host:task','opencode:host:project']);
+  for(const directory of ['cwd:/work','/work']) {
+   const selected=await rpc('list_visible_sessions',{directory});
+   assert.equal(selected.directories.length,1);
+   assert.equal(selected.directories[0].path,'/work');
+   assert.equal(selected.counts.total,4);
+   assert.deepEqual(selected.review_ids,['opencode:host:needs','opencode:host:task']);
+  }
  } finally { runtime=old; }
 });
 

@@ -8,10 +8,10 @@
     {"key":"state:ProjectDone","label":"Project done","total":1,"listed":1}
   ],
   "sessions":[
-    {"id":"opencode:host:needs","session_id":"needs","title":"Needs test","provider":"OpenCode","directory":"/work","category":"needs_input","group_key":"state:NeedsInput","listed":true},
-    {"id":"opencode:host:working","session_id":"working","title":"Working test","provider":"OpenCode","directory":"/work","category":"working","group_key":"state:Working","listed":true},
-    {"id":"opencode:host:task","session_id":"task","title":"Task test","provider":"OpenCode","directory":"/work","category":"task_done","group_key":"state:TaskDone","listed":true},
-    {"id":"opencode:host:idle","session_id":"idle","title":"Idle test","provider":"OpenCode","directory":"/work","category":"idle","group_key":"state:Completed","listed":true},
-    {"id":"opencode:host:project","session_id":"project","title":"Project test","provider":"OpenCode","directory":"/work","category":"project_done","group_key":"state:ProjectDone","listed":true}
+    {"id":"opencode:host:needs","session_id":"needs","title":"Needs test","provider":"OpenCode","directory":"/work","directory_id":"cwd:/work","directory_path":"/work","directory_label":"/work","category":"needs_input","group_key":"state:NeedsInput","listed":true},
+    {"id":"opencode:host:working","session_id":"working","title":"Working test","provider":"OpenCode","directory":"/work","directory_id":"cwd:/work","directory_path":"/work","directory_label":"/work","category":"working","group_key":"state:Working","listed":true},
+    {"id":"opencode:host:task","session_id":"task","title":"Task test","provider":"OpenCode","directory":"/work/.claude/worktrees/feature","directory_id":"cwd:/work","directory_path":"/work","directory_label":"/work","category":"task_done","group_key":"state:TaskDone","listed":true},
+    {"id":"opencode:host:idle","session_id":"idle","title":"Idle test","provider":"OpenCode","directory":"/work","directory_id":"cwd:/work","directory_path":"/work","directory_label":"/work","category":"idle","group_key":"state:Completed","listed":true},
+    {"id":"opencode:host:project","session_id":"project","title":"Project test","provider":"OpenCode","directory":"/other","directory_id":"cwd:/other","directory_path":"/other","directory_label":"/other","category":"project_done","group_key":"state:ProjectDone","listed":true}
   ]
 }
