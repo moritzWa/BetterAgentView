@@ -53,7 +53,7 @@ impl Palette {
             selected_bg: Color::Rgb(58, 60, 61),
             selected_fg: Color::White,
             accent: Color::Rgb(148, 165, 250),
-            focus: Color::Rgb(175, 155, 255),
+            focus: Color::Rgb(96, 112, 247),
             attention: Color::Rgb(232, 191, 72),
             complete: Color::Rgb(101, 187, 120),
             danger: Color::Rgb(224, 108, 117),
@@ -62,7 +62,7 @@ impl Palette {
 
     /// Neutral white with the greys of VS Code's default light theme, so the
     /// dashboard matches a light editor instead of tinting warm. Every
-    /// foreground keeps WCAG AA contrast (4.5:1) on both backgrounds, since
+    /// non-focus foreground keeps WCAG AA contrast (4.5:1) on both backgrounds, since
     /// dim, accent, and state spans also sit on the selected row.
     pub const fn light() -> Self {
         Self {
@@ -72,7 +72,7 @@ impl Palette {
             selected_bg: Color::Rgb(232, 232, 232),
             selected_fg: Color::Rgb(30, 30, 30),
             accent: Color::Rgb(40, 75, 245),
-            focus: Color::Rgb(94, 75, 215),
+            focus: Color::Rgb(96, 112, 247),
             attention: Color::Rgb(135, 90, 0),
             complete: Color::Rgb(0, 120, 40),
             danger: Color::Rgb(175, 30, 45),
@@ -799,6 +799,13 @@ mod tests {
     fn contrast_ratio(first: Color, second: Color) -> f64 {
         let (first, second) = (relative_luminance(first), relative_luminance(second));
         (first.max(second) + 0.05) / (first.min(second) + 0.05)
+    }
+
+    #[test]
+    fn focus_matches_claude_code_in_both_themes() {
+        for palette in [Palette::light(), Palette::dark()] {
+            assert_eq!(palette.focus, Color::Rgb(0x60, 0x70, 0xf7));
+        }
     }
 
     #[test]
