@@ -14,8 +14,8 @@ test("the site advertises portable move and back shortcuts", async () => {
 });
 
 test("install commands wrap rather than showing a horizontal scrollbar", async () => {
-  const html = await readFile(new URL("../site/index.html", import.meta.url), "utf8");
-  const rule = html.match(/\.install code\s*\{([^}]+)\}/)?.[1];
+  const css = await readFile(new URL("../site/landing.css", import.meta.url), "utf8");
+  const rule = css.match(/\.install-command code\s*\{([^}]+)\}/)?.[1];
   assert.ok(rule, "the install command has a layout rule");
   assert.match(rule, /min-width:\s*0/);
   assert.match(rule, /white-space:\s*pre-wrap/);
