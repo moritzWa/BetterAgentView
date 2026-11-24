@@ -569,9 +569,9 @@ class Film:
             400,
             225,
             "Heavy jobs · agent-bouncer",
-            "#007f86",
+            "white",
             cover=False,
-            label_color="white",
+            label_color=INK,
         )
         out += self.crop_tile(
             "scheduled",
@@ -593,10 +593,10 @@ class Film:
             cover=False,
         )
         out += (
-            rect(1165, 635, 400, 210, 27, "#1459df")
+            rect(1165, 635, 400, 210, 27, "white")
             # Three 56-wide keys, 67 apart: 190 wide, centered on the tile.
             + keycaps(1365 - 95, 678, 1.0)
-            + txt(1365, 807, "Work only", 26, "white", True, "middle")
+            + txt(1365, 807, "Work only", 26, INK, True, "middle")
         )
         out += txt(
             800,

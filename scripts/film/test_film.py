@@ -119,6 +119,20 @@ class FilmTests(unittest.TestCase):
         film.projects(25.8)
         self.assertEqual(calls[-1], ("status", "directories"))
 
+    def test_closing_feature_tiles_are_white_with_dark_labels(self):
+        film = visual.Film.__new__(visual.Film)
+        tiles = []
+        film.crop_tile = lambda *args, **kwargs: tiles.append((args, kwargs)) or ""
+        film.output = Path("/nonexistent-film-test")
+        svg = film.bento(42)
+        self.assertIn('fill="white"', svg)
+        self.assertNotIn("#1459df", svg)
+        self.assertNotIn("#007f86", svg)
+        self.assertIn(f'fill="{visual.INK}"', svg)
+        jobs, style = next((args, kwargs) for args, kwargs in tiles if args[0] == "continued")
+        self.assertEqual(jobs[-1], "white")
+        self.assertEqual(style["label_color"], visual.INK)
+
     def test_every_shortcut_pill_sits_in_the_same_place(self):
         for keys, label in [
             (["Right"], "Open session"),
