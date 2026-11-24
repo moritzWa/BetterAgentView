@@ -3404,7 +3404,9 @@ fn arrow_navigation_and_group_collapse_are_real_terminal_events() {
 fn mouse_motion_does_not_steal_real_keyboard_navigation() {
     let _serial = serialize_real_tty_test();
     let mut app = PtyApp::spawn(90, 24);
-    let screen = app.wait_for("startup", |screen| screen.contains("release-reviewer"));
+    let screen = app.wait_for("motion target rendered", |screen| {
+        screen.contains("release-reviewer") && screen.contains("needs-environment")
+    });
     let row = screen
         .lines()
         .position(|line| line.contains("needs-environment"))
@@ -3457,7 +3459,12 @@ fn mouse_hover_can_be_enabled_for_real_terminal_motion_events() {
 fn clicking_a_row_activates_it_like_enter() {
     let _serial = serialize_real_tty_test();
     let mut app = PtyApp::spawn(90, 24);
-    let screen = app.wait_for("startup", |screen| screen.contains("release-reviewer"));
+    let screen = app.wait_for("click target rendered", |screen| {
+        screen.contains("release-reviewer")
+            && screen
+                .lines()
+                .any(|line| line.trim_start().starts_with("Needs input"))
+    });
     let row = screen
         .lines()
         .position(|line| line.trim_start().starts_with("Needs input"))

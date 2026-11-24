@@ -186,7 +186,7 @@ test('actual MCP tool returns the UI render fixture, not the historical inventor
 test('visible MCP includes one latest user and agent excerpt, without debug clutter or progress-message crowding',async()=>{
  const old=runtime,activity=gate.activity;
  try {
-  await seed('context-tail','Context test',Array.from({length:12},(_,i)=>turn(i+1,i%2===0?'user':'assistant',`start${i+1} `+'detail 🧪 '.repeat(1000)+` end${i+1}`)));
+  await seed('context-tail','Context test',Array.from({length:12},(_,i)=>turn(i+1,i%2===0?'user':'assistant',`start${i+1}. `+'Detail 🧪. '.repeat(1000)+` end${i+1}.`)));
   const fixture=JSON.parse(await readFile(new URL('./fixtures/dashboard.json',import.meta.url)));
   const row={...fixture.sessions[0],id:'opencode:host:context-tail',session_id:'context-tail'};
   runtime={available:true,partial:false,checked_at:Date.now(),dashboard:{...fixture,captured_at:Date.now(),sessions:[row]},statuses:[status('context-tail',{status:'needs_you',last_user_message_id:'msg_11'})]};
@@ -194,20 +194,21 @@ test('visible MCP includes one latest user and agent excerpt, without debug clut
   const result=await rpc('list_visible_sessions',{}),s=result.directories[0].sessions[0];
   assert.equal(result.warning,undefined);
   assert.deepEqual(Object.keys(s),['id','title','status','user','agent']);
-  assert(s.user.startsWith('start11 '));assert(s.agent.startsWith('start12 '));
-  assert([s.user,s.agent].every(text=>[...text].length<=600&&text.endsWith('…')&&!text.includes('middle omitted')));
+  assert(s.user.startsWith('start11.'));assert(s.agent.startsWith('start12.'));
+  assert(s.user.endsWith('end11.'));assert(s.agent.endsWith('end12.'));
+  assert([s.user,s.agent].every(text=>[...text].length<=600&&!text.includes('middle omitted')));
   const full=await rpc('session_brief',{session_id:s.id});assert.equal(full.found,true);
   await db.query("UPDATE av_messages SET role='assistant' WHERE session_id=$1 AND message_order=11",['context-tail']);
   runtime.statuses[0].last_user_message_id='msg_9';
   const assistantTail=await rpc('list_visible_sessions',{});
-  assert(assistantTail.directories[0].sessions[0].user.startsWith('start9 '));
-  assert(assistantTail.directories[0].sessions[0].agent.startsWith('start12 '));
+  assert(assistantTail.directories[0].sessions[0].user.startsWith('start9.'));
+  assert(assistantTail.directories[0].sessions[0].agent.startsWith('start12.'));
   assert.equal(assistantTail.warning,undefined);
   await db.query("UPDATE av_messages SET role='user' WHERE session_id=$1 AND message_order=11",['context-tail']);
   runtime.statuses[0].last_user_message_id='msg_11';
   await db.query("UPDATE av_sessions SET state=jsonb_set(state,'{visible_before}','9'::jsonb) WHERE session_id=$1",['context-tail']);
   const reverted=await rpc('list_visible_sessions',{}),r=reverted.directories[0].sessions[0];
-  assert(r.user.startsWith('start7 '));assert(r.agent.startsWith('start8 '));
+  assert(r.user.startsWith('start7.'));assert(r.agent.startsWith('start8.'));
   assert.match(reverted.warning,/may lag/);
   await db.query("UPDATE av_sessions SET state=jsonb_set(state,'{archived}','true'::jsonb) WHERE session_id=$1",['context-tail']);
   const archived=await rpc('list_visible_sessions',{});

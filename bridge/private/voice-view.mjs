@@ -21,15 +21,21 @@ export function voiceView(view) {
  })),...(warnings.length?{warning:warnings.join(' ')}:{})};
 }
 
-/** Prefix only, with whole Unicode characters and natural stopping points. */
+/** Keep complete opening/concluding units, never chopped head/tail fragments. */
 export function readableExcerpt(row,budget) {
- const chars=[...row.text_head];
  if(Number(row.total_characters)<=budget)return row.text_head;
- const limit=Math.max(0,budget-1),raw=chars.slice(0,limit).join(''),prefix=raw.trimEnd();
- const sentences=[...prefix.matchAll(/[.!?](?=\s|$)/gu)];
- const last=sentences.at(-1);
- if(last&&last.index>=prefix.length/2)return prefix.slice(0,last.index+1)+'…';
- if(/\s$/u.test(raw)||/[\s.,;:!?]/u.test(chars[limit]??''))return prefix+'…';
- const boundary=prefix.search(/\s+\S*$/u);
- return (boundary>0?prefix.slice(0,boundary):prefix)+'…';
+ const size=s=>[...s].length;
+ const boundaries=text=>[...text.matchAll(/(?:[.!?][*_"')\]]{0,4}(?=\s|$)|\n+)/gu)].map(m=>m.index+m[0].length);
+ const head=row.text_head??'',tail=row.text_tail??'';
+ const openings=boundaries(head).map(end=>head.slice(0,end).trim()).filter(Boolean);
+ // Tail starts at an unknown offset. Discard its first partial unit.
+ const endings=boundaries(tail).map(start=>tail.slice(start).trim()).filter(Boolean);
+ const suffixes=endings.filter(s=>size(s)+2<=budget).sort((a,b)=>size(b)-size(a));
+ const closing=suffixes.find(s=>size(s)<=budget*0.6)??suffixes.at(-1);
+ if(closing) {
+  const opening=openings.filter(s=>size(s)+size(closing)+5<=budget).at(-1);
+  return opening?opening+' […] '+closing:'… '+closing;
+ }
+ const opening=openings.filter(s=>size(s)+2<=budget).at(-1);
+ return opening?opening+' …':null;
 }

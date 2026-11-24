@@ -24,7 +24,7 @@ export async function addVisibleContext({db,principal,runtime,freshness},view) {
     ORDER BY m.message_order DESC LIMIT 1) AS last_user_message_id,
    (SELECT jsonb_agg(msg ORDER BY msg.message_order) FROM (
      SELECT m.message_id,m.message_order,m.role,length(m.text) AS total_characters,
-      left(m.text,$5::int) AS text_head
+      left(m.text,$5::int) AS text_head,CASE WHEN length(m.text)>$5::int THEN right(m.text,$5::int) ELSE '' END AS text_tail
      FROM (VALUES ('user'),('assistant')) r(role) CROSS JOIN LATERAL (
      SELECT message_id,message_order,role,text FROM av_messages m
      WHERE m.owner_id=s.owner_id AND m.device_id=s.device_id AND m.database_epoch=s.database_epoch
@@ -44,6 +44,7 @@ export async function addVisibleContext({db,principal,runtime,freshness},view) {
   const context=supported?byId.get(session.session_id):null;
   session.recent_messages=(context?.recent_messages??[]).map(m=>({message_id:m.message_id,message_order:Number(m.message_order),role:m.role,text:readableExcerpt(m,budget)}));
   session.context_state=!supported?'unsupported_provider':!ids.has(session.id)?'budget_limited':!context?'not_synced_or_hidden':'available';
+  if(session.context_state==='available'&&session.recent_messages.some(m=>m.text===null))session.context_state='excerpt_unavailable';
   session.context_synced_at=context?.synced_at instanceof Date?context.synced_at.toISOString():context?.synced_at??null;
    session.context_fresh=Boolean(context&&view.status_fresh&&view.native_status_fresh&&freshness.history_fresh&&context.last_user_message_id&&native.get(session.session_id)?.last_user_message_id===context.last_user_message_id);
  }

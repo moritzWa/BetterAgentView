@@ -91,7 +91,7 @@ test('overview context has a shared Unicode budget and never leaks a matching ID
  const db={transaction:async fn=>fn({query:async(sql,args)=>({rows:args?args[3].map(session_id=>({session_id,synced_at:new Date(100000),recent_messages:Array.from({length:2},(_,i)=>({message_id:`m${i}`,message_order:i,role:i%2?'assistant':'user',total_characters:10000,text_head:'🧪'.repeat(args[4])}))})):[]})})};
  const result=await addVisibleContext({db,principal:{owner_id:'o',device_id:'d',database_epoch:'e'},runtime,freshness:{}},view);
  const sessions=result.directories.flatMap(d=>[...d.sessions,...d.working]);
- const characters=sessions.flatMap(s=>s.recent_messages).reduce((n,m)=>n+[...m.text].length,0);
+ const characters=sessions.flatMap(s=>s.recent_messages).reduce((n,m)=>n+[...(m.text??'')].length,0);
  assert(characters<=CONTEXT_CHARACTERS);
  assert(result.context_budget.budget_limited_sessions>0);
  assert(sessions.some(s=>s.context_synced_at===new Date(100000).toISOString()));
@@ -123,13 +123,28 @@ test('voice response keeps UI membership and ordering without duplicate IDs, zer
  assert.match(stale.warning,/stale or partial/);
 });
 
-test('readable excerpts stop at sentences or whole words, never splice unrelated fragments',()=>{
+test('long excerpts preserve complete opening and concluding units, never chopped fragments',()=>{
  const text='The shared layout is deployed. Final checks passed for the hero, cards and responsive layout. Additional implementation detail follows.';
  const cut=readableExcerpt({text_head:text.slice(0,100),total_characters:text.length},100);
- assert.equal(cut,'The shared layout is deployed. Final checks passed for the hero, cards and responsive layout.…');
+ assert.equal(cut,'The shared layout is deployed. Final checks passed for the hero, cards and responsive layout. …');
  const word=readableExcerpt({text_head:'Updated the research page without changing',total_characters:200},34);
- assert.equal(word,'Updated the research page without…');
+ assert.equal(word,null);
  assert.equal(readableExcerpt({text_head:'Done 🧪',total_characters:6},600),'Done 🧪');
  const unicode=readableExcerpt({text_head:'🧪'.repeat(100),total_characters:200},40);
- assert.equal([...unicode].length,40);assert(!/[\uD800-\uDBFF]$/.test(unicode));
+ assert.equal(unicode,null);
+ const long='Opening task delivered. '+'More implementation details. '.repeat(30)+'Final checks passed. No work remains.';
+ const balanced=readableExcerpt({text_head:long.slice(0,100),text_tail:long.slice(-100),total_characters:long.length},100);
+ assert(balanced.startsWith('Opening task delivered.'));assert(balanced.endsWith('No work remains.'));assert([...balanced].length<=100);
+ const markdown=readableExcerpt({text_head:'**Scheduled for November 30.** '+'Implementation continues '.repeat(20),text_tail:'some cut fragment\n\n**Final checks passed.** Nothing remains.',total_characters:1000},120);
+ assert(markdown.includes('**Scheduled for November 30.**'));assert(markdown.endsWith('**Final checks passed.** Nothing remains.'));
+});
+
+test('Scheduled and Paused are excluded by default; opt-in still cannot reveal hidden history',()=>{
+ const shelved=[{...dashboard.sessions[0],id:'opencode:host:scheduled',session_id:'scheduled',category:'scheduled'},{...dashboard.sessions[0],id:'opencode:host:paused',session_id:'paused',category:'paused'}];
+ const r={...runtime,dashboard:{...dashboard,sessions:[...dashboard.sessions,...shelved]},statuses:[...runtime.statuses,{session_id:'hidden-history',status:'done'}]};
+ const main=voiceView(visibleView(r,{mac_seen_recently:true},100001));
+ assert.equal(main.counts.total,5);assert(!('scheduled' in main.counts));assert(!('paused' in main.counts));
+ const all=voiceView(visibleView(r,{mac_seen_recently:true},100001,{include_scheduled_and_paused:true}));
+ assert.equal(all.counts.total,7);assert.equal(all.counts.scheduled,1);assert.equal(all.counts.paused,1);
+ assert(!all.directories.flatMap(d=>[...d.sessions,...d.working]).some(s=>s.id.includes('hidden-history')));
 });

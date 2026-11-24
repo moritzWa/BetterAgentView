@@ -74,7 +74,7 @@ export const ArtifactUpload=z.object({artifact_id:z.string().regex(/^[a-f0-9]{32
 // MCP advertises these same schemas and parses them before a typed handler runs.
 // Keep input defaults here, not in a second registration-site schema.
 export const toolInputs={
-  list_visible_sessions:z.object({directory:z.string().min(1).max(4100).optional()}),
+  list_visible_sessions:z.object({directory:z.string().min(1).max(4100).optional(),include_scheduled_and_paused:z.boolean().default(false)}),
   list_artifacts:z.object({session_id:id}),
   preview_artifact:z.object({artifact_id:id}),
   mac_presence:z.object({}),new_since_last_check:z.object({}),
