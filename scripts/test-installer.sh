@@ -108,7 +108,9 @@ output="$({
 [[ "$output" == *"installed BetterAgentView ${version}"* ]] || fail "success output is missing"
 [[ -L "${home}/.local/bin/betteragentview" ]] || fail "betteragentview command was not installed"
 [[ "$(readlink "${home}/.local/bin/betteragentview")" == "agentview" ]] || fail "betteragentview must share the existing binary"
-[[ "$output" == *"installed shorthand: av"* ]] || fail "shorthand output is missing"
+[[ -L "${home}/.local/bin/bav" ]] || fail "bav shorthand was not installed"
+[[ "$(readlink "${home}/.local/bin/bav")" == "agentview" ]] || fail "bav must share the existing binary"
+[[ "$output" == *"installed shorthand: bav"* ]] || fail "shorthand output is missing"
 [[ "$output" == *"add ${home}/.local/bin to PATH"* ]] || fail "PATH guidance is missing"
 
 custom_bin="${temp_root}/custom/bin"
@@ -124,12 +126,15 @@ cat >"${collision_bin}/av" <<'EOF'
 echo unrelated-agentview
 EOF
 chmod 0755 "${collision_bin}/av"
+cp "${collision_bin}/av" "${collision_bin}/bav"
 collision_output="$(AGENTVIEW_VERSION="$version" \
   AGENTVIEW_INSTALL_DIR="$collision_bin" \
   AGENTVIEW_RELEASE_BASE_URL="file://${temp_root}/releases" \
   bash "${repo_dir}/install.sh")"
 [[ "$("${collision_bin}/av")" == "unrelated-agentview" ]] ||
   fail "installer replaced an unrelated av command"
+[[ "$("${collision_bin}/bav")" == "unrelated-agentview" ]] ||
+  fail "installer replaced an unrelated bav command"
 [[ "$collision_output" == *"left unrelated existing command in place"* ]] ||
   fail "shorthand collision was not explained"
 
@@ -219,7 +224,7 @@ PATH="${fake_bin}:/usr/bin:/bin" \
 
 bash "${repo_dir}/install.sh" --help | grep -F "never installs Rust" >/dev/null ||
   fail "installer help does not state the no-Rust behavior"
-bash "${repo_dir}/install.sh" --help | grep -F "av shorthand" >/dev/null ||
-  fail "installer help does not advertise the av shorthand"
+bash "${repo_dir}/install.sh" --help | grep -F "bav shorthand" >/dev/null ||
+  fail "installer help does not advertise the bav shorthand"
 
 printf 'installer tests passed\n'

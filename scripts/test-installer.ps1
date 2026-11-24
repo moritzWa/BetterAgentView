@@ -13,10 +13,13 @@ try {
     & (Join-Path $repo "install.ps1") -Version $version -InstallDir $install -ReleaseBaseUrl (Join-Path $temporary "releases") -SkipPathUpdate
     $canonical = Join-Path $install "agentview.exe"
     $alias = Join-Path $install "av.exe"
+    $bav = Join-Path $install "bav.exe"
+    if (-not (Test-Path -LiteralPath $bav)) { throw "bav shorthand was not installed" }
     if (-not (Test-Path -LiteralPath $canonical)) { throw "canonical executable was not installed" }
     if (-not (Test-Path -LiteralPath $alias)) { throw "av shorthand was not installed" }
     if ((& $canonical --version | Out-String).Trim() -ne "agentview $version") { throw "canonical executable version mismatch" }
     if ((& $alias --version | Out-String).Trim() -ne "betteragentview $version") { throw "av shorthand version mismatch" }
+    if ((& $bav --version | Out-String).Trim() -ne "betteragentview $version") { throw "bav shorthand version mismatch" }
     $publicCommand = Join-Path $install "betteragentview.exe"
     if (-not (Test-Path -LiteralPath $publicCommand)) { throw "betteragentview command was not installed" }
     if ((& $publicCommand --version | Out-String).Trim() -ne "betteragentview $version") { throw "public command version mismatch" }

@@ -29,7 +29,7 @@ function Install-AgentviewAlias([string]$Source, [string]$Destination) {
     if (Test-Path -LiteralPath $Destination) {
         $reported = ""
         try { $reported = (& $Destination --version 2>$null | Out-String).Trim() } catch {}
-        if ($reported -notmatch '^(agentview|betteragentview) [0-9]+\.[0-9]+\.[0-9]+$') {
+        if ($reported -notmatch '^(agentview|betteragentview|bav) [0-9]+\.[0-9]+\.[0-9]+$') {
             Write-AgentviewMessage "left unrelated existing command in place: $Destination"
             return
         }
@@ -110,6 +110,7 @@ try {
     Move-Item -LiteralPath $staged -Destination (Join-Path $InstallDir "agentview.exe") -Force
     $canonical = Join-Path $InstallDir "agentview.exe"
     Install-AgentviewAlias $canonical (Join-Path $InstallDir "betteragentview.exe")
+    Install-AgentviewAlias $canonical (Join-Path $InstallDir "bav.exe")
     Install-AgentviewAlias $canonical (Join-Path $InstallDir "av.exe")
 
     if (-not $SkipPathUpdate) {
@@ -121,8 +122,8 @@ try {
         if (($env:Path -split ';') -notcontains $InstallDir) { $env:Path = "$InstallDir;$env:Path" }
     }
     Write-AgentviewMessage "installed BetterAgentView $resolvedVersion to $InstallDir\betteragentview.exe"
-    Write-AgentviewMessage "installed shorthand: av"
-    Write-AgentviewMessage "open a new terminal, then run: betteragentview (or av)"
+    Write-AgentviewMessage "installed shorthand: bav (av still works)"
+    Write-AgentviewMessage "open a new terminal, then run: bav"
     if ($PreviousVersion) {
         if ($PreviousVersion -eq $resolvedVersion) {
             Write-AgentviewMessage "agentview is already up to date at $resolvedVersion"

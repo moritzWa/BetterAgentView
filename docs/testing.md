@@ -130,8 +130,8 @@ checks; the guide also contains release gates that are not yet complete.
   persistence, and refusal of control characters, oversized values, symlinks,
   wrong owners, and permissive files. The real PTY renames, filters by the new
   name, resets it, and observes the fixture's canonical provider name again.
-- Installer tests execute `betteragentview` and `av`, and prove an unrelated
-  pre-existing `av` is retained.
+- Installer tests execute `betteragentview`, `bav` and `av`, and prove unrelated
+  pre-existing shorthand commands are retained.
 - `cargo build --release --locked`: release-mode compilation against the
   committed lock file and Rust 1.75 minimum-version dependency set.
 - Release validation locally enforces Rust 1.75 rustfmt, warning-free Clippy,

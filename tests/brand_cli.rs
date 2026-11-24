@@ -1,5 +1,29 @@
 use std::process::Command;
 
+#[cfg(unix)]
+#[test]
+fn bav_alias_has_its_own_help_and_version_and_keeps_update_commands() {
+    let home = tempfile::tempdir().unwrap();
+    let alias = home.path().join("bav");
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_agentview"), &alias).unwrap();
+    let version = Command::new(&alias).arg("--version").output().unwrap();
+    assert_eq!(
+        String::from_utf8(version.stdout).unwrap().trim(),
+        format!("bav {}", env!("CARGO_PKG_VERSION"))
+    );
+    let help = Command::new(&alias).arg("--help").output().unwrap();
+    let help = String::from_utf8(help.stdout).unwrap();
+    assert!(help.contains("Usage: bav"));
+    assert!(help.contains("update"));
+    let setup = Command::new(&alias)
+        .args(["setup", "--help"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8(setup.stdout)
+        .unwrap()
+        .contains("[HARNESS]"));
+}
+
 #[test]
 fn onboarding_prints_the_shipped_markdown_without_provider_access() {
     for binary in [

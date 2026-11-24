@@ -21,7 +21,7 @@ per release. Pushing a `vMAJOR.MINOR.PATCH` tag by hand still works. The manual
 procedure below is the fallback when the workflows cannot run.
 
 Release builds set `AGENTVIEW_RELEASE_BUILD`, which turns on the dashboard's
-once-a-day check for a newer release (`· v0.3.4 available, run av update` in the
+once-a-day check for a newer release (`Update v0.3.4 available · run bav update` in the
 header). Local and source builds never check. `AGENTVIEW_NO_UPDATE_CHECK=1`
 turns it off.
 Release archives are built, packaged, and checksum-verified on the exact tagged commit. The adjacent `.sha256` release asset records the
@@ -66,10 +66,10 @@ release root, create and push an annotated version tag, then publish exactly the
 verified archive and checksum with `gh release create`. Never
 upload an untested cross-compiled artifact merely to fill the matrix.
 Unix archives contain the canonical `betteragentview` executable and the
-installer creates a relative `av` shorthand symlink after version
+installer creates relative `bav` and legacy `av` shorthand symlinks after version
 verification. Windows archives contain
 `betteragentview.exe`; the PowerShell installer copies the verified executable
-to `av.exe` because ordinary Windows
+to `bav.exe` and legacy `av.exe` because ordinary Windows
 installations cannot rely on developer-mode symlinks.
 
 ## Publication policy
@@ -191,7 +191,7 @@ then exercise both authenticated and public installation paths as applicable:
 ```console
 AGENTVIEW_VERSION=MAJOR.MINOR.PATCH ./install.sh
 betteragentview --version
-av --version
+bav --version
 betteragentview --json --no-host-providers
 ```
 

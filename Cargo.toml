@@ -2,7 +2,7 @@
 name = "betteragentview"
 version = "0.3.0"
 edition = "2021"
-default-run = "betteragentview"
+default-run = "bav"
 rust-version = "1.75"
 description = "BetterAgentView: one terminal dashboard for all your coding agents"
 license = "MIT"
@@ -22,6 +22,11 @@ path = "src/main.rs"
 [[bin]]
 name = "betteragentview"
 path = "src/bin/betteragentview.rs"
+test = false
+
+[[bin]]
+name = "bav"
+path = "src/bin/bav.rs"
 test = false
 
 [dependencies]

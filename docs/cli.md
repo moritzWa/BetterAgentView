@@ -2,7 +2,7 @@
 
 This reference describes the current checkout. `betteragentview --help` and
 `betteragentview <subcommand> --help` remain authoritative for the installed
-binary. `av` is the installed shorthand. Both commands execute the same canonical
+binary. `bav` is the installed shorthand; `av` remains compatible. These commands execute the same canonical
 binary and report `betteragentview VERSION`.
 
 ## Dashboard and JSON options
@@ -27,8 +27,8 @@ Version and self-update commands:
 
 ```console
 betteragentview --version   # -v and -V are accepted
-av update
-av upgrade                # alias of update
+bav update
+bav upgrade               # alias of update
 ```
 
 `update` downloads the repository's public installer over HTTPS and runs it for
@@ -87,7 +87,7 @@ snapshot rather than hiding healthy sessions from another adapter.
 
 ### Explicit YOLO mode
 
-`av --yolo` is deliberately off by default. While it is active, the dashboard,
+`bav --yolo` is deliberately off by default. While it is active, the dashboard,
 new-task composer, and every native session launched in that mode display a
 persistent warning. Returning to or resuming the native screen does not clear
 the warning. Stop betteragentview and restart without `--yolo` to return new launches to

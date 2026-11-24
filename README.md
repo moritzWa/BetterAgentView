@@ -40,8 +40,10 @@ cargo install --locked --git https://github.com/moritzWa/betteragentview
 
 </details>
 
-Run `betteragentview`, or the shorter `av` command the installer adds. The old
-`agentview` command, configuration paths and environment variables still work.
+Run `bav`, the shorthand for `betteragentview`. The old `av` and `agentview`
+commands, configuration paths and environment variables still work.
+First launch guides you through choosing a harness and signing in, with OpenCode
+recommended and your existing installations detected. Run `bav setup` to reopen it.
 Type a task,
 press `Tab` to pick a harness and `Shift+Tab` to pick a model. `Shift+Tab` also
 works from the session list before you type.
@@ -52,7 +54,10 @@ remembered across restarts.
 **First time?** [Getting started](docs/onboarding.md) covers harness login,
 optional voice keys, shortcuts, and self-hosted MCP sync. Paste the
 [setup prompt](docs/SETUP-PROMPT.md) into your coding agent, or copy it with
-`av onboarding --copy` (`/onboarding` in the dashboard).
+`bav onboarding --copy` (`/onboarding` in the dashboard).
+
+Published builds show a highlighted update prompt when a newer release is out.
+Run `bav update`, then restart `bav` to load it. Your saved setup stays in place.
 
 ## Why
 

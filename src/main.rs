@@ -120,10 +120,10 @@ enum Commands {
         #[command(subcommand)]
         command: OpenCodeCommand,
     },
-    /// Check, install, and sign in to one harness (Terminal is built in).
+    /// Guided getting started, or install/sign in to a named harness.
     Setup {
         #[arg(value_name = "HARNESS", value_enum)]
-        harness: LaunchProvider,
+        harness: Option<LaunchProvider>,
         /// Skip the explicit installer confirmation prompt.
         #[arg(long)]
         yes: bool,
@@ -584,6 +584,12 @@ fn command_name() -> &'static str {
     let executable = std::env::args_os().next().unwrap_or_default();
     if std::path::Path::new(&executable)
         .file_stem()
+        .is_some_and(|name| name == "bav")
+    {
+        return "bav";
+    }
+    if std::path::Path::new(&executable)
+        .file_stem()
         .is_some_and(|name| name == "agentview")
     {
         "agentview"
@@ -765,12 +771,29 @@ fn main() -> Result<()> {
             )?,
             Commands::Sessions { command } => run_session_command(command, &cli)?,
             Commands::OpenCode { command } => run_opencode_command(command, &cli)?,
-            Commands::Setup { harness, yes } => run_harness_setup(*harness, *yes, &cli)?,
+            Commands::Setup {
+                harness: Some(harness),
+                yes,
+            } => run_harness_setup(*harness, *yes, &cli)?,
+            Commands::Setup { harness: None, .. } => {
+                run_getting_started(&mut cli)?;
+            }
             Commands::PiSupervisor { state_dir, socket } => {
                 run_pi_supervisor_daemon(state_dir.clone(), socket.clone(), cli.pi_bin.clone())?
             }
         }
         return Ok(());
+    }
+    if !cli.json
+        && cli.fixture.is_none()
+        && !cli.no_host_providers
+        && cli.launch_provider.is_none()
+        && io::stdin().is_terminal()
+        && io::stdout().is_terminal()
+        && agentview::onboarding::first_launch()?
+    {
+        run_getting_started(&mut cli)?;
+        resolve_default_provider_bins(&mut cli);
     }
     let request = discovery_request(&cli);
     // Secure the shared state root before any provider supervisor creates a
@@ -838,13 +861,18 @@ fn main() -> Result<()> {
         && executable_available(&cli.mastracode_bin);
     let devin_enabled =
         host_providers_enabled && !cli.no_host_devin && executable_available(&cli.devin_bin);
+    let recommended = if cli.fixture.is_some() {
+        Provider::Claude
+    } else {
+        recommended_harness(&cli)
+    };
     let launch_cwd = match cli.launch_cwd {
         Some(path) => path,
         None => std::env::current_dir()?,
     };
     let last_harness = LastHarness::load_default()?;
     let launch_provider = match cli.launch_provider {
-        None => last_harness.provider().unwrap_or(Provider::Claude),
+        None => last_harness.provider().unwrap_or(recommended),
         Some(provider) => launch_provider_domain(provider),
     };
     let pi_session_dir = if !pi_enabled {
@@ -938,7 +966,10 @@ fn main() -> Result<()> {
         .transpose()?;
     let terminal_harness = provider_io_enabled.then(|| Arc::new(TerminalHarness::new()));
     if provider_io_enabled {
-        if let Some(session_dir) = &pi_session_dir {
+        if let Some(session_dir) = pi_session_dir
+            .as_ref()
+            .filter(|_| executable_available(&cli.pi_bin))
+        {
             #[cfg(target_os = "linux")]
             let controller = PiController::managed(
                 cli.pi_bin.clone(),
@@ -1854,6 +1885,151 @@ enum HarnessInstaller {
     Npm { package: &'static str },
 }
 
+fn onboarding_harnesses(cli: &Cli) -> Vec<(LaunchProvider, &str)> {
+    vec![
+        (LaunchProvider::OpenCode, cli.opencode_bin.as_str()),
+        (LaunchProvider::Claude, cli.claude_bin.as_str()),
+        (LaunchProvider::Codex, cli.codex_bin.as_str()),
+        (LaunchProvider::Cursor, cli.cursor_bin.as_str()),
+        (LaunchProvider::Copilot, cli.copilot_bin.as_str()),
+        (LaunchProvider::Pi, cli.pi_bin.as_str()),
+        (LaunchProvider::Antigravity, cli.antigravity_bin.as_str()),
+        (LaunchProvider::MistralVibe, cli.mistral_vibe_bin.as_str()),
+        (LaunchProvider::Muse, cli.muse_bin.as_str()),
+        (LaunchProvider::Qwen, cli.qwen_bin.as_str()),
+        (LaunchProvider::Kimi, cli.kimi_bin.as_str()),
+        (LaunchProvider::Omp, cli.omp_bin.as_str()),
+        (LaunchProvider::Grok, cli.grok_bin.as_str()),
+        (LaunchProvider::Kilo, cli.kilo_bin.as_str()),
+        (LaunchProvider::OpenHands, cli.openhands_bin.as_str()),
+        (LaunchProvider::Hermes, cli.hermes_bin.as_str()),
+        (LaunchProvider::MastraCode, cli.mastracode_bin.as_str()),
+        (LaunchProvider::Devin, cli.devin_bin.as_str()),
+    ]
+}
+
+fn recommended_harness(cli: &Cli) -> Provider {
+    onboarding_harnesses(cli)
+        .into_iter()
+        .find(|(_, bin)| executable_available(bin))
+        .map(|(provider, _)| launch_provider_domain(provider))
+        .unwrap_or(Provider::Terminal)
+}
+
+fn setup_answer(prompt: &str) -> Result<String> {
+    print!("{prompt}");
+    io::stdout().flush()?;
+    let mut answer = String::new();
+    if io::stdin().read_line(&mut answer)? == 0 {
+        anyhow::bail!("setup input closed; run `bav setup` to resume");
+    }
+    Ok(answer.trim().to_ascii_lowercase())
+}
+
+fn run_getting_started(cli: &mut Cli) -> Result<()> {
+    anyhow::ensure!(io::stdin().is_terminal() && io::stdout().is_terminal(),
+        "guided setup needs an interactive terminal; run `bav setup` or `bav onboarding` for the setup prompt");
+    agentview::onboarding::begin()?;
+    println!("\nWelcome to BetterAgentView\n");
+    println!("1. Connect a coding harness\n   A harness runs your tasks; model accounts connect inside it.");
+    let mut choices = vec![LaunchProvider::OpenCode];
+    println!(
+        "   1  OpenCode (recommended){}",
+        if executable_available(&cli.opencode_bin) {
+            " · installed"
+        } else {
+            " · install and sign in"
+        }
+    );
+    for (provider, bin) in onboarding_harnesses(cli) {
+        if provider != LaunchProvider::OpenCode && executable_available(bin) {
+            choices.push(provider);
+            println!(
+                "   {}  {} · installed",
+                choices.len(),
+                launch_provider_domain(provider).label()
+            );
+        }
+    }
+    println!("   s  Skip for now (reopen with bav setup)");
+    println!("   Other harnesses: bav setup claude, bav setup codex, bav setup cursor, ...");
+    let selected = loop {
+        let answer = setup_answer("Choose a harness [1]: ")?;
+        if answer == "s" || answer == "skip" {
+            agentview::onboarding::finish(false)?;
+            println!("Setup skipped. Run bav setup when ready.\n");
+            return Ok(());
+        }
+        let index = if answer.is_empty() {
+            Some(0)
+        } else {
+            answer.parse::<usize>().ok().and_then(|n| n.checked_sub(1))
+        };
+        if let Some(provider) = index.and_then(|n| choices.get(n)).copied() {
+            break provider;
+        }
+        println!("Enter a listed number, or s to skip.");
+    };
+    if selected == LaunchProvider::OpenCode {
+        println!("\nStock OpenCode is the simplest starting point.");
+        println!("Optional: Moritz's V2 fork adds faster warm session switching.");
+        println!("{}", agentview::onboarding::FORK_URL);
+        println!("The guide also covers his optional Cursor provider. No fork is required.");
+        println!("{}\n", agentview::onboarding::GUIDE_URL);
+    }
+    run_harness_setup(selected, false, cli)
+        .context("Setup did not finish. Run bav setup to retry")?;
+    resolve_default_provider_bins(cli);
+    let selected_bin_exists = onboarding_harnesses(cli)
+        .into_iter()
+        .any(|(provider, bin)| provider == selected && executable_available(bin));
+    if !selected_bin_exists {
+        println!("Harness installation was skipped. Run bav setup when ready.\n");
+        agentview::onboarding::finish(false)?;
+        return Ok(());
+    }
+    LastHarness::load_default()?.save(&launch_provider_domain(selected))?;
+    cli.launch_provider = Some(selected);
+    println!("\n2. Optional desktop voice");
+    println!("Voice reads and controls OpenCode sessions. Skip it for other harnesses.");
+    println!("OpenAI and xAI Grok need separate API keys and have separate API billing.");
+    println!("Coding subscriptions do not include voice API access. Groq is not supported.");
+    if selected == LaunchProvider::OpenCode {
+        loop {
+            let answer = setup_answer("Voice provider: openai, grok, or skip [skip]: ")?;
+            if answer.is_empty() || answer == "skip" {
+                break;
+            }
+            let Some(provider) = agentview::voice::config::Provider::parse(&answer) else {
+                println!("Choose openai, grok, or skip.");
+                continue;
+            };
+            agentview::voice::config::save_setting("provider", serde_json::json!(provider.id()))?;
+            println!(
+                "Get a key at {}",
+                if provider == agentview::voice::config::Provider::OpenAi {
+                    "https://platform.openai.com/api-keys"
+                } else {
+                    "https://console.x.ai/"
+                }
+            );
+            println!("Press Ctrl+K in the dashboard to enter it in the masked key prompt.");
+            println!("No microphone or paid voice call starts during setup.");
+            break;
+        }
+    }
+    println!("\n3. Try your first task");
+    println!("Type: Describe this folder without changing any files");
+    println!("A successful login is not a verified model call; check the first reply.");
+    println!("Arrows select · Enter opens · F7 returns · ? shows shortcuts");
+    println!("Optional mobile/MCP sync needs your own backend and uploads conversation text.");
+    println!("Set it up later: {}", agentview::onboarding::GUIDE_URL);
+    println!("Your first task will be prepared as a draft. Review it and press Enter to send.");
+    setup_answer("Press Enter to finish setup: ")?;
+    agentview::onboarding::finish(true)?;
+    Ok(())
+}
+
 fn run_harness_setup(provider: LaunchProvider, confirmed: bool, cli: &Cli) -> Result<()> {
     if provider == LaunchProvider::Terminal {
         println!(
@@ -2222,6 +2398,12 @@ fn run_self_update() -> Result<()> {
     {
         bail!("AGENTVIEW_REPO must have the form OWNER/REPO");
     }
+    if std::env::var_os("AGENTVIEW_VERSION").is_none()
+        && agentview::update_check::latest_release(&repository).as_deref() == Some(previous_version)
+    {
+        println!("BetterAgentView is already up to date at {previous_version}.");
+        return Ok(());
+    }
     let directory = std::env::temp_dir().join(format!(
         "agentview-update-{}-{}",
         std::process::id(),
@@ -2399,6 +2581,7 @@ fn installed_agentview_version(install_dir: &std::path::Path) -> Result<String> 
         .trim();
     let version = reported
         .strip_prefix("agentview ")
+        .or_else(|| reported.strip_prefix("bav "))
         .or_else(|| reported.trim().strip_prefix("betteragentview "))
         .filter(|version| {
             !version.is_empty()
@@ -3160,7 +3343,7 @@ mod tests {
         assert_eq!(
             cli.command,
             Some(Commands::Setup {
-                harness: LaunchProvider::Antigravity,
+                harness: Some(LaunchProvider::Antigravity),
                 yes: true,
             })
         );

@@ -30,6 +30,7 @@ try {
     Copy-Item -LiteralPath $Binary -Destination (Join-Path $stage "agentview.exe")
     Copy-Item -LiteralPath $Binary -Destination (Join-Path $stage "betteragentview.exe")
     Copy-Item -LiteralPath $Binary -Destination (Join-Path $stage "av.exe")
+    Copy-Item -LiteralPath $Binary -Destination (Join-Path $stage "bav.exe")
     Copy-Item -LiteralPath (Join-Path $repo "LICENSE") -Destination $stage
     Copy-Item -LiteralPath (Join-Path $repo "README.md") -Destination $stage
     Compress-Archive -Path $stage -DestinationPath $archive -Force

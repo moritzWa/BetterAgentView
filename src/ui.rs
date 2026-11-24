@@ -56,7 +56,8 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
             .min(area.height.saturating_sub(5)),
         _ => 3,
     };
-    let header_height = header_height(area.height, app.usage.len());
+    let header_height =
+        header_height(area.height, app.usage.len()) + u16::from(app.update_available.is_some());
     let queue_height = if app.overlay == Overlay::None {
         let spare = area
             .height
@@ -162,14 +163,30 @@ pub fn terminal_title(app: &App) -> String {
 }
 
 fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    let full_area = area;
+    let area = Rect {
+        height: area
+            .height
+            .saturating_sub(u16::from(app.update_available.is_some())),
+        ..area
+    };
     let title = format!(
-        "BetterAgentView v{}{}{}",
+        "BetterAgentView v{}{}",
         env!("CARGO_PKG_VERSION"),
         if app.work_only { " · Work only" } else { "" },
-        crate::update_check::newer_version()
-            .map(|version| format!(" · v{version} available, run av update"))
-            .unwrap_or_default()
     );
+    let update = app.update_available.as_ref().map(|version| {
+        Span::styled(
+            if full_area.width < 70 {
+                format!("v{version} available · bav update")
+            } else {
+                format!("Update v{version} available · run bav update, then restart bav")
+            },
+            Style::default()
+                .fg(palette().attention)
+                .add_modifier(Modifier::BOLD),
+        )
+    });
 
     let lines = if area.height <= 2 {
         vec![
@@ -218,7 +235,7 @@ fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
                 title,
                 Style::default().add_modifier(Modifier::BOLD),
             )),
-            Line::from(""),
+            Line::default(),
             Line::default(),
             Line::from(Span::styled(
                 if app.yolo {
@@ -237,6 +254,16 @@ fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
         area,
     );
     render_usage(frame, app, area);
+    if let Some(update) = update {
+        frame.render_widget(
+            Paragraph::new(Line::from(update)),
+            Rect {
+                y: full_area.bottom().saturating_sub(1),
+                height: 1,
+                ..full_area
+            },
+        );
+    }
 }
 
 /// Session rows the list always keeps, so the job panel never squeezes it out.
@@ -4143,6 +4170,42 @@ mod tests {
                 display_width(&text(&focused)),
                 display_width(&text(&normal))
             );
+        }
+    }
+
+    #[test]
+    fn updates_are_highlighted_without_hiding_usage_or_stealing_the_draft() {
+        let mut app = App::new(SessionSnapshot::default());
+        app.usage = vec![crate::usage::Usage {
+            provider: "claude",
+            login_command: None,
+            windows: vec![crate::usage::Window {
+                label: "5h",
+                percent: 12.0,
+                resets_at: None,
+            }],
+        }];
+        app.update_available = Some("9.8.7".into());
+        app.start_new_session(None);
+        app.paste_input("my unsent task");
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let text = buffer_text(buffer);
+        assert!(text.contains("Update v9.8.7 available"));
+        assert!(text.contains("bav update"));
+        assert!(text.contains("my unsent task"));
+        assert!(text.contains("claude"));
+        let cell = buffer
+            .content
+            .iter()
+            .find(|cell| cell.symbol() == "U" && cell.fg == palette().attention)
+            .unwrap();
+        assert!(cell.modifier.contains(Modifier::BOLD));
+        for width in [32, 50, 69] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            terminal.draw(|frame| render(frame, &app)).unwrap();
+            assert!(buffer_text(terminal.backend().buffer()).contains("bav update"));
         }
     }
 

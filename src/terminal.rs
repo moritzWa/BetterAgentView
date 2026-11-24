@@ -387,6 +387,10 @@ pub fn run_dashboard(
         control.launch_targets(),
     );
     app.start_loading();
+    if control.provider_io_enabled() && crate::onboarding::take_first_task().unwrap_or(false) {
+        app.start_new_session(None);
+        app.paste_input("Describe this folder without changing any files");
+    }
     app.set_yolo(control.yolo_enabled(), control.yolo_supported_providers());
     app.set_paused(paused_sessions.paused());
     app.set_sort_keys(session_order.sort_keys());
@@ -514,6 +518,18 @@ pub fn run_dashboard(
     let mut dashboard_publisher = crate::dashboard_snapshot::Publisher::new();
     let result = 'dashboard: loop {
         watchdog::set_phase(watchdog::Phase::Updates);
+        let update = crate::update_check::newer_version();
+        if update != app.update_available {
+            app.update_available = update;
+            if let Ok(size) = terminal.terminal.size() {
+                app.set_session_page_size(
+                    session_page_size_for_terminal(size.height, app.usage.len())
+                        .saturating_sub(usize::from(app.update_available.is_some()))
+                        .max(1),
+                );
+            }
+            needs_draw = true;
+        }
         if let Ok(enabled) = work_store.read() {
             if enabled != app.work_only {
                 pending_open = None;

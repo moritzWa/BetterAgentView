@@ -5,15 +5,17 @@
 //! day, from a background thread, and never blocks drawing.
 
 use std::path::PathBuf;
-use std::sync::{Mutex, Once};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex, Once,
+};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
-const LATEST_RELEASE: &str =
-    "https://api.github.com/repos/moritzWa/betteragentview/releases/latest";
 
 static LATEST: Mutex<Option<String>> = Mutex::new(None);
 static START: Once = Once::new();
+static CHECKED: AtomicU64 = AtomicU64::new(0);
 
 /// The newer version to offer, such as `0.3.4`, or `None` when up to date.
 pub fn newer_version() -> Option<String> {
@@ -22,12 +24,13 @@ pub fn newer_version() -> Option<String> {
     {
         return None;
     }
-    START.call_once(start);
+    START.call_once(load_cache);
+    refresh_if_due();
     let latest = LATEST.lock().ok()?.clone()?;
     is_newer(&latest, env!("CARGO_PKG_VERSION")).then_some(latest)
 }
 
-fn start() {
+fn load_cache() {
     let cached = cache_path().and_then(|path| std::fs::read_to_string(path).ok());
     let (checked, tag) = cached
         .as_deref()
@@ -38,12 +41,27 @@ fn start() {
             *latest = Some(tag);
         }
     }
+    CHECKED.store(checked, Ordering::Relaxed);
+}
+
+fn check_due(checked: u64, now: u64) -> bool {
+    now.saturating_sub(checked) >= CHECK_EVERY.as_secs()
+}
+
+fn refresh_if_due() {
+    let checked = CHECKED.load(Ordering::Relaxed);
     let now = now_secs();
-    if now.saturating_sub(checked) < CHECK_EVERY.as_secs() {
+    if !check_due(checked, now)
+        || CHECKED
+            .compare_exchange(checked, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+    {
         return;
     }
     std::thread::spawn(move || {
-        let Some(tag) = fetch_latest() else { return };
+        let Some(tag) = latest_release("moritzWa/betteragentview") else {
+            return;
+        };
         if let Some(path) = cache_path() {
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -56,9 +74,10 @@ fn start() {
     });
 }
 
-fn fetch_latest() -> Option<String> {
+pub fn latest_release(repository: &str) -> Option<String> {
+    let url = format!("https://api.github.com/repos/{repository}/releases/latest");
     let output = std::process::Command::new("curl")
-        .args(["-fsSL", "--max-time", "8", LATEST_RELEASE])
+        .args(["-fsSL", "--max-time", "8", &url])
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output()
@@ -131,5 +150,12 @@ mod tests {
             Some((1_700_000_000, "0.3.4".into()))
         );
         assert_eq!(parse_cache(""), None);
+    }
+
+    #[test]
+    fn long_running_dashboards_recheck_after_the_cache_expires() {
+        assert!(!check_due(1_000, 1_001));
+        assert!(check_due(1_000, 1_000 + CHECK_EVERY.as_secs()));
+        assert!(!check_due(2_000, 1_000));
     }
 }

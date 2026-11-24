@@ -114,7 +114,7 @@ fn readme_collapses_the_windows_install_command() {
 #[test]
 fn readme_advertises_only_the_current_short_command() {
     let readme = read_readme();
-    assert!(readme.contains("shorter `av` command"));
+    assert!(readme.contains("Run `bav`"));
 }
 
 #[test]

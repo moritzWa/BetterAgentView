@@ -6,14 +6,14 @@ The old GitHub repository redirects to the renamed repository.
 
 ## Existing installations
 
-- `betteragentview` is the new command. `av` and `agentview` still work.
+- `bav` is the primary shorthand for `betteragentview`. `av` and `agentview` still work.
 - Configuration, state directories, sockets, daemon labels, `AGENTVIEW_*`
   variables and the Rust library name `agentview` stay unchanged. Renaming
   these would break installed integrations or split existing session state.
 - The legacy `agentview --version` response stays machine-compatible.
   `betteragentview --version` reports the new command name.
 - Release archive names retain their `agentview-` prefix so older installers
-  can update. Archives include both commands and `av`.
+  can update. Archives include both commands, `bav`, and legacy `av`.
 - Local checkouts need not move. Git remotes can point to
   `https://github.com/moritzWa/betteragentview.git`.
 

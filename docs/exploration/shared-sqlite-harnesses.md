@@ -7,9 +7,9 @@ database. agentview does not modify provider history or copy credentials.
 ## Setup and use
 
 ```sh
-av setup hermes
-av setup mastracode
-av setup devin
+bav setup hermes
+bav setup mastracode
+bav setup devin
 ```
 
 Choose `/harness`, configure `/setup`, and type a task. Enter opens a session;

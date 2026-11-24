@@ -36,7 +36,7 @@ Environment variables:
   GH_TOKEN               Optional token for API rate limits or a private fork
 
 The installer downloads a prebuilt archive and verifies its SHA-256 checksum.
-It installs betteragentview, the av shorthand, and the legacy agentview command.
+It installs betteragentview, the bav shorthand, and the legacy av and agentview commands.
 It never installs Rust, invokes Cargo, or edits shell configuration files.
 EOF
 }
@@ -191,11 +191,13 @@ install_alias() {
 }
 
 install_alias betteragentview
+install_alias bav
 install_alias av
 
 say "installed BetterAgentView ${version} to ${install_dir}/betteragentview"
-say "installed shorthand: av"
+say "installed shorthand: bav (av still works)"
+say "run bav to choose a coding harness and connect your account"
 case ":${PATH}:" in
   *":${install_dir}:"*) ;;
-  *) say "add ${install_dir} to PATH, then run: betteragentview (or av)" ;;
+  *) say "add ${install_dir} to PATH, then run: bav" ;;
 esac
