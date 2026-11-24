@@ -2861,7 +2861,7 @@ fn wide_real_tty_exercises_primary_interactions_and_restores_terminal() {
     assert_eq!(
         startup
             .lines()
-            .filter(|line| line.trim_start_matches([' ', '❯']).starts_with('✱'))
+            .filter(|line| line.trim_start_matches([' ', '❯']).starts_with('✻'))
             .count(),
         3
     );

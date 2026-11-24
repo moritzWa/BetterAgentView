@@ -999,7 +999,7 @@ fn render_tree_session_row(
     };
     let name_gap = if width >= 70 { "   " } else { " " };
     let fixed = indent
-        + 3
+        + 4
         + name_gap.len()
         + name_width
         + display_width(&provider_column)
@@ -1009,7 +1009,7 @@ fn render_tree_session_row(
     let name = pad_to_width(truncate(&session.name, name_width), name_width);
     let mut spans = vec![
         Span::styled(
-            if selected { "❯" } else { " " },
+            if selected { "❯ " } else { "  " },
             Style::default().fg(palette().focus),
         ),
         Span::styled(format!("{}{symbol} ", " ".repeat(indent)), symbol_style),
@@ -3065,8 +3065,8 @@ fn styled_line(spans: Vec<Span<'static>>, selected: bool) -> Line<'static> {
 
 fn state_symbol(state: SessionState, live_animation_visible: bool) -> &'static str {
     match state {
-        SessionState::ReadyForReview => "✱",
-        SessionState::NeedsInput => "✱",
+        SessionState::ReadyForReview => "✻",
+        SessionState::NeedsInput => "✻",
         SessionState::Working if live_animation_visible => "✳",
         SessionState::Working => "·",
         SessionState::Completed => "•",
@@ -3975,10 +3975,10 @@ mod tests {
                 let lines = rendered.lines().collect::<Vec<_>>();
                 assert!(lines[0].starts_with("  Scheduled"), "{rendered}");
                 assert!(lines[1].starts_with("  /work/alpha"), "{rendered}");
-                assert!(lines[2].starts_with("   • first reminder"), "{rendered}");
+                assert!(lines[2].starts_with("    • first reminder"), "{rendered}");
                 assert!(lines[3].trim().is_empty(), "{rendered}");
                 assert!(lines[4].starts_with("  /work/beta"), "{rendered}");
-                assert!(lines[5].starts_with("❯  • second reminder"), "{rendered}");
+                assert!(lines[5].starts_with("❯   • second reminder"), "{rendered}");
                 assert!(lines[2].contains("Mon 09:00:"), "{rendered}");
                 assert!(lines[5].contains("Tue 10:00:"), "{rendered}");
                 assert!(!rendered.contains("wake-later"), "{rendered}");
@@ -4121,7 +4121,7 @@ mod tests {
             let item = session("worker", SessionState::NeedsInput);
             let focused =
                 render_session_row(&item, ViewMode::Directory, 120, false, true, true, None, 0);
-            assert_eq!(focused.spans[0].content, "❯");
+            assert_eq!(focused.spans[0].content, "❯ ");
             assert_eq!(focused.spans[0].style.fg, Some(palette().focus));
             assert_eq!(focused.spans[2].style.fg, Some(palette().focus));
             assert_eq!(
@@ -4131,7 +4131,7 @@ mod tests {
             assert_eq!(focused.style.bg, Some(palette().selected_bg));
             let normal =
                 render_session_row(&item, ViewMode::Directory, 120, false, false, true, None, 0);
-            assert_eq!(normal.spans[0].content, " ");
+            assert_eq!(normal.spans[0].content, "  ");
             assert_eq!(normal.spans[2].style.fg, Some(palette().fg));
             let text = |line: &Line<'_>| {
                 line.spans
@@ -4144,6 +4144,37 @@ mod tests {
                 display_width(&text(&normal))
             );
         }
+    }
+
+    #[test]
+    fn session_bullets_align_with_directory_names_and_leave_a_caret_gap() {
+        let mut app = App::new(SessionSnapshot {
+            sessions: vec![session("worker", SessionState::NeedsInput)],
+            warnings: vec![],
+        });
+        app.view_mode = ViewMode::Directory;
+        app.selection = Some(SelectionKey::Session("worker".into()));
+        let group_label = app.groups()[0].label.clone();
+        let mut terminal = Terminal::new(TestBackend::new(120, 15)).unwrap();
+        terminal
+            .draw(|frame| render_session_list(frame, &app, frame.size()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let rendered = buffer_text(buffer);
+        let lines: Vec<_> = rendered.lines().collect();
+        let heading = lines
+            .iter()
+            .position(|line| line.contains(&group_label))
+            .unwrap();
+        assert!(
+            lines[heading].starts_with(&format!("  {group_label}")),
+            "{rendered}"
+        );
+        assert!(lines[heading + 1].starts_with("❯ ✻ worker"), "{rendered}");
+        assert_eq!(buffer.get(1, (heading + 1) as u16).symbol(), " ");
+        assert_eq!(buffer.get(2, (heading + 1) as u16).symbol(), "✻");
+        assert_eq!(state_symbol(SessionState::NeedsInput, true), "✻");
+        assert_eq!(state_symbol(SessionState::ReadyForReview, true), "✻");
     }
 
     #[test]
