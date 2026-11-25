@@ -94,6 +94,38 @@ pub fn sessions(db: &Connection) -> Result<Vec<String>> {
     Ok(ids)
 }
 
+/// Native sessions whose event watermark equals the one already synced. One
+/// bulk read replaces four lookups per session, which dominated a cold pass over
+/// thousands of sessions. A session missing from the answer simply takes the
+/// per-session path, so this can only skip work, never a change.
+pub fn unchanged_native(
+    db: &Connection,
+    marks: &[(String, i64, bool)],
+    held: &BTreeSet<String>,
+) -> Result<BTreeSet<String>> {
+    let mut native_ids = BTreeSet::new();
+    let mut statement = db.prepare("SELECT id FROM session_v2")?;
+    for id in statement.query_map([], |r| r.get::<_, String>(0))? {
+        native_ids.insert(id?);
+    }
+    let mut seqs = BTreeMap::new();
+    let mut statement = db.prepare("SELECT aggregate_id, seq FROM event_sequence")?;
+    for row in statement.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))? {
+        let (id, seq) = row?;
+        seqs.insert(id, seq);
+    }
+    Ok(marks
+        .iter()
+        .filter(|(id, observed, native)| {
+            *native
+                && !held.contains(id)
+                && native_ids.contains(id)
+                && seqs.get(id).copied().unwrap_or(0) == *observed
+        })
+        .map(|(id, _, _)| id.clone())
+        .collect())
+}
+
 pub fn native(db: &Connection, id: &str) -> Result<bool> {
     Ok(db.query_row(
         "SELECT EXISTS(SELECT 1 FROM session_v2 WHERE id=?1)",

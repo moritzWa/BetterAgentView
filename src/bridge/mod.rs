@@ -461,6 +461,14 @@ fn sync_pass(dir: &Path, reconcile: bool) -> Result<usize> {
         }
     }
     let scan_span = crate::perf_log::span("bridge-sync-scan");
+    // Any failure here only means every session takes the per-session path.
+    let unchanged = journal
+        .observed_marks()
+        .and_then(|marks| {
+            let held = journal.held_sessions()?.into_iter().collect();
+            source::unchanged_native(&db, &marks, &held)
+        })
+        .unwrap_or_default();
     let mut server_errors = 0;
     for id in &ids {
         if failing.iter().any(|f| &f.session_id == id) {
@@ -472,6 +480,9 @@ fn sync_pass(dir: &Path, reconcile: bool) -> Result<usize> {
                 failing.push(f.clone());
                 continue;
             }
+        }
+        if unchanged.contains(id) {
+            continue;
         }
         match sync_session(
             &mut db,
@@ -651,6 +662,7 @@ fn publish_runtime(dir: &Path, config: &Config, credential: &str) -> Result<()> 
         }
     }
     crate::fs_util::write_private_json(&stamp, &json!({"checked":true}))?;
+    log_recovered("runtime");
     if started.elapsed() > Duration::from_secs(3) {
         eprintln!(
             "bridge runtime slow ms={} time={}",

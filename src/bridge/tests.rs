@@ -1118,3 +1118,31 @@ fn profile_real_runtime_snapshot() {
         );
     }
 }
+
+#[test]
+fn bulk_scan_skips_only_native_sessions_whose_watermark_is_unchanged() {
+    let dir = tempdir().unwrap();
+    let db = Connection::open(dir.path().join("source.sqlite")).unwrap();
+    db.execute_batch(
+        "CREATE TABLE session_v2(id TEXT);
+         CREATE TABLE event_sequence(aggregate_id TEXT, seq INTEGER);
+         INSERT INTO session_v2 VALUES('same'),('moved'),('held'),('no_events'),('was_v1');
+         INSERT INTO event_sequence VALUES('same',7),('moved',9),('held',3),('was_v1',2);",
+    )
+    .unwrap();
+    let marks = vec![
+        ("same".to_string(), 7, true),
+        ("moved".to_string(), 8, true),
+        ("held".to_string(), 3, true),
+        ("no_events".to_string(), 0, true),
+        ("was_v1".to_string(), 2, false),
+        ("deleted_from_source".to_string(), 4, true),
+    ];
+    let held = BTreeSet::from(["held".to_string()]);
+    let unchanged = source::unchanged_native(&db, &marks, &held).unwrap();
+    // A session with no events yet has watermark 0, as `watermark` reports it.
+    assert_eq!(
+        unchanged.into_iter().collect::<Vec<_>>(),
+        vec!["no_events".to_string(), "same".to_string()]
+    );
+}
