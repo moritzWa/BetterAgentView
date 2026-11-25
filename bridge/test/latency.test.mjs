@@ -187,6 +187,17 @@ test('session_brief uses the probed status instead of waiting for a whole snapsh
  assert.equal(thrown.session.status,'done');
 });
 
+test('a snapshot under 20 seconds old is used as before, without asking the Mac',async()=>{
+ await seed('probe-skip',[{id:'u1',role:'user',order:1,created_at:10,updated_at:10,text:'Hello.'},{id:'a1',role:'assistant',order:2,created_at:11,updated_at:11,text:'Done.'}]);
+ const kinds=[];let asked=0;
+ const g={...gate,activity:async(source,wait,kind)=>{kinds.push(kind);return {source_checked_at:Date.now(),mac_seen_recently:true,history_fresh:true};},
+  runtime:async()=>({available:true,partial:false,checked_at:Date.now()-5_000,statuses:[{session_id:'probe-skip',status:'done',completion:'unconfirmed',reason:null,updated_at:1,can_message:true,last_user_message_id:'u1',last_user_ms:1,top_level:true,attention_assessed:true,directory:'/work/x',health:'idle'}]}),
+  probe:async()=>{asked++;return {answered:false};}};
+ const r=await (await privateMcp(new Request('https://test.invalid/mcp',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'session_brief',arguments:{session_id:'probe-skip'}}})}),{db,store,principal:reader,outbox,gate:g})).json();
+ assert(!r.result.isError);const brief=JSON.parse(r.result.content[0].text);
+ assert.equal(asked,0);assert.deepEqual(kinds,['both']);assert.equal(brief.timing_ms.probed,false);assert.equal(brief.data_age.status_fresh,true);
+});
+
 test('the call log is bucketed by hour, keeps no text, and drops hours past retention',async()=>{
  const {gate:g}=wakeGate(),now=Date.now(),old=now-15*86400_000;
  await g.logCall({t:old,ms:5,method:'tools/call',tool:'search_history',status:200,result_chars:1,error:null,phases:{db:1}});

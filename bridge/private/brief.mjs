@@ -34,14 +34,19 @@ export async function sessionBrief({db,gate,principal},input) {
   const started=Date.now();
   let freshness,runtime,probed=null;
   if(session_id&&typeof gate.probe==='function') {
-    // Ask the Mac about this one session while history catches up, instead of
-    // waiting for it to publish its whole inventory.
-    const asked=gate.probe(source,session_id,{max_wait:2500}).catch(()=>null);
-    freshness=await gate.activity(source,true,'history',{history_ms:60_000,max_wait:5000});
-    const answer=await asked;
-    if(answer?.answered&&answer.status&&answer.status.session_id===session_id)probed={status:answer.status,at:Number(answer.observed_at)||Date.now(),waited_ms:answer.waited_ms??null};
+    // A snapshot under 20 s old is as fresh as this tool has always accepted, so
+    // only a stale one is worth asking the Mac about. The probe reads this one
+    // session's status while history catches up, instead of waiting for the Mac
+    // to publish its whole inventory.
     runtime=await gate.runtime(source);
-    if(probed)runtime={...runtime,available:true,checked_at:probed.at,statuses:[...runtime.statuses.filter(x=>x.session_id!==session_id),probed.status]};
+    if(!(runtime.available&&runtime.checked_at>Date.now()-20_000)) {
+      const asked=gate.probe(source,session_id,{max_wait:2500}).catch(()=>null);
+      freshness=await gate.activity(source,true,'history',{history_ms:60_000,max_wait:5000});
+      const answer=await asked;
+      if(answer?.answered&&answer.status&&answer.status.session_id===session_id)probed={status:answer.status,at:Number(answer.observed_at)||Date.now(),waited_ms:answer.waited_ms??null};
+      runtime=await gate.runtime(source);
+      if(probed)runtime={...runtime,available:true,checked_at:probed.at,statuses:[...runtime.statuses.filter(x=>x.session_id!==session_id),probed.status]};
+    }
   }
   if(!probed) {
     const left=Math.max(500,5000-(Date.now()-started));
