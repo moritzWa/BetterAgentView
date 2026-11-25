@@ -2127,7 +2127,13 @@ fn exceptional_model_reaches_one_opencode_prompt(v2: bool) {
         while prompts(app).len() < count {
             app.drain();
             if Instant::now() >= deadline {
-                panic!("prompt {count} never reached OpenCode:\n{}", app.screen());
+                let server_log =
+                    fs::read_to_string(app.home_path().join("state/agentview/opencode/server.log"))
+                        .unwrap_or_default();
+                panic!(
+                    "prompt {count} never reached OpenCode:\n{}\nserver log:\n{server_log}",
+                    app.screen()
+                );
             }
             thread::sleep(Duration::from_millis(50));
         }
