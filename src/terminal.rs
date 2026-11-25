@@ -394,6 +394,10 @@ pub fn run_dashboard(
     app.set_yolo(control.yolo_enabled(), control.yolo_supported_providers());
     app.set_paused(paused_sessions.paused());
     app.set_sort_keys(session_order.sort_keys());
+    if let Err(error) = last_harness.forget_exceptional() {
+        crate::perf_log::event("last_harness_cleanup_failed", format_args!("{error:#}"));
+    }
+    app.do_not_remember = last_harness.policy().clone();
     app.remembered_models = last_harness.models().into_iter().collect();
     app.launch_model = app.remembered_models.get(&app.launch_provider).cloned();
     if let Ok(links) = crate::session_tree::ParentLinks::load_default() {

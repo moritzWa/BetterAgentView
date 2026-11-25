@@ -1152,6 +1152,11 @@ fn render_composer(frame: &mut Frame<'_>, app: &App, area: Rect) {
         Overlay::Composer(ComposerMode::NewSession) | Overlay::HarnessPicker | Overlay::ModelPicker
     ) {
         let launch_option = app.launch_model.as_deref().unwrap_or("default");
+        let launch_option = if app.launch_model_is_exceptional() {
+            format!("{launch_option} (next session only)")
+        } else {
+            launch_option.to_owned()
+        };
         let option_label = if app.launch_provider == Provider::Terminal {
             "shell"
         } else {
