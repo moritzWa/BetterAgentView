@@ -1,6 +1,7 @@
 import {runtimeWatch} from './runtime-watch.mjs';
 /** Durable wake metadata only, never chat text. Idle polls do not connect to Neon. */
 function runtimeBucket(id){let hash=0;for(let i=0;i<id.length;i++)hash=(hash*31+id.charCodeAt(i))>>>0;return hash%64;}
+const CALL_LOG_DAYS=14,CALL_LOG_HOUR_MAX=1500;
 export class WakeGate {
   constructor(state) { this.state=state;this.waiters=new Set(); }
   async fetch(request) {
@@ -89,12 +90,48 @@ export class WakeGate {
       return Response.json({...meta,statuses:keys.flatMap(k=>JSON.parse(stored.get(k)??'[]'))});
     }
     if(path==='/call-log') {
-      // Durations and counts only, newest last. The owner reads it with GET /v1/timings.
-      const key='call_log',recent=await s.get(key)??[];
-      await s.put(key,[...recent,p.record].slice(-400));
+      // Durations and counts only. One key per UTC hour keeps each value far below
+      // the 128 KiB limit; hours older than the retention window are dropped as the
+      // index rolls. The owner reads it with GET /v1/timings.
+      const hour=new Date(p.record.t).toISOString().slice(0,13),key=`calls:${hour}`;
+      const index=await s.get('calls_index')??[],keep=Date.now()-CALL_LOG_DAYS*86400_000;
+      const live=index.filter(h=>Date.parse(h+':00:00Z')>=keep);
+      const bucket=await s.get(key)??[];
+      bucket.push(p.record);
+      const puts={[key]:bucket.slice(-CALL_LOG_HOUR_MAX)};
+      if(!live.includes(hour)){live.push(hour);live.sort();}
+      puts.calls_index=live;
+      await s.put(puts);
+      for(const h of index)if(!live.includes(h))await s.delete(`calls:${h}`);
       return Response.json({ok:true});
     }
-    if(path==='/call-log-read')return Response.json({calls:await s.get('call_log')??[]});
+    if(path==='/call-log-read') {
+      const since=Date.now()-(p.hours??24)*3600_000,index=(await s.get('calls_index')??[]).filter(h=>Date.parse(h+':59:59Z')>=since);
+      const calls=[];
+      for(let i=0;i<index.length;i+=100) {
+        const keys=index.slice(i,i+100).map(h=>`calls:${h}`),stored=await s.get(keys);
+        for(const k of keys)calls.push(...(stored.get(k)??[]));
+      }
+      return Response.json({calls:calls.filter(c=>c.t>=since),retention_days:CALL_LOG_DAYS});
+    }
+    if(path==='/probe') {
+      // Ask the Mac about ONE session and wait for its answer. The poll that is
+      // already open wakes at once, so this costs one status read on the Mac
+      // instead of waiting for a whole-inventory publication.
+      const now=Date.now(),seen=await s.get(`last_seen:${p.source}`)??0;
+      if(seen<=now-60_000)return Response.json({answered:false,reason:'mac_not_seen'});
+      const probe_id=crypto.randomUUID();
+      await s.put({[`probe:${p.source}`]:{probe_id,session_id:p.session_id,taken:false,expires_at:now+10_000},[`probe_result:${p.source}`]:null});
+      for(const wake of this.waiters)wake();
+      const deadline=now+Math.min(8000,p.max_wait??3000);
+      const read=async()=>{const r=await s.get(`probe_result:${p.source}`);return r&&r.probe_id===probe_id?r:null;};
+      let result=await read();
+      while(!result&&Date.now()<deadline) {
+        await new Promise(resolve=>{let timer;const wake=()=>{clearTimeout(timer);this.waiters.delete(wake);resolve();};this.waiters.add(wake);timer=setTimeout(wake,Math.max(1,deadline-Date.now()));});
+        result=await read();
+      }
+      return Response.json(result?{answered:true,status:result.status,observed_at:result.at,waited_ms:Date.now()-now}:{answered:false,reason:'timeout',waited_ms:Date.now()-now});
+    }
     if(path==='/receipt-signal') {
       const key=`receipts:${p.source}`,recent=await s.get(key)??[];
       await s.put(key,[...recent.filter(r=>r!==p.operation_id),p.operation_id].slice(-32));
@@ -133,6 +170,7 @@ export class WakeGate {
       await s.put(put);for(const wake of this.waiters)wake();
       return Response.json({ok:true,complete});
     }
+    let probe=null;
     if(path==='/poll') {
       const meta=await s.get(`runtime_meta:${source}`);
       const now=Date.now(),watch=runtimeWatch(now,{
@@ -144,7 +182,8 @@ export class WakeGate {
       if(watch.incident&&watch.incident!==old?.incident)console.error('bridge_runtime_publication_stale');
       if(!watch.incident&&old?.incident)console.info('bridge_runtime_publication_recovered');
       await s.put({[`last_seen:${source}`]:now,[`runtime_watch:${source}`]:watch});
-      if(!(await s.get(`pending:${source}`))) {
+      const probeWaiting=async()=>{const q=await s.get(`probe:${source}`);return Boolean(q&&!q.taken&&q.expires_at>Date.now());};
+      if(!(await s.get(`pending:${source}`))&&!await probeWaiting()) {
         await new Promise(resolve=>{
           let timer;
           const wake=()=>{clearTimeout(timer);this.waiters.delete(wake);resolve();};
@@ -152,9 +191,23 @@ export class WakeGate {
         });
       }
       if(!(await s.get(`token:${p.token_hash}`)))return Response.json({error:'unauthorized'},{status:401});
+      // Hand a waiting probe to exactly one poll.
+      const q=await s.get(`probe:${source}`);
+      if(q&&!q.taken&&q.expires_at>Date.now()) {
+        await s.put(`probe:${source}`,{...q,taken:true});
+        probe={probe_id:q.probe_id,session_id:q.session_id};
+      }
+    }
+    if(path==='/probe-write') {
+      const q=await s.get(`probe:${source}`);
+      if(q&&q.probe_id===p.result.probe_id) {
+        await s.put(`probe_result:${source}`,{probe_id:q.probe_id,status:p.result.status,at:Date.now()});
+        for(const wake of this.waiters)wake();
+      }
+      return Response.json({ok:true});
     }
     const watch=await s.get(`runtime_watch:${source}`);
-    return Response.json({principal:credential,pending:await s.get(`pending:${source}`)??false,generation:await s.get(`generation:${source}`)??0,last_seen:await s.get(`last_seen:${source}`)??null,active_until:await s.get(`active_until:${source}`)??0,runtime_alert:watch?.incident?{incident:watch.incident,stale_for_ms:watch.stale_for_ms}:null});
+    return Response.json({probe,principal:credential,pending:await s.get(`pending:${source}`)??false,generation:await s.get(`generation:${source}`)??0,last_seen:await s.get(`last_seen:${source}`)??null,active_until:await s.get(`active_until:${source}`)??0,runtime_alert:watch?.incident?{incident:watch.incident,stale_for_ms:watch.stale_for_ms}:null});
   }
 }
 
@@ -170,5 +223,6 @@ export function gateClient(namespace,key) {
     presence:source=>call('/presence-read',{source}),changes:source=>call('/changes',{source}),
     activity:(source,wait=false,kind='history',opts={})=>call('/activity',{source,wait,kind,...opts}),
     runtime:source=>call('/runtime-read',{source}),setRuntime:(token_hash,snapshot)=>call('/runtime-write',{token_hash,snapshot}),
-    signalReceipt:(source,operation_id)=>call('/receipt-signal',{source,operation_id}),waitReceipt:(source,operation_id)=>call('/receipt-wait',{source,operation_id}),rate:key=>call('/rate',{key}),logCall:record=>call('/call-log',{record}),callLog:()=>call('/call-log-read',{})};
+    signalReceipt:(source,operation_id)=>call('/receipt-signal',{source,operation_id}),waitReceipt:(source,operation_id)=>call('/receipt-wait',{source,operation_id}),rate:key=>call('/rate',{key}),logCall:record=>call('/call-log',{record}),callLog:(hours=24)=>call('/call-log-read',{hours}),
+    probe:(source,session_id,{max_wait=3000}={})=>call('/probe',{source,session_id,max_wait}),probeWrite:(token_hash,result)=>call('/probe-write',{token_hash,result})};
 }

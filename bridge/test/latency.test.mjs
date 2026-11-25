@@ -125,7 +125,7 @@ test('authenticated MCP calls leave a durations-only record the owner can read, 
  assert.equal(read.status,200);const {calls}=await read.json();
  assert.equal(calls.length,2,'the unauthenticated call is not logged');
  assert.equal(calls[0].tool,'search_history');assert.equal(calls[0].method,'tools/call');assert.equal(calls[1].method,'tools/list');
- assert(calls[0].ms>=0&&calls[0].result_chars>0&&/connect/.test(calls[0].phases),JSON.stringify(calls[0]));
+ assert(calls[0].ms>=0&&calls[0].result_chars>0&&calls[0].phases.connect>=0&&calls[0].phases.tool>=0,JSON.stringify(calls[0]));
  assert(!JSON.stringify(calls).includes('SECRET_QUERY_TEXT'),'arguments never reach the log');
  const stranger=await app.fetch(new Request('https://bridge.invalid/v1/timings',{headers:{authorization:`Bearer ${'z'.repeat(43)}`}}),env,ctx);
  assert.notEqual(stranger.status,200);
@@ -137,4 +137,63 @@ test('a send result is the status, so nothing tells the model to always call mes
  const send=(await response.json()).result.tools.find(t=>t.name==='send_session_message').description;
  for(const text of [send,SERVER_INSTRUCTIONS])assert(!/ALWAYS check message_status|check message_status\./.test(text),text.slice(0,120));
  assert(/say_to_owner/.test(send)&&/claim_ceiling/.test(send),'the honesty fields stay in the instruction');
+});
+
+const fakeStorage=()=>{const map=new Map();const st={get:async k=>Array.isArray(k)?new Map(k.filter(x=>map.has(x)).map(x=>[x,structuredClone(map.get(x))])):structuredClone(map.get(k)),put:async(k,v)=>{if(k&&typeof k==='object')for(const [a,b] of Object.entries(k))map.set(a,structuredClone(b));else map.set(k,structuredClone(v));},delete:async k=>{map.delete(k);},transaction:async fn=>fn(st)};return st;};
+const wakeGate=()=>{const object=new WakeGate({storage:fakeStorage()}),namespace={idFromName:x=>x,get:()=>({fetch:(url,init)=>object.fetch(new Request(url,init))})};return {namespace,gate:gateClient(namespace,OWNER)};};
+const probeStatus=(id,extra={})=>({session_id:id,status:'needs_you',completion:'unconfirmed',reason:'question',updated_at:Date.now(),can_message:false,last_user_message_id:'u1',last_user_ms:1,top_level:true,attention_assessed:true,directory:'/work/x',health:'idle',...extra});
+
+test('a probe reaches the open poll, the answer returns to the waiting caller, and stale or unsolicited answers are ignored',async()=>{
+ const {gate}=wakeGate(),token='p'.repeat(43),h=await digest(token),source='device|epoch';
+ await gate.enroll({token_hash:h,owner_id:OWNER,device_id:'device',database_epoch:'epoch',expires_at:Date.now()+3600_000});
+ assert.equal((await gate.probe(source,'ses_x',{max_wait:50})).answered,false,'nobody has polled yet: the Mac was not seen, so it does not wait');
+ const first=await gate.poll(h);// records last_seen and returns at once (a signal is pending after enroll)
+ assert.equal(first.probe,null);
+ await gate.clear(source,first.generation);
+ const polled=gate.poll(h);
+ await new Promise(r=>setTimeout(r,20));
+ const asked=gate.probe(source,'ses_x',{max_wait:3000});
+ const delivered=await polled;
+ assert.equal(delivered.probe.session_id,'ses_x');
+ await gate.probeWrite(h,{probe_id:'not-this-probe',status:probeStatus('ses_other')});
+ await new Promise(r=>setTimeout(r,20));
+ await gate.probeWrite(h,{probe_id:delivered.probe.probe_id,status:probeStatus('ses_x')});
+ const answer=await asked;
+ assert.equal(answer.answered,true);assert.equal(answer.status.session_id,'ses_x');assert(answer.waited_ms<1000);
+ // The probe was handed to one poll only.
+ const again=gate.poll(h);await new Promise(r=>setTimeout(r,20));
+ const lateAsk=await gate.probe(source,'ses_y',{max_wait:80});
+ assert.equal(lateAsk.answered,false,'no answer within the wait is reported, not invented');
+ assert.equal((await again).probe.session_id,'ses_y');
+});
+
+test('session_brief uses the probed status instead of waiting for a whole snapshot, and falls back when the Mac does not answer',async()=>{
+ await seed('probe-brief',[{id:'u1',role:'user',order:1,created_at:10,updated_at:10,text:'Please decide.'},{id:'a1',role:'assistant',order:2,created_at:11,updated_at:11,text:'Which option should I take?'}]);
+ const kinds=[];
+ const snapshot={available:true,partial:true,truncated:true,checked_at:Date.now()-600_000,statuses:[{session_id:'probe-brief',status:'done',completion:'unconfirmed',reason:null,updated_at:1,can_message:true,last_user_message_id:'u1',last_user_ms:1,top_level:true,attention_assessed:true,directory:'/work/x',health:'idle'}]};
+ const make=probe=>({...gate,activity:async(source,wait,kind)=>{kinds.push(kind);return {source_checked_at:Date.now(),mac_seen_recently:true,history_fresh:true};},runtime:async()=>snapshot,...(probe?{probe}:{})});
+ const brief=async g=>{const r=await (await privateMcp(new Request('https://test.invalid/mcp',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'session_brief',arguments:{session_id:'probe-brief'}}})}),{db,store,principal:reader,outbox,gate:g})).json();assert(!r.result.isError,r.result.content[0].text);return JSON.parse(r.result.content[0].text);};
+ const probed=await brief(make(async()=>({answered:true,status:probeStatus('probe-brief'),observed_at:Date.now(),waited_ms:40})));
+ assert.equal(probed.session.status,'needs_you');assert.equal(probed.session.needs_you_because.includes('question'),true);
+ assert.equal(probed.data_age.status_fresh,true);assert.equal(probed.timing_ms.probed,true);
+ assert.deepEqual(kinds,['history'],'only history is waited for; no whole-snapshot wait');
+ assert.notEqual(probed.send_params,null,'send anchors are still returned');
+ kinds.length=0;
+ const fallback=await brief(make(async()=>({answered:false,reason:'timeout'})));
+ assert.equal(fallback.session.status,'done','without an answer the old snapshot path applies');
+ assert.deepEqual(kinds,['history','both']);assert.equal(fallback.timing_ms.probed,false);assert.equal(fallback.data_age.status_fresh,false);
+ kinds.length=0;
+ const thrown=await brief(make(async()=>{throw new Error('boom');}));
+ assert.equal(thrown.session.status,'done');
+});
+
+test('the call log is bucketed by hour, keeps no text, and drops hours past retention',async()=>{
+ const {gate:g}=wakeGate(),now=Date.now(),old=now-15*86400_000;
+ await g.logCall({t:old,ms:5,method:'tools/call',tool:'search_history',status:200,result_chars:1,error:null,phases:{db:1}});
+ await g.logCall({t:now-3*3600_000,ms:7,method:'tools/call',tool:'session_brief',status:200,result_chars:9,error:null,phases:{db:2}});
+ await g.logCall({t:now,ms:9,method:'tools/call',tool:'list_sessions',status:200,result_chars:3,error:null,phases:{db:3}});
+ const day=await g.callLog(24);
+ assert.deepEqual(day.calls.map(c=>c.tool),['session_brief','list_sessions']);
+ assert.equal((await g.callLog(2)).calls.length,1);
+ assert.equal(day.retention_days,14);
 });

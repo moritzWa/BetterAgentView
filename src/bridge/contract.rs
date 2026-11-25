@@ -8,6 +8,7 @@ pub const ARTIFACT_BYTES: usize = 512000;
 pub const ROUTE_RUNTIME: &str = "/v1/connector/runtime";
 pub const ROUTE_CHECKED: &str = "/v1/connector/checked";
 pub const ROUTE_POLL: &str = "/v1/connector/poll";
+pub const ROUTE_PROBE: &str = "/v1/connector/probe";
 pub const ROUTE_LEASE: &str = "/v1/connector/lease";
 pub const ROUTE_ACK: &str = "/v1/connector/ack";
 pub const ROUTE_START_LEASE: &str = "/v1/connector/start-lease";
@@ -60,6 +61,8 @@ pub struct BridgeContracts {
     pub pair_token_response: PairTokenResponse,
 
     pub poll_response: PollResponse,
+
+    pub probe_result: ProbeResult,
 
     pub read_context: ReadContext,
 
@@ -400,7 +403,17 @@ pub struct PollResponse {
     pub pending: bool,
 
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub probe: Option<Probe>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_alert: Option<RuntimeAlert>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Probe {
+    pub probe_id: String,
+
+    pub session_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -408,6 +421,130 @@ pub struct RuntimeAlert {
     pub incident: i64,
 
     pub stale_for_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProbeResult {
+    pub probe_id: String,
+
+    #[serde(deserialize_with = "required_nullable")]
+    pub status: Option<RuntimeStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeStatus {
+    pub attention_assessed: bool,
+
+    pub can_message: bool,
+
+    pub completion: Completion,
+
+    #[serde(deserialize_with = "required_nullable")]
+    pub directory: Option<String>,
+
+    pub health: Health,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_flight: Option<InFlight>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_progress_at: Option<i64>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_progress_kind: Option<ProgressKind>,
+
+    #[serde(deserialize_with = "required_nullable")]
+    pub last_user_message_id: Option<String>,
+
+    pub last_user_ms: i64,
+
+    #[serde(deserialize_with = "required_nullable")]
+    pub reason: Option<Reason>,
+
+    pub session_id: String,
+
+    pub status: Status,
+
+    pub top_level: bool,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_started_at: Option<i64>,
+
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Completion {
+    #[serde(rename = "project_done")]
+    ProjectDone,
+
+    #[serde(rename = "task_done")]
+    TaskDone,
+
+    Unconfirmed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Health {
+    Failed,
+
+    Idle,
+
+    #[serde(rename = "potentially_stalled")]
+    PotentiallyStalled,
+
+    Running,
+
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InFlight {
+    Shell,
+
+    Tool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProgressKind {
+    Shell,
+
+    Text,
+
+    Tool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Reason {
+    Approval,
+
+    Failed,
+
+    Question,
+
+    Reply,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    Done,
+
+    #[serde(rename = "needs_you")]
+    NeedsYou,
+
+    Scheduled,
+
+    Unknown,
+
+    Working,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -554,121 +691,6 @@ pub enum View {
     Directory,
 
     Status,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RuntimeStatus {
-    pub attention_assessed: bool,
-
-    pub can_message: bool,
-
-    pub completion: Completion,
-
-    #[serde(deserialize_with = "required_nullable")]
-    pub directory: Option<String>,
-
-    pub health: Health,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub in_flight: Option<InFlight>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_progress_at: Option<i64>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_progress_kind: Option<ProgressKind>,
-
-    #[serde(deserialize_with = "required_nullable")]
-    pub last_user_message_id: Option<String>,
-
-    pub last_user_ms: i64,
-
-    #[serde(deserialize_with = "required_nullable")]
-    pub reason: Option<Reason>,
-
-    pub session_id: String,
-
-    pub status: Status,
-
-    pub top_level: bool,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub turn_started_at: Option<i64>,
-
-    pub updated_at: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Completion {
-    #[serde(rename = "project_done")]
-    ProjectDone,
-
-    #[serde(rename = "task_done")]
-    TaskDone,
-
-    Unconfirmed,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Health {
-    Failed,
-
-    Idle,
-
-    #[serde(rename = "potentially_stalled")]
-    PotentiallyStalled,
-
-    Running,
-
-    Unknown,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InFlight {
-    Shell,
-
-    Tool,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProgressKind {
-    Shell,
-
-    Text,
-
-    Tool,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Reason {
-    Approval,
-
-    Failed,
-
-    Question,
-
-    Reply,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Status {
-    Done,
-
-    #[serde(rename = "needs_you")]
-    NeedsYou,
-
-    Scheduled,
-
-    Unknown,
-
-    Working,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -15,7 +15,7 @@ const args = process.argv.slice(2), hours = Number(args[args.indexOf('--since-ho
 const reader = randomBytes(32).toString('base64url');
 let db, hash;
 const pct = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.floor(p * s.length))] : null; };
-const phase = (call, name) => { const m = call.phases?.match(new RegExp(`(?:^|, )${name};dur=([\\d.]+)`)); return m ? Number(m[1]) : 0; };
+const phase = (call, name) => Number(call.phases?.[name] ?? 0);
 
 try {
   const url = execFileSync('neonctl', ['connection-string', '--project-id', 'frosty-pond-48075355', '--role-name', 'neondb_owner', '--pooled'], {encoding: 'utf8', timeout: 30_000}).trim();
@@ -25,7 +25,7 @@ try {
   hash = await digest(reader);
   await db.query('INSERT INTO av_credentials(token_hash,owner_id,device_id,database_epoch,audience,expires_at,scopes) VALUES($1,$2,$3,$4,$5,$6,$7)',
     [hash, owner, primary.device_id, primary.database_epoch, 'read', Date.now() + 5 * 60_000, 'history:read']);
-  const response = await fetch(base + '/v1/timings', {headers: {authorization: `Bearer ${reader}`}, signal: AbortSignal.timeout(30_000)});
+  const response = await fetch(base + '/v1/timings?hours=' + hours, {headers: {authorization: `Bearer ${reader}`}, signal: AbortSignal.timeout(30_000)});
   if (response.status !== 200) throw new Error(`HTTP ${response.status} ${(await response.text()).slice(0, 200)}`);
   const all = (await response.json()).calls, cutoff = Date.now() - hours * 3600_000;
   // The credential's own request is not in the log; idle time is measured on the full log.

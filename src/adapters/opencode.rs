@@ -1504,8 +1504,30 @@ impl SessionSource for OpenCodeSource {
     }
 
     fn discover_with_warnings(&self, request: &DiscoveryRequest) -> Result<SourceDiscovery> {
+        self.discover_scoped(request, None)
+    }
+
+    fn cancel(&self) {
+        self.runner.cancel();
+    }
+}
+
+impl OpenCodeSource {
+    /// One session, classified exactly as a full discovery would classify it: the
+    /// same managed overlay, holds and background shells, with the history query
+    /// limited to that session (and to its folder's sessions when a live process
+    /// there could be assigned to one of them).
+    pub fn discover_one(&self, request: &DiscoveryRequest, id: &str) -> Result<SourceDiscovery> {
+        self.discover_scoped(request, Some(id))
+    }
+
+    fn discover_scoped(
+        &self,
+        request: &DiscoveryRequest,
+        only: Option<&str>,
+    ) -> Result<SourceDiscovery> {
         let Some(shells) = &self.background_shells else {
-            return self.discover_sessions(request);
+            return self.discover_sessions(request, only);
         };
         let (discovery, running) = std::thread::scope(|scope| {
             let running = scope.spawn(|| {
@@ -1527,7 +1549,7 @@ impl SessionSource for OpenCodeSource {
                     Ok(output.stdout_text()?.to_owned())
                 })
             });
-            let discovery = self.discover_sessions(request);
+            let discovery = self.discover_sessions(request, only);
             (discovery, running.join().unwrap_or_default())
         });
         let mut discovery = discovery?;
@@ -1536,13 +1558,11 @@ impl SessionSource for OpenCodeSource {
         Ok(discovery)
     }
 
-    fn cancel(&self) {
-        self.runner.cancel();
-    }
-}
-
-impl OpenCodeSource {
-    fn discover_sessions(&self, request: &DiscoveryRequest) -> Result<SourceDiscovery> {
+    fn discover_sessions(
+        &self,
+        request: &DiscoveryRequest,
+        only: Option<&str>,
+    ) -> Result<SourceDiscovery> {
         // The managed sessions come from the server and do not depend on the
         // database or process lookups, so ask while those run.
         std::thread::scope(|scope| {
@@ -1555,11 +1575,15 @@ impl OpenCodeSource {
                     let _ = supervisor.list_recent(MANAGED_LIST_SHARED_FOR);
                 });
             }
-            self.discover_listed_sessions(request)
+            self.discover_listed_sessions(request, only)
         })
     }
 
-    fn discover_listed_sessions(&self, request: &DiscoveryRequest) -> Result<SourceDiscovery> {
+    fn discover_listed_sessions(
+        &self,
+        request: &DiscoveryRequest,
+        only: Option<&str>,
+    ) -> Result<SourceDiscovery> {
         let mut sessions = BTreeMap::new();
         let mut warnings = Vec::new();
         let external = self.discover_external_history && request.include_external;
@@ -1584,7 +1608,7 @@ impl OpenCodeSource {
                 Err(error) => warnings.push(format!("OpenCode managed sessions: {error:#}")),
             }
         }
-        if external || !owned.is_empty() {
+        if only.is_some() || external || !owned.is_empty() {
             let holders = {
                 let _span = crate::perf_log::span("opencode-holder-probe");
                 if self.runtime == Runtime::Host {
@@ -1607,7 +1631,9 @@ impl OpenCodeSource {
             };
             if request.include_completed || !holders.is_empty() || server_live {
                 let history_limit = request.history_limit.max(1);
-                let scope = if external {
+                let scope = if let Some(id) = only {
+                    Scope::Only(BTreeSet::from([id.to_owned()]))
+                } else if external {
                     Scope::Recent {
                         limit: history_limit.saturating_add(1),
                         oldest_first: request.history_oldest_first,
@@ -1619,10 +1645,26 @@ impl OpenCodeSource {
                 } else {
                     Scope::Only(owned.clone())
                 };
-                let records = {
+                let mut records = {
                     let _span = crate::perf_log::span("opencode-history-query");
                     self.query(&scope)?
                 };
+                if only.is_some() {
+                    // A live process in the folder is given the session it most
+                    // plausibly runs, so judge it against the folder's other
+                    // recent sessions too, as the full listing does.
+                    let peers = records.first().and_then(|first| {
+                        opencode_live::directory_holders_since(&holders, &first.directory)
+                            .map(|since| (first.directory.clone(), first.id.clone(), since))
+                    });
+                    if let Some((directory, id, since_ms)) = peers {
+                        let found = self.query(&Scope::Directory {
+                            directory,
+                            since_ms,
+                        })?;
+                        records.extend(found.into_iter().filter(|record| record.id != id));
+                    }
+                }
                 let unfinished = unfinished_directories(&records);
                 let _activity_span = crate::perf_log::span("opencode-server-activity");
                 let activity = server
@@ -1710,6 +1752,9 @@ impl OpenCodeSource {
                 &inherited_subagent_holds(self.holds.as_deref(), &self.invocation.program),
             );
         }
+        if let Some(id) = only {
+            sessions.retain(|key, _| key == id);
+        }
         let kept = sessions
             .values()
             .filter(|session| owned.contains(&session.provider_session_id))
@@ -1734,6 +1779,8 @@ enum Scope {
     },
     /// Exactly these sessions.
     Only(BTreeSet<String>),
+    /// Root sessions in one folder updated at or after a time.
+    Directory { directory: PathBuf, since_ms: u64 },
 }
 
 impl OpenCodeSource {
@@ -2312,6 +2359,13 @@ fn session_query(scope: &Scope) -> String {
         Scope::Only(ids) => format!(
             "{GLOBAL_SESSION_ROWS} AND s.id IN ({})",
             sql_id_list(ids).unwrap_or_else(|| "NULL".into())
+        ),
+        Scope::Directory {
+            directory,
+            since_ms,
+        } => format!(
+            "{GLOBAL_SESSION_ROWS} AND s.directory = '{}' AND s.time_updated >= {since_ms}",
+            directory.to_string_lossy().replace('\'', "''")
         ),
     }
 }

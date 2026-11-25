@@ -29,6 +29,9 @@
     "EmptyRequest": {
       "$ref": "#/definitions/EmptyRequest"
     },
+    "ProbeResult": {
+      "$ref": "#/definitions/ProbeResult"
+    },
     "AckRequest": {
       "$ref": "#/definitions/AckRequest"
     },
@@ -97,6 +100,7 @@
     "CursorRequest",
     "CheckedRequest",
     "EmptyRequest",
+    "ProbeResult",
     "AckRequest",
     "StartAckRequest",
     "VerifyRequest",
@@ -791,6 +795,31 @@
       "properties": {},
       "additionalProperties": false
     },
+    "ProbeResult": {
+      "type": "object",
+      "properties": {
+        "probe_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RuntimeStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "probe_id",
+        "status"
+      ],
+      "additionalProperties": false
+    },
     "AckRequest": {
       "type": "object",
       "properties": {
@@ -1205,6 +1234,33 @@
           "anyOf": [
             {
               "$ref": "#/definitions/RuntimeAlert"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "probe": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "probe_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "session_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "required": [
+                "probe_id",
+                "session_id"
+              ],
+              "additionalProperties": false
             },
             {
               "type": "null"
