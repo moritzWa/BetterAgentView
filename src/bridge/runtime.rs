@@ -73,6 +73,7 @@ pub(super) fn project(session: &AgentSession) -> RuntimeStatus {
 }
 
 pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
+    let _total = crate::perf_log::span("bridge-runtime-snapshot");
     let supervisor = Arc::new(if let Some(state) = &config.supervisor_state {
         OpenCodeSupervisor::with_state_dir(config.opencode_bin.clone(), state.clone())
             .context("runtime snapshot: supervisor")?
@@ -97,6 +98,7 @@ pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
     // question, failed-turn, child-agent and background-work states. Do not ask
     // ChatGPT to infer these from the conversation copy.
     let source = OpenCodeSource::managed(config.opencode_bin.clone(), supervisor.clone());
+    let discover_span = crate::perf_log::span("bridge-runtime-discover");
     let discovery = source
         .discover_with_warnings(&DiscoveryRequest {
             include_completed: true,
@@ -106,13 +108,17 @@ pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
             ..DiscoveryRequest::default()
         })
         .context("runtime snapshot: discover")?;
+    drop(discover_span);
     let mut discovery = SessionSnapshot {
         sessions: discovery.sessions,
         warnings: discovery.warnings,
     };
     // Discovery alone omits the dashboard's holds/native-shell overlay and its
     // persisted judgement that a finished assistant turn is asking the user.
+    let enrich_span = crate::perf_log::span("bridge-runtime-enrich");
     OpenCodeController::managed(config.opencode_bin.clone(), supervisor).enrich(&mut discovery);
+    drop(enrich_span);
+    let classify_span = crate::perf_log::span("bridge-runtime-classify-registries");
     let assessed = if config.supervisor_state.is_none() {
         crate::turn_classifier::apply_saved(&mut discovery)
     } else {
@@ -143,6 +149,7 @@ pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
     } else {
         None
     };
+    drop(classify_span);
     let mut statuses = discovery
         .sessions
         .iter()
@@ -182,6 +189,7 @@ pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
     // Keep the durable wake snapshot small; never drop attention states merely
     // to make room for old completed history. Search still covers all history.
     statuses.truncate(super::contract::SNAPSHOT_STATUSES);
+    let _source_span = crate::perf_log::span("bridge-runtime-source-reads");
     let db = super::source::open(&config.database).context("runtime snapshot: source_open")?;
     let mut latest=db.prepare("SELECT m.id FROM session_message m JOIN session_v2 s ON s.id=m.session_id WHERE s.id=?1 AND m.type='user' AND m.seq<COALESCE((SELECT b.seq FROM session_message b WHERE b.session_id=s.id AND b.id=json_extract(s.revert,'$.messageID')),9007199254740991) ORDER BY m.seq DESC LIMIT 1").context("runtime snapshot: last_user")?;
     for status in &mut statuses {
@@ -198,6 +206,7 @@ pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
         .filter(|status| status.status == Status::Working)
         .map(|status| status.session_id.clone())
         .collect::<Vec<_>>();
+    let _progress_span = crate::perf_log::span("bridge-runtime-progress");
     match super::health::progress(&db, &working, now_ms) {
         Ok(found) => {
             for status in &mut statuses {
@@ -215,6 +224,7 @@ pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
             // Leave working sessions unknown. Do not publish a stall from a failed read.
         }
     }
+    drop(_source_span);
     // Full directory metadata can make a count-bounded snapshot too large.
     // Keep its serialized body safely inside the existing 850 KB transport cap.
     let dashboard = crate::dashboard_snapshot::latest();

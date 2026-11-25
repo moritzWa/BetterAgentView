@@ -997,6 +997,29 @@ fn progress_reads_an_open_tool_without_copying_message_text() {
 }
 
 #[test]
+fn a_tool_left_open_in_an_earlier_turn_is_not_in_flight_now() {
+    let dir = tempdir().unwrap();
+    let db = Connection::open(dir.path().join("source.sqlite")).unwrap();
+    db.execute_batch(
+        "CREATE TABLE session_v2(id TEXT, parent_id TEXT);
+         CREATE TABLE session_message(id TEXT, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT);
+         INSERT INTO session_v2 VALUES('s', NULL);
+         INSERT INTO session_message VALUES('u1','s','user',1,1700000000000,1700000000000,'{}');
+         INSERT INTO session_message VALUES('a1','s','assistant',2,1700000001000,1700000002000,'{\"time\":{},\"content\":[{\"type\":\"tool\",\"name\":\"bash\",\"state\":{\"status\":\"running\"}}]}');
+         INSERT INTO session_message VALUES('u2','s','user',3,1700000100000,1700000100000,'{}');
+         INSERT INTO session_message VALUES('a2','s','assistant',4,1700000101000,1700000102000,'{\"time\":{\"completed\":1},\"content\":[{\"type\":\"text\"}]}');",
+    )
+    .unwrap();
+    let found = progress(&db, &["s".into()], 1_700_000_130_000).unwrap();
+    assert_eq!(found["s"].in_flight, None);
+    // The same tool in the current turn still counts.
+    db.execute("UPDATE session_message SET seq=5 WHERE id='a1'", [])
+        .unwrap();
+    let found = progress(&db, &["s".into()], 1_700_000_130_000).unwrap();
+    assert_eq!(found["s"].in_flight, Some("tool"));
+}
+
+#[test]
 fn a_start_directory_must_be_a_real_folder_under_home() {
     let home = tempdir().unwrap();
     let project = home.path().join("Code/agentview");
@@ -1051,4 +1074,47 @@ fn a_start_claim_is_not_launched_twice() {
             prompt_accepted: true
         }
     );
+}
+
+#[test]
+fn pointer_reconciliation_stays_off_the_phone_read_path() {
+    let secs = Duration::from_secs;
+    // A reconnect, wake or restart always reconciles.
+    assert!(should_reconcile(true, true, Some(secs(1))));
+    assert!(should_reconcile(false, false, None));
+    assert!(should_reconcile(false, true, None));
+    // Idle: the idle cadence. Active: only half-hourly, never on every tick.
+    assert!(!should_reconcile(false, false, Some(secs(899))));
+    assert!(should_reconcile(false, false, Some(secs(900))));
+    assert!(!should_reconcile(false, true, Some(secs(901))));
+    assert!(!should_reconcile(false, true, Some(secs(1799))));
+    assert!(should_reconcile(false, true, Some(secs(1800))));
+    // Active reads need a check at least every few seconds to stay under the
+    // five-second history window the Worker accepts.
+    assert!(ACTIVE_SYNC_PAUSE < Duration::from_secs(5) / 2 + Duration::from_millis(1));
+}
+
+/// Not part of the normal run. Times the runtime snapshot against the paired Mac's
+/// real OpenCode state; it reads only and uploads nothing:
+///   AGENTVIEW_PERF_LOG=/tmp/runtime-spans.log AGENTVIEW_BRIDGE_STATE=~/.local/state/agentview/bridge \
+///     cargo test --release profile_real_runtime_snapshot -- --ignored --nocapture
+#[test]
+#[ignore = "profiles the real paired Mac; reads only"]
+fn profile_real_runtime_snapshot() {
+    let dir = std::path::PathBuf::from(
+        std::env::var_os("AGENTVIEW_BRIDGE_STATE").expect("set AGENTVIEW_BRIDGE_STATE"),
+    );
+    let config = load(&dir).unwrap();
+    for round in 0..3 {
+        let started = std::time::Instant::now();
+        let snapshot = runtime::snapshot(&config).unwrap();
+        let bytes = serde_json::to_vec(&snapshot).unwrap().len();
+        eprintln!(
+            "round {round}: {} ms, {} statuses, {bytes} bytes, partial={}, truncated={}",
+            started.elapsed().as_millis(),
+            snapshot.statuses.len(),
+            snapshot.partial,
+            snapshot.truncated
+        );
+    }
 }

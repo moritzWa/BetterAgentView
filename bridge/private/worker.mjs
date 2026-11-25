@@ -4,6 +4,7 @@ import { gateClient } from './gate.mjs';
 import { Outbox } from './outbox.mjs';
 import { Starts } from './starts.mjs';
 import { privateMcp } from './mcp.mjs';
+import { Timing } from './timing.mjs';
 import { SyncStore } from '../sync/store.mjs';
 import { privateHandler } from '../sync/http.mjs';
 import { digest, SyncError } from '../sync/projection.mjs';
@@ -70,13 +71,14 @@ export function application({database=openDatabase}={}) {
       }
       request=await bounded(request,AUTH_PATHS.has(path)?32_000:1_000_000);
       if(!env.DATABASE_URL)throw new SyncError('not_configured',503);
-      db=await database(env.DATABASE_URL);
+      const timing=new Timing();
+      db=await timing.time('connect',()=>database(env.DATABASE_URL));
       const auth=await new OwnerAuth(db,env,{gate}).handle(request);if(auth)return auth;
       const store=new SyncStore(db),outbox=new Outbox(db,gate),starts=new Starts(db,gate);
       if(path==='/mcp') {
-        const principal=await store.authenticate(token,'read');
-        await gate.activity(`${principal.device_id}|${principal.database_epoch}`);
-        return await privateMcp(request,{db,store,principal,outbox,gate,starts});
+        const principal=await timing.time('auth',()=>store.authenticate(token,'read'));
+        await timing.time('touch',()=>gate.activity(`${principal.device_id}|${principal.database_epoch}`));
+        return await privateMcp(request,{db,store,principal,outbox,gate,starts,timing});
       }
       if(path===routes.lease && request.method==='POST') {
         await wire(EmptyRequest,request);
