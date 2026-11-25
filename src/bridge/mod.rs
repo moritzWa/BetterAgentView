@@ -1160,9 +1160,16 @@ pub fn run(dir: &Path) -> Result<()> {
                     Ok(())
                 })();
                 if poll.active_until.max(0) as u64 > now {
-                    if let Err(error) = publish_runtime(&queue_dir, &config, &credential) {
-                        log_unavailable("runtime", &error);
-                    }
+                    // Publish from its own thread: the next poll is how a phone
+                    // read's probe reaches this Mac, and it should not wait out a
+                    // snapshot first. The runtime lock keeps publishes from overlapping.
+                    let (dir, config, credential) =
+                        (queue_dir.clone(), config.clone(), credential.clone());
+                    std::thread::spawn(move || {
+                        if let Err(error) = publish_runtime(&dir, &config, &credential) {
+                            log_unavailable("runtime", &error);
+                        }
+                    });
                 }
                 delivery
             })();
