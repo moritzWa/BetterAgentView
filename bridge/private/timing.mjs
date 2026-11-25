@@ -13,8 +13,12 @@ export class Timing {
     const started = performance.now();
     try { return await fn(); } finally { this.add(name, performance.now() - started); }
   }
+  /** A fact about the call that is not a duration, such as the result size. */
+  note(name, value) { (this.notes ??= new Map()).set(name, value); }
   header() {
-    return [...this.phases].map(([name, { ms, n }]) => `${name};dur=${ms.toFixed(1)};desc="n=${n}"`).join(', ');
+    const phases = [...this.phases].map(([name, { ms, n }]) => `${name};dur=${ms.toFixed(1)};desc="n=${n}"`);
+    const notes = [...(this.notes ?? [])].map(([name, value]) => `${name};desc="${value}"`);
+    return [...phases, ...notes].join(', ');
   }
 }
 
