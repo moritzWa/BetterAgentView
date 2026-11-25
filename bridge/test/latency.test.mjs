@@ -94,3 +94,15 @@ test('the Worker reports phase durations in Server-Timing without any text',asyn
  assert.match(header,/^[A-Za-z_;=0-9." ,]+$/,'only names, durations and counts');
  const body=await response.json();assert(!body.result.isError);assert(!header.includes('pagetoken'));
 });
+
+// The Neon driver returns bigint columns as strings; PGlite returns numbers. The
+// deployed read_session failed its response contract on the string cursor.
+test('read_session works when the driver returns bigint columns as strings',async()=>{
+ await seed('string-bigint',[{id:'sb_1',role:'user',order:1,created_at:1,updated_at:1,text:'hello'},{id:'sb_2',role:'assistant',order:2,created_at:2,updated_at:2,text:'world'}]);
+ const stringify=async rows=>rows.map(r=>Object.fromEntries(Object.entries(r).map(([k,v])=>[k,typeof v==='number'&&['cursor','message_order','created_at','updated_at'].includes(k)?String(v):v])));
+ const wrap=target=>({query:async(sql,args)=>{const r=await target.query(sql,args);return {...r,rows:await stringify(r.rows)};},transaction:fn=>target.transaction(tx=>fn(wrap(tx)))});
+ const response=await privateMcp(new Request('https://test.invalid/mcp',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'read_session',arguments:{session_id:'string-bigint'}}})}),{db:wrap(db),store,principal:reader,outbox,gate});
+ const body=await response.json();assert(!body.result.isError,body.result.content[0].text);
+ const page=JSON.parse(body.result.content[0].text);
+ assert.equal(typeof page.cursor,'number');assert.deepEqual(page.messages.map(m=>m.message_order),[1,2]);assert.equal(typeof page.next_after,'number');
+});

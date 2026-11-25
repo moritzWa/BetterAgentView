@@ -146,7 +146,8 @@ export async function privateMcp(request: Request,{db:rawDb,store,principal,outb
       messages.push({...m,text,truncated:text.length<m.text.length});remaining-=text.length;
     }
     if(!forward)messages.reverse();
-    return {...result,...freshness,messages,context:view.context,
+    // Postgres drivers return bigint as a string; the response contract wants a number.
+    return {...result,cursor:Number(result.cursor),...freshness,messages,context:view.context,
       page_kind:before!==undefined?'older':after!==undefined&&after>=0?'newer':'latest',
       ...(after!==undefined&&after>=0?{no_newer_messages:view.no_newer_messages}:{}),
       cursor_semantics:'sync revision for sending, NOT a message offset',
