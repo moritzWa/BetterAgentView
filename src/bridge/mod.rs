@@ -612,7 +612,7 @@ fn publish_runtime(dir: &Path, config: &Config, credential: &str) -> Result<()> 
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| t.elapsed().ok())
-        .is_some_and(|age| age < Duration::from_secs(15))
+        .is_some_and(|age| age < RUNTIME_MIN_INTERVAL)
     {
         return Ok(());
     }
@@ -1057,6 +1057,15 @@ pub fn run(dir: &Path) -> Result<()> {
     let (wake, woken) = std::sync::mpsc::channel::<()>();
     std::thread::spawn(move || {
         let mut retrying = false;
+        // Fill the session-record cache and publish once at start, so the first
+        // phone read after a restart does not pay for a full listing.
+        if let Ok(config) = load(&queue_dir) {
+            if let Ok(credential) = token(&config) {
+                if let Err(error) = publish_runtime(&queue_dir, &config, &credential) {
+                    log_unavailable("runtime", &error);
+                }
+            }
+        }
         loop {
             let result = (|| -> Result<()> {
                 let config = load(&queue_dir)?;
@@ -1220,6 +1229,10 @@ fn should_reconcile(forced: bool, phone_active: bool, since_last: Option<Duratio
         })
 }
 
+/// Shortest gap between two runtime publications. The Worker treats a snapshot
+/// older than 20 s as stale and makes a status read wait for the next one, and a
+/// pass now takes under a second, so publishing this often keeps reads from waiting.
+const RUNTIME_MIN_INTERVAL: Duration = Duration::from_secs(10);
 const IDLE_SYNC_INTERVAL: Duration = Duration::from_secs(900);
 const IDLE_SYNC_PAUSE: Duration = Duration::from_secs(5);
 const ACTIVE_SYNC_PAUSE: Duration = Duration::from_secs(2);

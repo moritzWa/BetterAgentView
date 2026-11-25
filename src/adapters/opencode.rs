@@ -1738,6 +1738,85 @@ enum Scope {
 
 impl OpenCodeSource {
     fn query(&self, scope: &Scope) -> Result<Vec<OpenCodeRecord>> {
+        // Unit tests drive `query` with scripted runners that expect one exact
+        // command; the incremental path has its own tests.
+        if let (
+            Scope::Recent {
+                limit,
+                oldest_first,
+                pinned,
+            },
+            true,
+        ) = (scope, self.runtime == Runtime::Host && !cfg!(test))
+        {
+            let _span = crate::perf_log::span("opencode-history-incremental");
+            if let Some(records) = self.query_incremental(*limit, *oldest_first, pinned) {
+                return Ok(records);
+            }
+        }
+        self.query_full(scope)
+    }
+
+    /// Runs one `opencode db` query and returns its TSV, or None on any trouble.
+    fn db_text(&self, sql: String) -> Option<String> {
+        let mut args = self.invocation.prefix_args.clone();
+        args.extend(["db".into(), sql, "--format".into(), "tsv".into()]);
+        let mut command = CommandRequest::new(self.invocation.program.clone(), args);
+        command.timeout = Duration::from_secs(8);
+        let output = self.runner.run(&command).ok()?;
+        if output.status != 0 {
+            return None;
+        }
+        output.stdout_text().ok().map(str::to_owned)
+    }
+
+    /// The listing the full query would return, rebuilding only the sessions
+    /// whose change key moved. None means "could not tell"; callers then run the
+    /// full query, so a failure here costs time, never correctness.
+    fn query_incremental(
+        &self,
+        limit: usize,
+        oldest_first: bool,
+        pinned: &BTreeSet<String>,
+    ) -> Option<Vec<OpenCodeRecord>> {
+        use super::opencode_records as cache;
+        let tables = self.db_text(cache::TABLES_SQL.into())?;
+        let names: BTreeSet<&str> = tables.lines().skip(1).map(str::trim).collect();
+        if tables.lines().next()?.trim() != "name"
+            || !names.contains("session_v2")
+            || !names.contains("event_sequence")
+        {
+            return None;
+        }
+        let mut sql = cache::KEY_SQL.to_owned();
+        if names.contains("session") {
+            sql.push_str(cache::KEY_SQL_LEGACY);
+        }
+        let keys = cache::parse_keys(&self.db_text(sql)?)?;
+        if keys.is_empty() {
+            return None;
+        }
+        let chosen = cache::window(&keys, limit, oldest_first, pinned);
+        let scope = format!(
+            "{}|{:?}",
+            self.invocation.program, self.invocation.prefix_args
+        );
+        let (mut lines, rebuild) = cache::plan(&scope, &chosen, opencode_live::now_ms());
+        for chunk in rebuild.chunks(cache::REBUILD_CHUNK) {
+            let ids: BTreeSet<String> = chunk.iter().cloned().collect();
+            let text = self.db_text(session_query(&Scope::Only(ids)))?;
+            lines.extend(cache::split_records(&text)?);
+        }
+        cache::remember(&scope, &chosen, &lines);
+        let mut tsv = String::from("record\n");
+        for (_, line) in &lines {
+            tsv.push_str(line);
+            tsv.push('\n');
+        }
+        parse_opencode_db_records(&tsv).ok()
+    }
+
+    fn query_full(&self, scope: &Scope) -> Result<Vec<OpenCodeRecord>> {
         let mut args = self.invocation.prefix_args.clone();
         args.extend([
             "db".into(),
@@ -2542,6 +2621,67 @@ fn is_throwaway_directory(directory: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// Not part of the normal run: checks the incremental listing against the full
+    /// query on this Mac's real store, and prints how long each takes.
+    ///   cargo test --release incremental_listing_matches -- --ignored --nocapture
+    #[test]
+    #[ignore = "reads the real OpenCode store"]
+    fn incremental_listing_matches_the_full_query_on_the_real_store() {
+        let bin = std::env::var("OPENCODE_BIN").unwrap_or_else(|_| {
+            format!("{}/.local/bin/opencode-dev", std::env::var("HOME").unwrap())
+        });
+        let source = OpenCodeSource::host(bin);
+        let pinned = BTreeSet::new();
+        let scope = Scope::Recent {
+            limit: 5001,
+            oldest_first: false,
+            pinned: pinned.clone(),
+        };
+        let timed = |label: &str, f: &dyn Fn() -> Vec<OpenCodeRecord>| {
+            let started = std::time::Instant::now();
+            let records = f();
+            println!(
+                "{label}: {} ms, {} records",
+                started.elapsed().as_millis(),
+                records.len()
+            );
+            records
+        };
+        let full = timed("full", &|| source.query_full(&scope).unwrap());
+        let first = timed("incremental (fills the cache)", &|| {
+            source
+                .query_incremental(5001, false, &pinned)
+                .expect("incremental")
+        });
+        let second = timed("incremental (reuses it)", &|| {
+            source
+                .query_incremental(5001, false, &pinned)
+                .expect("incremental")
+        });
+        let by_id = |records: &[OpenCodeRecord]| {
+            records
+                .iter()
+                .map(|r| (r.id.clone(), format!("{r:?}")))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        let (full, first, second) = (by_id(&full), by_id(&first), by_id(&second));
+        for (label, got) in [("first", &first), ("second", &second)] {
+            assert_eq!(full.len(), got.len(), "{label}: same sessions");
+            let moved: Vec<_> = full
+                .iter()
+                .filter(|(id, text)| got.get(*id) != Some(text))
+                .map(|(id, _)| id.clone())
+                .collect();
+            // Sessions being written to while the test runs may legitimately differ.
+            println!(
+                "{label}: {} of {} records differ: {moved:?}",
+                moved.len(),
+                full.len()
+            );
+            assert!(moved.len() <= 3, "{label}: too many differences");
+        }
+    }
+
     #[test]
     fn a_session_row_bumped_by_a_model_switch_keeps_its_last_message_time() {
         let sessions = parse_opencode_session_list(
