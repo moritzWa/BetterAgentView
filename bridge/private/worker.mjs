@@ -75,6 +75,10 @@ export function application({database=openDatabase}={}) {
       db=await timing.time('connect',()=>database(env.DATABASE_URL));
       const auth=await new OwnerAuth(db,env,{gate}).handle(request);if(auth)return auth;
       const store=new SyncStore(db),outbox=new Outbox(db,gate),starts=new Starts(db,gate);
+      if(path==='/v1/timings' && request.method==='GET') {
+        await store.authenticate(token,'read');
+        return json(await gate.callLog());
+      }
       if(path==='/mcp') {
         const principal=await timing.time('auth',()=>store.authenticate(token,'read'));
         await timing.time('touch',()=>gate.activity(`${principal.device_id}|${principal.database_epoch}`));
@@ -118,8 +122,19 @@ export function application({database=openDatabase}={}) {
       return json({error:'request_failed'},500); // Deliberately no SQL, token or body logging.
     } finally { try{await db?.close();}catch{console.error('bridge_db_close_failed');} }
   }};
-  return {async fetch(request,env) {
-    const response=await app.fetch(request,env),schema=responseByRoute[new URL(request.url).pathname];
+  return {async fetch(request,env,ctx) {
+    const url=new URL(request.url),started=Date.now();
+    // Which tool a call named, from the JSON-RPC envelope only; never its arguments.
+    const envelope=url.pathname==='/mcp'&&request.method==='POST'&&Number(request.headers.get('content-length')??0)<=1_000_000
+      ?await request.clone().json().catch(()=>null):null;
+    const response=await app.fetch(request,env),schema=responseByRoute[url.pathname];
+    // Authenticated MCP calls only: they are the ones that carry Server-Timing.
+    if(envelope&&env.GATE&&ctx?.waitUntil&&response.headers.has('server-timing')) {
+      const header=response.headers.get('server-timing')??'',note=name=>header.match(new RegExp(`${name};desc="([^"]*)"`))?.[1]??null;
+      ctx.waitUntil(gateClient(env.GATE,OWNER).logCall({t:started,ms:Date.now()-started,method:String(envelope.method??'').slice(0,40),
+        tool:note('tool_name')??(typeof envelope.params?.name==='string'?envelope.params.name.slice(0,40):null),status:response.status,
+        result_chars:Number(note('result_chars'))||null,error:note('error'),phases:header.replace(/;desc="[^"]*"/g,'').slice(0,400)}).catch(()=>{}));
+    }
     if(response.ok&&schema) {
       const parsed=schema.safeParse(await response.clone().json().catch(()=>null));
       if(!parsed.success){console.error('bridge_response_contract_failed');return json({error:'invalid_server_response'},500);}

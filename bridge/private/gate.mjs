@@ -88,6 +88,13 @@ export class WakeGate {
       const meta=await s.get(`runtime_meta:${p.source}`)??{available:false,partial:false,checked_at:null};
       return Response.json({...meta,statuses:keys.flatMap(k=>JSON.parse(stored.get(k)??'[]'))});
     }
+    if(path==='/call-log') {
+      // Durations and counts only, newest last. The owner reads it with GET /v1/timings.
+      const key='call_log',recent=await s.get(key)??[];
+      await s.put(key,[...recent,p.record].slice(-400));
+      return Response.json({ok:true});
+    }
+    if(path==='/call-log-read')return Response.json({calls:await s.get('call_log')??[]});
     if(path==='/receipt-signal') {
       const key=`receipts:${p.source}`,recent=await s.get(key)??[];
       await s.put(key,[...recent.filter(r=>r!==p.operation_id),p.operation_id].slice(-32));
@@ -163,5 +170,5 @@ export function gateClient(namespace,key) {
     presence:source=>call('/presence-read',{source}),changes:source=>call('/changes',{source}),
     activity:(source,wait=false,kind='history',opts={})=>call('/activity',{source,wait,kind,...opts}),
     runtime:source=>call('/runtime-read',{source}),setRuntime:(token_hash,snapshot)=>call('/runtime-write',{token_hash,snapshot}),
-    signalReceipt:(source,operation_id)=>call('/receipt-signal',{source,operation_id}),waitReceipt:(source,operation_id)=>call('/receipt-wait',{source,operation_id}),rate:key=>call('/rate',{key})};
+    signalReceipt:(source,operation_id)=>call('/receipt-signal',{source,operation_id}),waitReceipt:(source,operation_id)=>call('/receipt-wait',{source,operation_id}),rate:key=>call('/rate',{key}),logCall:record=>call('/call-log',{record}),callLog:()=>call('/call-log-read',{})};
 }

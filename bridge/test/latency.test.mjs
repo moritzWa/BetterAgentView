@@ -88,7 +88,7 @@ test('the Worker reports phase durations in Server-Timing without any text',asyn
  const response=await app.fetch(new Request('https://bridge.invalid/mcp',{method:'POST',headers:{authorization:`Bearer ${readerToken}`,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'search_history',arguments:{query:'pagetoken',limit:2}}})}),env);
  assert.equal(response.status,200);
  const header=response.headers.get('server-timing');assert(header,'Server-Timing is present');
- const phases=Object.fromEntries(header.split(', ').map(p=>{const [name,dur,desc]=p.split(';');return [name,{ms:Number(dur.slice(4)),n:Number(desc.match(/n=(\d+)/)[1])}];}));
+ const phases=Object.fromEntries(header.split(', ').filter(p=>p.includes(';dur=')).map(p=>{const [name,dur,desc]=p.split(';');return [name,{ms:Number(dur.slice(4)),n:Number(desc.match(/n=(\d+)/)[1])}];}));
  for(const name of ['connect','auth','touch','tool','fresh_wait','db'])assert(phases[name],`${name} phase: ${header}`);
  assert(phases.db.n>=2,'query count is visible: the search plus the grant recheck');
  assert.match(header,/^[A-Za-z_;=0-9." ,]+$/,'only names, durations and counts');
@@ -105,4 +105,28 @@ test('read_session works when the driver returns bigint columns as strings',asyn
  const body=await response.json();assert(!body.result.isError,body.result.content[0].text);
  const page=JSON.parse(body.result.content[0].text);
  assert.equal(typeof page.cursor,'number');assert.deepEqual(page.messages.map(m=>m.message_order),[1,2]);assert.equal(typeof page.next_after,'number');
+});
+
+test('authenticated MCP calls leave a durations-only record the owner can read, and strangers cannot',async()=>{
+ const map=new Map();
+ const storage={get:async k=>Array.isArray(k)?new Map(k.filter(x=>map.has(x)).map(x=>[x,structuredClone(map.get(x))])):structuredClone(map.get(k)),put:async(k,v)=>{if(typeof k==='object')for(const [a,b] of Object.entries(k))map.set(a,structuredClone(b));else map.set(k,structuredClone(v));},delete:async k=>{map.delete(k);},transaction:async fn=>fn(storage)};
+ const object=new WakeGate({storage}),namespace={idFromName:x=>x,get:()=>({fetch:(url,init)=>object.fetch(new Request(url,init))})};
+ const token='u'.repeat(43);
+ await db.query('INSERT INTO av_credentials(token_hash,owner_id,device_id,database_epoch,audience,expires_at,scopes) VALUES($1,$2,$3,$4,$5,$6,$7)',[await digest(token),OWNER,'device','epoch','read',Date.now()+3600_000,'history:read']);
+ const app=application({database:async()=>({query:(...a)=>db.query(...a),transaction:fn=>db.transaction(fn),close:async()=>{}})});
+ const env={ISSUER:'https://bridge.invalid',GATE:namespace,DATABASE_URL:'synthetic',GOOGLE_CLIENT_ID:'x',GOOGLE_CLIENT_SECRET:'y'};
+ const pending=[],ctx={waitUntil:p=>pending.push(p)};
+ const call=(bearer,body)=>app.fetch(new Request('https://bridge.invalid/mcp',{method:'POST',headers:{authorization:`Bearer ${bearer}`,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify(body)}),env,ctx);
+ await call(token,{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'search_history',arguments:{query:'SECRET_QUERY_TEXT'}}});
+ await call(token,{jsonrpc:'2.0',id:2,method:'tools/list'});
+ await call('z'.repeat(43),{jsonrpc:'2.0',id:3,method:'tools/call',params:{name:'search_history',arguments:{query:'x'}}});
+ await Promise.all(pending);
+ const read=await app.fetch(new Request('https://bridge.invalid/v1/timings',{headers:{authorization:`Bearer ${token}`}}),env,ctx);
+ assert.equal(read.status,200);const {calls}=await read.json();
+ assert.equal(calls.length,2,'the unauthenticated call is not logged');
+ assert.equal(calls[0].tool,'search_history');assert.equal(calls[0].method,'tools/call');assert.equal(calls[1].method,'tools/list');
+ assert(calls[0].ms>=0&&calls[0].result_chars>0&&/connect/.test(calls[0].phases),JSON.stringify(calls[0]));
+ assert(!JSON.stringify(calls).includes('SECRET_QUERY_TEXT'),'arguments never reach the log');
+ const stranger=await app.fetch(new Request('https://bridge.invalid/v1/timings',{headers:{authorization:`Bearer ${'z'.repeat(43)}`}}),env,ctx);
+ assert.notEqual(stranger.status,200);
 });

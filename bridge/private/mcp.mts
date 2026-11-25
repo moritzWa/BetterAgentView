@@ -42,10 +42,13 @@ export async function privateMcp(request: Request,{db:rawDb,store,principal,outb
       const value=await fn(toolInputs[name].parse(args) as ToolInput<K>);
       toolOutputs[name].parse(value);
       await requireGrant(db,principal);
-      return {content:[{type:'text',text:JSON.stringify(value)}]};
+      const text=JSON.stringify(value);
+      timing?.note('tool_name',name);timing?.note('result_chars',text.length);
+      return {content:[{type:'text',text}]};
     } catch(e:any) {
       if(e instanceof z.ZodError)console.error('bridge_mcp_response_contract_failed');
       const code=e instanceof SyncError?e.code:'operation_failed';
+      timing?.note('tool_name',name);timing?.note('error',code);
       return {isError:true,content:[{type:'text',text:structuredErrors?JSON.stringify(errorView(code)):code}]};
     } finally { timing?.add('tool',performance.now()-started); }
   });
