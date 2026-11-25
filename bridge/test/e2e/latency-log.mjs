@@ -26,7 +26,7 @@ try {
   await db.query('INSERT INTO av_credentials(token_hash,owner_id,device_id,database_epoch,audience,expires_at,scopes) VALUES($1,$2,$3,$4,$5,$6,$7)',
     [hash, owner, primary.device_id, primary.database_epoch, 'read', Date.now() + 5 * 60_000, 'history:read']);
   const response = await fetch(base + '/v1/timings', {headers: {authorization: `Bearer ${reader}`}, signal: AbortSignal.timeout(30_000)});
-  assert.equal(response.status, 200, `HTTP ${response.status}`);
+  if (response.status !== 200) throw new Error(`HTTP ${response.status} ${(await response.text()).slice(0, 200)}`);
   const all = (await response.json()).calls, cutoff = Date.now() - hours * 3600_000;
   // The credential's own request is not in the log; idle time is measured on the full log.
   const calls = all.map((c, i) => ({...c, idle_before_ms: i ? c.t - (all[i - 1].t + all[i - 1].ms) : null})).filter(c => c.t >= cutoff);

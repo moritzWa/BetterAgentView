@@ -130,3 +130,11 @@ test('authenticated MCP calls leave a durations-only record the owner can read, 
  const stranger=await app.fetch(new Request('https://bridge.invalid/v1/timings',{headers:{authorization:`Bearer ${'z'.repeat(43)}`}}),env,ctx);
  assert.notEqual(stranger.status,200);
 });
+
+test('a send result is the status, so nothing tells the model to always call message_status after it',async()=>{
+ const {SERVER_INSTRUCTIONS}=await import('../private/mcp.mjs');
+ const response=await privateMcp(new Request('https://test.invalid/mcp',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list',params:{}})}),{db,store,principal:reader,outbox,gate});
+ const send=(await response.json()).result.tools.find(t=>t.name==='send_session_message').description;
+ for(const text of [send,SERVER_INSTRUCTIONS])assert(!/ALWAYS check message_status|check message_status\./.test(text),text.slice(0,120));
+ assert(/say_to_owner/.test(send)&&/claim_ceiling/.test(send),'the honesty fields stay in the instruction');
+});
