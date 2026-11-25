@@ -9,6 +9,7 @@ use crate::domain::{
     AgentSession, Capability, LaunchTarget, Provider, SessionSnapshot, SessionState,
 };
 use crate::hidden::HiddenSessionRecord;
+use crate::last_harness::ModelMemoryPolicy;
 use crate::theme::ColorScheme;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -362,6 +363,8 @@ pub struct App {
     /// Model last chosen per harness, restored when that harness is picked
     /// again and saved across restarts (`last-harness.json`).
     pub remembered_models: BTreeMap<Provider, String>,
+    /// Models that apply to one new session and are never remembered.
+    pub do_not_remember: ModelMemoryPolicy,
     /// Ctrl+B is waiting for the model catalog before it switches providers.
     pending_provider_switch: bool,
     /// Directory chosen with `/cd` for the next new session. It wins over the
@@ -517,6 +520,7 @@ impl App {
             launch_provider,
             launch_model: None,
             remembered_models: BTreeMap::new(),
+            do_not_remember: ModelMemoryPolicy::default(),
             pending_provider_switch: false,
             launch_directory_override: None,
             directory_candidates: Vec::new(),
@@ -1113,6 +1117,12 @@ impl App {
                 self.notice = None;
                 AppAction::None
             }
+            Overlay::Composer(ComposerMode::NewSession) => {
+                self.drop_exceptional_model();
+                self.overlay = Overlay::None;
+                self.clear_input();
+                AppAction::None
+            }
             Overlay::ModelPicker => {
                 self.overlay = Overlay::Composer(ComposerMode::NewSession);
                 self.model_filter.clear();
@@ -1220,6 +1230,9 @@ impl App {
     }
 
     pub fn start_new_session(&mut self, first_character: Option<char>) {
+        if self.overlay != Overlay::Composer(ComposerMode::NewSession) {
+            self.drop_exceptional_model();
+        }
         self.notice = None;
         self.clear_input();
         if let Some(character) = first_character {
@@ -1398,8 +1411,34 @@ impl App {
         self.launch_model = Some(switched);
     }
 
+    /// An exceptional choice lives until the composer it was made in launches
+    /// or is cancelled; after that the remembered model (or the default) is back.
+    fn drop_exceptional_model(&mut self) {
+        if self.launch_model_is_exceptional() {
+            self.launch_model = self.remembered_models.get(&self.launch_provider).cloned();
+        }
+    }
+
+    fn note_exceptional_model(&mut self) {
+        if let Some(model) = self.launch_model.clone() {
+            if self.launch_model_is_exceptional() {
+                self.set_notice(format!("{model} is used for the next session only"));
+            }
+        }
+    }
+
+    /// The chosen model is used for one session only and is not remembered.
+    pub fn launch_model_is_exceptional(&self) -> bool {
+        self.launch_model
+            .as_deref()
+            .is_some_and(|model| self.do_not_remember.is_exceptional(model))
+    }
+
     /// The model change since the last call, for the caller to persist.
     pub fn take_model_change(&mut self) -> Option<(Provider, Option<String>)> {
+        if self.launch_model_is_exceptional() {
+            return None;
+        }
         let provider = self.launch_provider.clone();
         if self.remembered_models.get(&provider) == self.launch_model.as_ref() {
             return None;
@@ -1725,6 +1764,7 @@ impl App {
             self.launch_model = Some(self.model_filter.clone());
             self.model_filter.clear();
             self.notice = None;
+            self.note_exceptional_model();
             self.overlay = Overlay::Composer(ComposerMode::NewSession);
             return AppAction::None;
         }
@@ -1753,6 +1793,7 @@ impl App {
         self.launch_model = selection;
         self.model_filter.clear();
         self.notice = None;
+        self.note_exceptional_model();
         self.overlay = Overlay::Composer(ComposerMode::NewSession);
         AppAction::None
     }
@@ -3601,9 +3642,11 @@ impl App {
             }
             let cwd = self.launch_directory();
             self.launch_directory_override = None;
+            let model = self.launch_model.clone();
+            self.drop_exceptional_model();
             return AppAction::Launch {
                 provider: self.launch_provider.clone(),
-                model: self.launch_model.clone(),
+                model,
                 prompt: pasted.expand(&input),
                 cwd,
             };
@@ -4010,6 +4053,11 @@ impl App {
                 "model"
             }
         ));
+        self.note_exceptional_model();
+        if self.launch_model_is_exceptional() {
+            // Stay in the composer so Esc cancels the choice with the draft.
+            self.overlay = Overlay::Composer(ComposerMode::NewSession);
+        }
         AppAction::None
     }
 
@@ -5607,6 +5655,143 @@ mod tests {
         assert_eq!(
             app.launch_model.as_deref(),
             Some("groq/openai/gpt-oss-120b")
+        );
+    }
+
+    fn exceptional_opencode_app() -> App {
+        App::with_launch_targets(
+            SessionSnapshot::default(),
+            false,
+            Provider::OpenCode,
+            vec![LaunchTarget {
+                provider: Provider::OpenCode,
+                supports_model: true,
+            }],
+        )
+    }
+
+    const EXCEPTIONAL: &str = "abliteration-ai/abliterated-model-large-flash";
+
+    #[test]
+    fn an_exceptional_model_applies_to_one_launch_and_keeps_the_remembered_one() {
+        let mut app = exceptional_opencode_app();
+        app.remembered_models
+            .insert(Provider::OpenCode, "anthropic/claude-opus-5-5".into());
+        app.launch_model = Some("anthropic/claude-opus-5-5".into());
+        app.start_new_session(None);
+        app.input = format!("/model {EXCEPTIONAL}");
+        app.activate();
+        assert!(app.launch_model_is_exceptional());
+        assert!(app.notice.as_deref().unwrap().contains("next session only"));
+        assert_eq!(app.take_model_change(), None);
+        assert_eq!(
+            app.remembered_models
+                .get(&Provider::OpenCode)
+                .map(String::as_str),
+            Some("anthropic/claude-opus-5-5")
+        );
+
+        app.input = "do the task".into();
+        match app.activate() {
+            AppAction::Launch { model, .. } => assert_eq!(model.as_deref(), Some(EXCEPTIONAL)),
+            other => panic!("expected a launch, got {other:?}"),
+        }
+        assert_eq!(
+            app.launch_model.as_deref(),
+            Some("anthropic/claude-opus-5-5")
+        );
+        assert_eq!(app.take_model_change(), None);
+
+        app.start_new_session(None);
+        app.input = "next task".into();
+        match app.activate() {
+            AppAction::Launch { model, .. } => {
+                assert_eq!(model.as_deref(), Some("anthropic/claude-opus-5-5"))
+            }
+            other => panic!("expected a launch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cancelling_the_composer_drops_an_exceptional_choice() {
+        let mut app = exceptional_opencode_app();
+        app.remembered_models
+            .insert(Provider::OpenCode, "anthropic/claude-opus-5-5".into());
+        app.launch_model = Some("anthropic/claude-opus-5-5".into());
+        app.start_new_session(None);
+        app.input = format!("/model {EXCEPTIONAL}");
+        app.activate();
+        assert_eq!(app.overlay, Overlay::Composer(ComposerMode::NewSession));
+        assert!(app.launch_model_is_exceptional());
+        app.escape();
+        assert_eq!(app.overlay, Overlay::None);
+        assert_eq!(
+            app.launch_model.as_deref(),
+            Some("anthropic/claude-opus-5-5")
+        );
+        app.start_new_session(None);
+        assert!(!app.launch_model_is_exceptional());
+    }
+
+    #[test]
+    fn a_composer_opened_fresh_never_inherits_an_exceptional_choice() {
+        let mut app = exceptional_opencode_app();
+        app.launch_model = Some(EXCEPTIONAL.into());
+        app.start_new_session(None);
+        assert_eq!(app.launch_model, None);
+        // Opening the model picker and cancelling it keeps the choice made in
+        // this composer.
+        app.launch_model = Some(EXCEPTIONAL.into());
+        app.overlay = Overlay::ModelPicker;
+        app.escape();
+        assert!(app.launch_model_is_exceptional());
+    }
+
+    #[test]
+    fn an_exceptional_model_without_a_remembered_one_falls_back_to_the_default() {
+        let mut app = exceptional_opencode_app();
+        app.start_new_session(None);
+        app.input = format!("/model {EXCEPTIONAL}");
+        app.activate();
+        app.input = "task".into();
+        app.activate();
+        assert_eq!(app.launch_model, None);
+        assert_eq!(app.take_model_change(), None);
+    }
+
+    #[test]
+    fn an_exceptional_model_picked_in_the_picker_is_not_remembered() {
+        let mut app = exceptional_opencode_app();
+        app.remembered_models
+            .insert(Provider::OpenCode, "anthropic/claude-opus-5-5".into());
+        app.launch_model = Some("anthropic/claude-opus-5-5".into());
+        app.set_available_models(Provider::OpenCode, Ok(vec![EXCEPTIONAL.to_owned()]));
+        app.start_new_session(None);
+        app.open_model_picker();
+        app.model_filter = EXCEPTIONAL.into();
+        app.confirm_model_selection();
+        assert_eq!(app.launch_model.as_deref(), Some(EXCEPTIONAL));
+        assert_eq!(app.take_model_change(), None);
+        assert_eq!(
+            app.remembered_models
+                .get(&Provider::OpenCode)
+                .map(String::as_str),
+            Some("anthropic/claude-opus-5-5")
+        );
+    }
+
+    #[test]
+    fn a_normal_pick_after_an_exceptional_one_is_remembered() {
+        let mut app = exceptional_opencode_app();
+        app.launch_model = Some(EXCEPTIONAL.into());
+        assert_eq!(app.take_model_change(), None);
+        app.launch_model = Some("anthropic/claude-haiku-5-5".into());
+        assert_eq!(
+            app.take_model_change(),
+            Some((
+                Provider::OpenCode,
+                Some("anthropic/claude-haiku-5-5".into())
+            ))
         );
     }
 

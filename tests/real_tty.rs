@@ -1936,6 +1936,256 @@ printf '%s\n' 'backgrounded · deadbeef'
 }
 
 #[test]
+fn exceptional_model_launches_one_session_and_is_never_remembered() {
+    let _serial = serialize_real_tty_test();
+    const EXCEPTIONAL: &str = "abliteration-ai/abliterated-model-large-flash";
+    let mut app = PtyApp::spawn_configured(150, 30, |command, home| {
+        let executable = home.path().join("claude");
+        fs::write(
+            &executable,
+            r##"#!/bin/sh
+if [ "${1:-}" = "--help" ]; then
+  printf '%s\n' "  --model <model> Model alias (e.g. 'opus', 'sonnet', or 'haiku')."
+  exit 0
+fi
+if [ "${1:-}" = "agents" ]; then
+  printf '%s\n' '[]'
+  exit 0
+fi
+printf '%s\n' "$*" >> "$HOME/claude-launches.log"
+printf '%s\n' 'backgrounded · deadbeef'
+"##,
+        )
+        .expect("write fake Claude executable");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+            .expect("make fake Claude executable runnable");
+        // A record from before exceptional models were excluded.
+        fs::write(
+            home.path().join("state/agentview/last-harness.json"),
+            format!(
+                r#"{{"version":1,"provider":"claude","models":[{{"provider":"claude","model":"{EXCEPTIONAL}"}}]}}"#
+            ),
+        )
+        .expect("seed legacy exceptional choice");
+        command.args([
+            "--claude-bin",
+            executable.to_str().expect("UTF-8 fake Claude path"),
+            "--no-host-codex",
+            "--no-host-pi",
+            "--no-host-opencode",
+            "--no-host-copilot",
+            "--no-host-cursor",
+            "--no-host-antigravity",
+            "--refresh-ms",
+            "60000",
+        ]);
+    });
+    let launches = |app: &PtyApp| {
+        fs::read_to_string(app.home_path().join("claude-launches.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let wait_for_launches = |app: &mut PtyApp, count: usize| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while launches(app).len() < count {
+            app.drain();
+            assert!(
+                Instant::now() < deadline,
+                "launch {count} never reached Claude"
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+    };
+
+    app.wait_for("empty Claude startup", |screen| {
+        screen.contains("BetterAgentView") && !screen.contains("loading provider sessions")
+    });
+    // The legacy exceptional choice reads as the default.
+    app.send(b"x");
+    app.wait_for("legacy exceptional model falls back to default", |screen| {
+        screen.contains(" · harness Claude · model default")
+    });
+    app.send(ESC);
+
+    app.send(b"/model opus\r");
+    app.wait_for("normal model chosen", |screen| {
+        screen.contains("new Claude tasks will use model opus")
+    });
+    app.send(format!("/model {EXCEPTIONAL}\r").as_bytes());
+    app.wait_for("exceptional model chosen for one session", |screen| {
+        screen.contains("is used for the next session only")
+    });
+    // Cancelling the composer abandons the choice.
+    app.send(ESC);
+    app.send(b"abandoned");
+    app.wait_for(
+        "cancelled exceptional choice does not carry over",
+        |screen| {
+            screen.contains(" · harness Claude · model opus")
+                && screen.contains("abandoned")
+                && !screen.contains("next session only")
+        },
+    );
+    app.send(ESC);
+    app.send(format!("/model {EXCEPTIONAL}\r").as_bytes());
+    app.wait_for("exceptional model chosen again", |screen| {
+        screen.contains("is used for the next session only")
+    });
+    app.send(b"first task");
+    app.wait_for("exceptional title", |screen| {
+        screen.contains(&format!("model {EXCEPTIONAL} (next session only)"))
+            && screen.contains("first task")
+    });
+    app.send(ENTER);
+    wait_for_launches(&mut app, 1);
+    assert!(
+        launches(&app)[0].contains(&format!("--model {EXCEPTIONAL}")),
+        "first launch lost the explicit choice: {:?}",
+        launches(&app)
+    );
+
+    thread::sleep(Duration::from_millis(500));
+    app.send(b"second task");
+    app.wait_for("the earlier normal model returns", |screen| {
+        screen.contains(" · harness Claude · model opus")
+            && screen.contains("second task")
+            && !screen.contains("next session only")
+    });
+    app.send(ENTER);
+    wait_for_launches(&mut app, 2);
+    let recorded = launches(&app);
+    assert!(
+        recorded[1].contains("--model opus") && !recorded[1].contains("abliteration"),
+        "second launch did not use the remembered normal model: {recorded:?}"
+    );
+    let saved = fs::read_to_string(app.home_path().join("state/agentview/last-harness.json"))
+        .expect("read saved harness record");
+    assert!(
+        saved.contains("\"opus\"") && !saved.contains("abliteration"),
+        "saved record: {saved}"
+    );
+    app.exit_cleanly();
+}
+
+#[test]
+fn exceptional_model_reaches_one_opencode_v1_prompt_and_is_never_remembered() {
+    exceptional_model_reaches_one_opencode_prompt(false);
+}
+
+#[test]
+fn exceptional_model_reaches_one_opencode_v2_prompt_and_is_never_remembered() {
+    exceptional_model_reaches_one_opencode_prompt(true);
+}
+
+fn exceptional_model_reaches_one_opencode_prompt(v2: bool) {
+    let _serial = serialize_real_tty_test();
+    const EXCEPTIONAL: &str = "abliteration-ai/abliterated-model-large-flash";
+    let mut app = PtyApp::spawn_configured(150, 30, |command, home| {
+        let executable = home.path().join("fake-opencode");
+        fs::write(
+            &executable,
+            include_str!("fixtures/fake-opencode-prompt-log.py"),
+        )
+        .expect("write fake OpenCode server");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+            .expect("make fake OpenCode runnable");
+        fs::write(
+            home.path().join("state/agentview/last-harness.json"),
+            format!(
+                r#"{{"version":1,"provider":"opencode","models":[{{"provider":"opencode","model":"{EXCEPTIONAL}"}}]}}"#
+            ),
+        )
+        .expect("seed legacy exceptional choice");
+        command
+            .env_remove("AGENTVIEW_OPENCODE_SERVICE_FILE")
+            .env_remove("AGENTVIEW_OPENCODE_URL")
+            .env("AGENTVIEW_OPENCODE_API", if v2 { "v2" } else { "v1" })
+            .args([
+                "--opencode-bin",
+                executable.to_str().expect("UTF-8 fake OpenCode path"),
+                "--no-host-claude",
+                "--no-host-codex",
+                "--no-host-pi",
+                "--no-host-copilot",
+                "--no-host-cursor",
+                "--no-host-antigravity",
+                "--refresh-ms",
+                "60000",
+            ]);
+    });
+    let prompts = |app: &PtyApp| {
+        fs::read_to_string(app.home_path().join("opencode-prompts.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let wait_for_prompts = |app: &mut PtyApp, count: usize| {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while prompts(app).len() < count {
+            app.drain();
+            if Instant::now() >= deadline {
+                let server_log =
+                    fs::read_to_string(app.home_path().join("state/agentview/opencode/server.log"))
+                        .unwrap_or_default();
+                panic!(
+                    "prompt {count} never reached OpenCode:\n{}\nserver log:\n{server_log}",
+                    app.screen()
+                );
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    };
+
+    app.wait_for("OpenCode startup", |screen| {
+        screen.contains("BetterAgentView") && !screen.contains("loading provider sessions")
+    });
+    app.send(b"x");
+    app.wait_for("legacy exceptional model falls back to default", |screen| {
+        screen.contains(" · harness OpenCode · model default")
+    });
+    app.send(ESC);
+    app.send(format!("/model {EXCEPTIONAL}\r").as_bytes());
+    app.wait_for("exceptional model chosen for one session", |screen| {
+        screen.contains("is used for the next session only")
+    });
+    app.send(b"first task");
+    app.wait_for("exceptional title", |screen| {
+        screen.contains(&format!("model {EXCEPTIONAL} (next session only)"))
+    });
+    app.send(ENTER);
+    wait_for_prompts(&mut app, 1);
+    assert_eq!(
+        prompts(&app)[0],
+        if v2 {
+            serde_json::json!({"providerID": "abliteration-ai", "id": "abliterated-model-large-flash"})
+        } else {
+            serde_json::json!({"providerID": "abliteration-ai", "modelID": "abliterated-model-large-flash"})
+        }
+    );
+    thread::sleep(Duration::from_millis(500));
+    app.send(b"second task");
+    app.wait_for("the default returns for the next session", |screen| {
+        screen.contains(" · harness OpenCode · model default")
+            && screen.contains("second task")
+            && !screen.contains("next session only")
+    });
+    app.send(ENTER);
+    wait_for_prompts(&mut app, 2);
+    assert!(
+        prompts(&app)[1].is_null(),
+        "second prompt carried a model: {:?}",
+        prompts(&app)
+    );
+    let saved = fs::read_to_string(app.home_path().join("state/agentview/last-harness.json"))
+        .expect("read saved harness record");
+    assert!(!saved.contains("abliteration"), "saved record: {saved}");
+    app.exit_cleanly();
+}
+
+#[test]
 fn copilot_login_reloads_the_exact_account_model_catalog() {
     let _serial = serialize_real_tty_test();
     let mut app = PtyApp::spawn_configured(110, 30, |command, home| {
