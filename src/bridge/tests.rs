@@ -1020,6 +1020,36 @@ fn a_tool_left_open_in_an_earlier_turn_is_not_in_flight_now() {
 }
 
 #[test]
+fn progress_comes_from_the_newest_messages_of_a_long_session() {
+    let dir = tempdir().unwrap();
+    let db = Connection::open(dir.path().join("source.sqlite")).unwrap();
+    db.execute_batch(
+        "CREATE TABLE session_v2(id TEXT, parent_id TEXT);
+         CREATE TABLE session_message(id TEXT, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT);
+         INSERT INTO session_v2 VALUES('s', NULL);
+         INSERT INTO session_message VALUES('u','s','user',1,1700000000000,1700000000000,'{}');",
+    )
+    .unwrap();
+    for n in 2..=120i64 {
+        db.execute(
+            "INSERT INTO session_message VALUES(?1,'s','assistant',?2,?3,?3,'{\"time\":{\"completed\":1},\"content\":[]}')",
+            rusqlite::params![format!("a{n}"), n, 1_700_000_000_000i64 + n * 1000],
+        )
+        .unwrap();
+    }
+    // A tool opened early in a long turn is not what this turn is doing now.
+    db.execute(
+        "UPDATE session_message SET data='{\"time\":{},\"content\":[{\"type\":\"tool\",\"name\":\"bash\",\"state\":{\"status\":\"running\"}}]}' WHERE id='a5'",
+        [],
+    )
+    .unwrap();
+    let found = progress(&db, &["s".into()], 1_700_000_000_000 + 121_000).unwrap();
+    assert_eq!(found["s"].last_progress_at, Some(1_700_000_120_000));
+    assert_eq!(found["s"].in_flight, None);
+    assert_eq!(found["s"].health, "running");
+}
+
+#[test]
 fn a_start_directory_must_be_a_real_folder_under_home() {
     let home = tempdir().unwrap();
     let project = home.path().join("Code/agentview");
