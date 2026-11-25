@@ -603,13 +603,23 @@ fn sync_pass(dir: &Path, reconcile: bool) -> Result<usize> {
 
 /// Reads one session's status and sends it back. Any failure answers `null`, so
 /// the reader falls back to the snapshot at once instead of waiting out a timeout.
-fn answer_probe(_dir: &Path, config: &Config, credential: &str, probe: &contract::Probe) {
+fn answer_probe(
+    _dir: &Path,
+    config: &Config,
+    credential: &str,
+    probe: &contract::Probe,
+    read: bool,
+) {
     let _span = crate::perf_log::span("bridge-probe-answer");
-    let status = match runtime::session_status(config, &probe.session_id) {
-        Ok(status) => status,
-        Err(error) => {
-            log_unavailable("probe", &error);
-            None
+    let status = if !read {
+        None
+    } else {
+        match runtime::session_status(config, &probe.session_id) {
+            Ok(status) => status,
+            Err(error) => {
+                log_unavailable("probe", &error);
+                None
+            }
         }
     };
     let body = contract::ProbeResult {
@@ -1123,7 +1133,18 @@ pub fn run(dir: &Path) -> Result<()> {
                 if let Some(probe) = poll.probe.clone() {
                     let (dir, config, credential) =
                         (queue_dir.clone(), config.clone(), credential.clone());
-                    std::thread::spawn(move || answer_probe(&dir, &config, &credential, &probe));
+                    // One at a time: a reader that gave up has already moved on, so
+                    // piling a second read onto the first only slows both. A busy
+                    // daemon says so at once and the reader uses the snapshot.
+                    let take = !PROBE_BUSY.swap(true, Ordering::SeqCst);
+                    std::thread::spawn(move || {
+                        if take {
+                            answer_probe(&dir, &config, &credential, &probe, true);
+                            PROBE_BUSY.store(false, Ordering::SeqCst);
+                        } else {
+                            answer_probe(&dir, &config, &credential, &probe, false);
+                        }
+                    });
                 }
                 let _ = wake.send(());
                 let now = std::time::SystemTime::now()
@@ -1271,6 +1292,7 @@ fn should_reconcile(forced: bool, phone_active: bool, since_last: Option<Duratio
 /// older than 20 s as stale and makes a status read wait for the next one, and a
 /// pass now takes under a second, so publishing this often keeps reads from waiting.
 const RUNTIME_MIN_INTERVAL: Duration = Duration::from_secs(10);
+static PROBE_BUSY: AtomicBool = AtomicBool::new(false);
 const IDLE_SYNC_INTERVAL: Duration = Duration::from_secs(900);
 const IDLE_SYNC_PAUSE: Duration = Duration::from_secs(5);
 const ACTIVE_SYNC_PAUSE: Duration = Duration::from_secs(2);
