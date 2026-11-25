@@ -410,6 +410,15 @@ fn sync_session(
 }
 
 pub fn sync_once(dir: &Path) -> Result<usize> {
+    sync_pass(dir, true)
+}
+
+/// One history pass. `reconcile` also compares every local pointer with the
+/// cloud's. That costs one request per 1,000 sessions, which dominated a pass
+/// that otherwise only compares local watermarks. The service reconciles on its
+/// idle cadence rather than on every wake from the phone.
+fn sync_pass(dir: &Path, reconcile: bool) -> Result<usize> {
+    let _pass_span = crate::perf_log::span("bridge-sync-pass");
     let _sync_lock = local_lock(&dir.join("sync.lock"))?;
     let started = std::time::Instant::now();
     let config = load(dir)?;
@@ -451,6 +460,7 @@ pub fn sync_once(dir: &Path) -> Result<usize> {
             note(&mut failing, &id, stage, &error);
         }
     }
+    let scan_span = crate::perf_log::span("bridge-sync-scan");
     let mut server_errors = 0;
     for id in &ids {
         if failing.iter().any(|f| &f.session_id == id) {
@@ -486,9 +496,15 @@ pub fn sync_once(dir: &Path) -> Result<usize> {
             }
         }
     }
+    drop(scan_span);
     // A restored journal can look caught up locally while the cloud pointer differs.
     // Compare pointers and replace those sessions. A network failure here is not a stall.
-    if let Ok(local) = journal.checkpoints() {
+    let _cursor_span = crate::perf_log::span("bridge-sync-cursors");
+    if let Ok(local) = if reconcile {
+        journal.checkpoints()
+    } else {
+        Ok(Vec::new())
+    } {
         if !local.is_empty() {
             for chunk in local.chunks(CURSOR_BATCH_SIZE) {
                 let sessions: Vec<contract::CursorPointer> = chunk
@@ -522,6 +538,7 @@ pub fn sync_once(dir: &Path) -> Result<usize> {
             }
         }
     }
+    drop(_cursor_span);
     for id in journal.known()? {
         if !ids.contains(&id) {
             if journal.has_held(&id)? {
@@ -599,6 +616,13 @@ fn publish_runtime(dir: &Path, config: &Config, credential: &str) -> Result<()> 
         }
     };
     let mut payload = serde_json::to_value(snapshot)?;
+    if crate::perf_log::enabled() {
+        crate::perf_log::event(
+            "bridge-runtime-payload",
+            format_args!("bytes={}", payload.to_string().len()),
+        );
+    }
+    let _upload_span = crate::perf_log::span("bridge-runtime-upload");
     let published = http::request::<contract::OkResponse>(
         &config.endpoint,
         contract::ROUTE_RUNTIME,
@@ -1007,6 +1031,8 @@ fn local_lock(path: &Path) -> Result<std::fs::File> {
 }
 
 pub fn run(dir: &Path) -> Result<()> {
+    // Stage timings for slow snapshots and passes go to the shared perf log.
+    crate::perf_log::use_default_file();
     let _ = load(dir)?;
     let _lock = local_lock(&dir.join("daemon.lock"))?;
     let queue_dir = dir.to_owned();
@@ -1071,6 +1097,7 @@ pub fn run(dir: &Path) -> Result<()> {
         }
     });
     let mut last_sync = std::time::Instant::now() - Duration::from_secs(900);
+    let mut last_reconcile: Option<std::time::Instant> = None;
     let mut unhealthy_since: Option<std::time::Instant> = None;
     let mut last_alert: Option<std::time::Instant> = None;
     let mut force_sync = false;
@@ -1094,14 +1121,27 @@ pub fn run(dir: &Path) -> Result<()> {
         // actually take effect. Active mobile use requests near-live checks.
         if !force_sync
             && active_until.load(Ordering::Relaxed) <= now
-            && last_sync.elapsed() < Duration::from_secs(900)
+            && last_sync.elapsed() < IDLE_SYNC_INTERVAL
         {
-            let _ = woken.recv_timeout(Duration::from_secs(5));
+            let _ = woken.recv_timeout(IDLE_SYNC_PAUSE);
             continue;
         }
         while woken.try_recv().is_ok() {}
+        // Pointer reconciliation is the slow part of a pass. Phone activity only
+        // needs to know the source has not changed, so run it on the idle cadence
+        // and after a reconnect or wake from sleep. A phone that stays active
+        // still reconciles, at the longer interval, instead of every tick.
+        let phone_active = active_until.load(Ordering::Relaxed) > now;
+        let reconcile = should_reconcile(
+            force_sync,
+            phone_active,
+            last_reconcile.map(|at| at.elapsed()),
+        );
         force_sync = false;
-        let outcome = sync_once(dir);
+        let outcome = sync_pass(dir, reconcile);
+        if reconcile && outcome.is_ok() {
+            last_reconcile = Some(std::time::Instant::now());
+        }
         let healthy = outcome.is_ok() && read_health(dir).failing.is_empty();
         let offline = outcome
             .as_ref()
@@ -1137,10 +1177,41 @@ pub fn run(dir: &Path) -> Result<()> {
             }
             Err(error) => log_unavailable("sync", &error),
         };
-        // Sleep between passes, but not past a fresh wake from the cloud.
-        let _ = woken.recv_timeout(Duration::from_secs(5));
+        // Sleep between passes, but not past a fresh wake from the cloud. While
+        // the phone is active a pass is cheap, and history older than five
+        // seconds makes the next read wait for one, so pass often enough that
+        // a read finds a recent check.
+        let active = active_until.load(Ordering::Relaxed)
+            > std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis() as u64;
+        let _ = woken.recv_timeout(if active {
+            ACTIVE_SYNC_PAUSE
+        } else {
+            IDLE_SYNC_PAUSE
+        });
     }
 }
+
+/// Pointer reconciliation asks the cloud about every session, so it is kept off
+/// the path of a phone read: due on the idle cadence, or half-hourly while the
+/// phone stays active, and always after a reconnect, a wake or a restart.
+fn should_reconcile(forced: bool, phone_active: bool, since_last: Option<Duration>) -> bool {
+    forced
+        || since_last.map_or(true, |elapsed| {
+            elapsed
+                >= if phone_active {
+                    ACTIVE_RECONCILE_INTERVAL
+                } else {
+                    IDLE_SYNC_INTERVAL
+                }
+        })
+}
+
+const IDLE_SYNC_INTERVAL: Duration = Duration::from_secs(900);
+const IDLE_SYNC_PAUSE: Duration = Duration::from_secs(5);
+const ACTIVE_SYNC_PAUSE: Duration = Duration::from_secs(2);
+const ACTIVE_RECONCILE_INTERVAL: Duration = Duration::from_secs(1800);
 
 /// Wall-clock age after which `status` calls the last pass stale. A Mac that
 /// slept will read stale until it wakes and syncs.

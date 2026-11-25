@@ -122,22 +122,25 @@ fn ms(value: Option<i64>) -> Option<u64> {
 }
 
 fn facts_for(db: &Connection, id: &str) -> Result<Facts> {
-    let turn_started_at = ms(db
+    let turn: Option<(i64, Option<i64>)> = db
         .query_row(
-            "SELECT time_created FROM session_message WHERE session_id=?1 AND type='user' AND COALESCE(json_extract(data,'$.synthetic'),0)=0 ORDER BY seq DESC LIMIT 1",
+            "SELECT seq,time_created FROM session_message WHERE session_id=?1 AND type='user' AND COALESCE(json_extract(data,'$.synthetic'),0)=0 ORDER BY seq DESC LIMIT 1",
             [id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .optional()?);
+        .optional()?;
+    let turn_started_at = ms(turn.and_then(|(_, created)| created));
     let last_progress_at = ms(db.query_row(
         "SELECT MAX(time_updated) FROM session_message WHERE session_id=?1 AND type IN ('assistant','shell','compaction')",
         [id],
         |row| row.get::<_, Option<i64>>(0),
     )?);
+    // An open tool belongs to the current turn. Scanning every message's tool
+    // list in a long session cost about half a second per snapshot.
     let tool_open: Option<i64> = db
         .query_row(
-            "SELECT 1 FROM session_message m, json_each(m.data, '$.content') c WHERE m.session_id=?1 AND m.type='assistant' AND json_extract(c.value,'$.type')='tool' AND COALESCE(json_extract(c.value,'$.name'),'') NOT IN ('question','') AND (json_extract(c.value,'$.state.status') IN ('pending','running') OR (json_extract(c.value,'$.state.status') IS NULL AND json_extract(m.data,'$.time.completed') IS NULL)) LIMIT 1",
-            [id],
+            "SELECT 1 FROM session_message m, json_each(m.data, '$.content') c WHERE m.session_id=?1 AND m.seq>=?2 AND m.type='assistant' AND json_extract(c.value,'$.type')='tool' AND COALESCE(json_extract(c.value,'$.name'),'') NOT IN ('question','') AND (json_extract(c.value,'$.state.status') IN ('pending','running') OR (json_extract(c.value,'$.state.status') IS NULL AND json_extract(m.data,'$.time.completed') IS NULL)) LIMIT 1",
+            rusqlite::params![id, turn.map_or(0, |(seq, _)| seq)],
             |row| row.get(0),
         )
         .optional()?;

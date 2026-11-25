@@ -177,7 +177,7 @@ test('overview context excludes reverted/staged text and child sessions, and fla
   {session_id:'overview-visible',status:'working',reason:null,updated_at:Date.now(),last_user_message_id:'new_native_input',top_level:true},
   {session_id:'overview-working-a',status:'working',reason:null,updated_at:Date.now(),top_level:false},
  ]};
- const result=await rpc('list_sessions',{view:'all'});
+ const result=await rpc('list_sessions',{view:'all',detail:true});
  assert.equal(result.counts.total,1);assert.equal(result.sessions.length,1);assert.equal(result.context_fresh,false);
  assert.equal(result.sessions[0].last_user_message.text,'Visible request');assert.equal(result.sessions[0].last_assistant_message.text,'Visible answer');
  assert(!JSON.stringify(result).includes('PRIVATE_CANARY'));
@@ -214,7 +214,7 @@ test('two messages per role and legacy latest-message aliases stay within the 36
   SELECT 'test-owner','test-device','test-epoch','context-budget-'||n,'budget','budget_msg_'||i,i,
    CASE WHEN i%2=1 THEN 'user' ELSE 'assistant' END,repeat('😀',5000),i,i FROM generate_series(1,50) n CROSS JOIN generate_series(1,4) i`);
  runtime={available:true,partial:false,checked_at:Date.now(),statuses:Array.from({length:50},(_,i)=>({session_id:'context-budget-'+(i+1),status:'needs_you',reason:'reply',updated_at:Date.now(),directory:'/projects/fixture',last_user_message_id:'budget_msg_3',attention_assessed:true}))};
- const result=await rpc('list_sessions',{view:'all',limit:50});assert.equal(result.sessions.length,50);
+ const result=await rpc('list_sessions',{view:'all',limit:50,detail:true});assert.equal(result.sessions.length,50);
  let characters=0;
  for(const session of result.sessions){
   assert.equal(session.recent_messages.length,4);

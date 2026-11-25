@@ -131,12 +131,22 @@ them has not been observed here; do not rely on text alone.
 - `read_session` defaults to recent messages. Forward and backward pages preserve
   source order under the response budget. No newer messages means an empty page,
   never a substituted older reply. Read truncated messages with `read_message`.
-- `search_history` returns a bounded matching passage and its Unicode character
-  offset for `read_message`. Search returns at most 30 matches; it does not yet
-  have a continuation cursor.
+- `search_history` returns a short passage around the first matching term (400
+  characters by default, `excerpt_chars` up to 2,000) and its Unicode character
+  offset for `read_message`, newest first. It returns 8 matches by default, at
+  most 30 per call. `next_offset` (null on the last page) continues the search:
+  pass it back as `offset`. Order is deterministic, so pages never repeat a match
+  unless new matching text arrives between calls. To read more of one match, call
+  `read_message(session_id, message_id, offset=excerpt_offset)` rather than
+  widening every excerpt.
 - Pass `list_sessions.next_after` verbatim. A changed list rejects its old cursor
   rather than silently skipping sessions. Start again without `after`.
-- `list_sessions` now gives a Cmd+K-style recent overview by default. For active
+- `list_sessions` rows are compact by default: id, title, folder, status, health,
+  attention and next action, without message text. `detail=true` adds the recent
+  messages described below. `session_brief` is the way to read one session.
+  The compact default exists because three copies of every row's messages cost
+  about 12,000 model tokens for 14 sessions.
+- `list_sessions` gives a Cmd+K-style recent overview by default. For active
   or needing-attention questions, `status="active"` selects working/waiting rows
   and a small recent set whose final replies still need assessment. Whole-set
   counts remove the need to page through completed rows looking for a blocker.
