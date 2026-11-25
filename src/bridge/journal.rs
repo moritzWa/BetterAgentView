@@ -71,6 +71,17 @@ impl Journal {
             .collect::<rusqlite::Result<BTreeMap<_, _>>>()?;
         Ok(rows)
     }
+    /// Every checkpoint's observed watermark and format in one read, for the
+    /// bulk "has anything changed" comparison.
+    pub fn observed_marks(&self) -> Result<Vec<(String, i64, bool)>> {
+        let mut q = self
+            .db
+            .prepare("SELECT session_id, observed, native FROM checkpoint")?;
+        let rows = q
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
     pub fn known(&self) -> Result<Vec<String>> {
         let mut q = self.db.prepare("SELECT session_id FROM checkpoint")?;
         let rows = q
