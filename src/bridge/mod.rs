@@ -616,7 +616,7 @@ fn answer_probe(_dir: &Path, config: &Config, credential: &str, probe: &contract
         probe_id: probe.probe_id.clone(),
         status,
     };
-    let sent = serde_json::to_value(&body)
+    let sent = serde_json::to_value(body)
         .map_err(anyhow::Error::from)
         .and_then(|body| {
             http::request::<contract::OkResponse>(
