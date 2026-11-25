@@ -601,6 +601,37 @@ fn sync_pass(dir: &Path, reconcile: bool) -> Result<usize> {
     Ok(uploads)
 }
 
+/// Reads one session's status and sends it back. Any failure answers `null`, so
+/// the reader falls back to the snapshot at once instead of waiting out a timeout.
+fn answer_probe(_dir: &Path, config: &Config, credential: &str, probe: &contract::Probe) {
+    let _span = crate::perf_log::span("bridge-probe-answer");
+    let status = match runtime::session_status(config, &probe.session_id) {
+        Ok(status) => status,
+        Err(error) => {
+            log_unavailable("probe", &error);
+            None
+        }
+    };
+    let body = contract::ProbeResult {
+        probe_id: probe.probe_id.clone(),
+        status,
+    };
+    let sent = serde_json::to_value(body)
+        .map_err(anyhow::Error::from)
+        .and_then(|body| {
+            http::request::<contract::OkResponse>(
+                &config.endpoint,
+                contract::ROUTE_PROBE,
+                Some(credential),
+                Some(&body),
+                10,
+            )
+        });
+    if let Err(error) = sent {
+        log_unavailable("probe", &error);
+    }
+}
+
 fn publish_runtime(dir: &Path, config: &Config, credential: &str) -> Result<()> {
     // The poll thread and the sync loop both publish. If the other one is mid-publish,
     // its result is the one the phone needs, so this call has nothing to add.
@@ -1087,6 +1118,13 @@ pub fn run(dir: &Path) -> Result<()> {
                     retrying = false;
                 }
                 activity.store(poll.active_until.max(0) as u64, Ordering::Relaxed);
+                // A phone read is waiting on one session's status. Answer from
+                // its own thread so a publication in progress here does not delay it.
+                if let Some(probe) = poll.probe.clone() {
+                    let (dir, config, credential) =
+                        (queue_dir.clone(), config.clone(), credential.clone());
+                    std::thread::spawn(move || answer_probe(&dir, &config, &credential, &probe));
+                }
                 let _ = wake.send(());
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)?

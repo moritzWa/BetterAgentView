@@ -19,6 +19,8 @@ test('old connector -> new server AND new connector -> old server request matrix
   const fixtures=await fixture('wire-payloads.json');
   fixtures.RuntimeSnapshot={available:true,partial:false,truncated:false,statuses:[await fixture('runtime-status.json')]};
   for(const [name,value] of Object.entries(fixtures)) {
+    // A request type the previous release never sent (an additive route) has no old side.
+    if(!old.wireSchemas[name]){assert(current.wireSchemas[name].safeParse(value).success,`new ${name}`);continue;}
     const before=old.wireSchemas[name].parse(value),after=current.wireSchemas[name].parse(value);
     assert(current.wireSchemas[name].safeParse(before).success,`old -> new ${name}`);
     assert(old.wireSchemas[name].safeParse(after).success,`new -> old ${name}`);

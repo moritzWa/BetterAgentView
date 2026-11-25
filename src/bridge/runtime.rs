@@ -73,7 +73,24 @@ pub(super) fn project(session: &AgentSession) -> RuntimeStatus {
 }
 
 pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
-    let _total = crate::perf_log::span("bridge-runtime-snapshot");
+    build(config, None)
+}
+
+/// The status of one session, from the same pipeline as the snapshot. `None` when
+/// the session is not in the snapshot's inventory (hidden, paused, or gone).
+pub(super) fn session_status(config: &Config, id: &str) -> Result<Option<RuntimeStatus>> {
+    Ok(build(config, Some(id))?
+        .statuses
+        .into_iter()
+        .find(|status| status.session_id == id))
+}
+
+fn build(config: &Config, only: Option<&str>) -> Result<Snapshot> {
+    let _total = crate::perf_log::span(if only.is_some() {
+        "bridge-runtime-probe"
+    } else {
+        "bridge-runtime-snapshot"
+    });
     let supervisor = Arc::new(if let Some(state) = &config.supervisor_state {
         OpenCodeSupervisor::with_state_dir(config.opencode_bin.clone(), state.clone())
             .context("runtime snapshot: supervisor")?
@@ -87,7 +104,10 @@ pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
         .is_none()
     {
         return Ok(Snapshot {
-            dashboard: crate::dashboard_snapshot::latest(),
+            dashboard: only
+                .is_none()
+                .then(crate::dashboard_snapshot::latest)
+                .flatten(),
             available: false,
             partial: false,
             truncated: false,
@@ -99,15 +119,18 @@ pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
     // ChatGPT to infer these from the conversation copy.
     let source = OpenCodeSource::managed(config.opencode_bin.clone(), supervisor.clone());
     let discover_span = crate::perf_log::span("bridge-runtime-discover");
-    let discovery = source
-        .discover_with_warnings(&DiscoveryRequest {
-            include_completed: true,
-            include_interactive: true,
-            include_external: true,
-            history_limit: 5000,
-            ..DiscoveryRequest::default()
-        })
-        .context("runtime snapshot: discover")?;
+    let request = DiscoveryRequest {
+        include_completed: true,
+        include_interactive: true,
+        include_external: true,
+        history_limit: 5000,
+        ..DiscoveryRequest::default()
+    };
+    let discovery = match only {
+        Some(id) => source.discover_one(&request, id),
+        None => source.discover_with_warnings(&request),
+    }
+    .context("runtime snapshot: discover")?;
     drop(discover_span);
     let mut discovery = SessionSnapshot {
         sessions: discovery.sessions,
@@ -227,7 +250,10 @@ pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
     drop(_source_span);
     // Full directory metadata can make a count-bounded snapshot too large.
     // Keep its serialized body safely inside the existing 850 KB transport cap.
-    let dashboard = crate::dashboard_snapshot::latest();
+    let dashboard = only
+        .is_none()
+        .then(crate::dashboard_snapshot::latest)
+        .flatten();
     let mut bytes = 1024
         + dashboard
             .as_ref()

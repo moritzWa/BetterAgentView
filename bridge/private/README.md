@@ -127,6 +127,19 @@ them has not been observed here; do not rely on text alone.
   `session_brief.send_params`. ChatGPT's on-screen approval still applies.
 - **Staleness.** Digest and brief say how old native status and history are, and
   warn when the Mac has not been seen recently.
+- **Session probe.** `session_brief(session_id)` asks the Mac for that one session's
+  status through the poll that is already open (`probe` in the poll response, answer
+  to `/v1/connector/probe`) instead of waiting for a whole-inventory publication.
+  The Mac classifies it with the same pipeline as the snapshot (verified identical on
+  every working and waiting session) in about 0.5 s instead of 1.4 s, while history
+  catches up in parallel. If the Mac does not answer within 2.5 s, or is an older
+  build, the brief falls back to waiting for the next snapshot as before.
+  `timing_ms.probed` says which path ran.
+- **Call log.** Every authenticated MCP call appends `{time, method, tool, duration,
+  phase durations, result size, error code}` to a per-hour bucket in the Durable
+  Object, kept 14 days (at most 1,500 calls per hour). No arguments or results are
+  stored. `GET /v1/timings?hours=24` returns it with a read token;
+  `node test/e2e/latency-log.mjs --since-hours 24` summarises it.
 
 - `read_session` defaults to recent messages. Forward and backward pages preserve
   source order under the response budget. No newer messages means an empty page,

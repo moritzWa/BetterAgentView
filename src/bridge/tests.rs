@@ -29,6 +29,7 @@ fn generated_wire_types_roundtrip_the_same_fixtures_as_the_worker() {
     check!(CursorRequest);
     check!(CheckedRequest);
     check!(EmptyRequest);
+    check!(ProbeResult);
     check!(AckRequest);
     check!(StartAckRequest);
     check!(VerifyRequest);
@@ -1174,5 +1175,95 @@ fn bulk_scan_skips_only_native_sessions_whose_watermark_is_unchanged() {
     assert_eq!(
         unchanged.into_iter().collect::<Vec<_>>(),
         vec!["no_events".to_string(), "same".to_string()]
+    );
+}
+
+/// Not part of the normal run. For every session that is working or needs the
+/// owner, plus the newest finished ones, compares the one-session probe with the
+/// whole snapshot's row and prints how long each takes. Sessions change while it
+/// runs, so a difference only counts if it survives a second snapshot. Reads only.
+///   AGENTVIEW_BRIDGE_STATE=~/.local/state/agentview/bridge cargo test --release \
+///     probe_status_matches -- --ignored --nocapture
+#[test]
+#[ignore = "profiles the real paired Mac; reads only"]
+fn probe_status_matches_the_snapshot_row_on_the_real_store() {
+    let dir = std::path::PathBuf::from(std::env::var_os("AGENTVIEW_BRIDGE_STATE").unwrap());
+    let config = load(&dir).unwrap();
+    let mut snapshot_ms = Vec::new();
+    let mut snapshot = None;
+    for _ in 0..3 {
+        let started = std::time::Instant::now();
+        snapshot = Some(runtime::snapshot(&config).unwrap());
+        snapshot_ms.push(started.elapsed().as_millis());
+    }
+    let snapshot = snapshot.unwrap();
+    println!(
+        "snapshot ms (cold, then warm): {snapshot_ms:?}, {} statuses",
+        snapshot.statuses.len()
+    );
+    let mut chosen: Vec<_> = snapshot
+        .statuses
+        .iter()
+        .filter(|s| s.top_level && s.status != contract::Status::Done)
+        .take(20)
+        .collect();
+    let busy = chosen.len();
+    chosen.extend(
+        snapshot
+            .statuses
+            .iter()
+            .filter(|s| s.top_level && s.status == contract::Status::Done)
+            .take(10),
+    );
+    let same = |p: &contract::RuntimeStatus, row: &contract::RuntimeStatus| {
+        p.status == row.status
+            && p.reason == row.reason
+            && p.can_message == row.can_message
+            && p.last_user_message_id == row.last_user_message_id
+            && p.directory == row.directory
+            && p.top_level == row.top_level
+            && p.attention_assessed == row.attention_assessed
+            && p.completion == row.completion
+            && p.health == row.health
+    };
+    let (mut total_ms, mut worst_ms, mut first_round) = (0u128, 0u128, Vec::new());
+    for row in &chosen {
+        let started = std::time::Instant::now();
+        let probed = runtime::session_status(&config, &row.session_id).unwrap();
+        let ms = started.elapsed().as_millis();
+        total_ms += ms;
+        worst_ms = worst_ms.max(ms);
+        if !probed.as_ref().is_some_and(|p| same(p, row)) {
+            first_round.push((row.session_id.clone(), probed, (*row).clone()));
+        }
+    }
+    println!(
+        "{} sessions ({busy} not done): probe avg {} ms, worst {worst_ms} ms; {} differ from the first snapshot",
+        chosen.len(),
+        total_ms / chosen.len().max(1) as u128,
+        first_round.len()
+    );
+    let again = runtime::snapshot(&config).unwrap();
+    let mut persistent = 0;
+    for (id, first, row) in &first_round {
+        let now_probe = runtime::session_status(&config, id).unwrap();
+        let now_row = again.statuses.iter().find(|s| &s.session_id == id);
+        let ok = matches!((&now_probe, now_row), (Some(p), Some(r)) if same(p, r));
+        if !ok {
+            persistent += 1;
+        }
+        println!(
+            "{id}: first snapshot {:?}/{:?}, first probe {:?}, now snapshot {:?}, now probe {:?} -> {}",
+            row.status,
+            row.health,
+            first.as_ref().map(|p| (&p.status, &p.health)),
+            now_row.map(|r| (&r.status, &r.health)),
+            now_probe.as_ref().map(|p| (&p.status, &p.health)),
+            if ok { "agrees now" } else { "STILL DIFFERS" }
+        );
+    }
+    assert_eq!(
+        persistent, 0,
+        "probe and snapshot disagree on a stable session"
     );
 }

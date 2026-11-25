@@ -422,6 +422,20 @@ pub(super) fn parse_lsof_cwds(output: &str) -> BTreeMap<u32, PathBuf> {
 
 /// Session IDs named on live command lines. Discovery loads these even when
 /// they fall outside the recent-history window.
+/// The earliest start, less the slack `assign` allows, among processes working in
+/// `directory`. Sessions updated before it cannot belong to any of them.
+pub(super) fn directory_holders_since(holders: &[Holder], directory: &Path) -> Option<u64> {
+    let wanted = canonical(directory);
+    holders
+        .iter()
+        .filter_map(|holder| match &holder.target {
+            Target::Directory(Some(dir)) if canonical(dir) == wanted => Some(holder.started_ms),
+            _ => None,
+        })
+        .min()
+        .map(|started| started.saturating_sub(START_SLACK_MS))
+}
+
 pub(super) fn named_sessions(holders: &[Holder]) -> BTreeSet<String> {
     holders
         .iter()

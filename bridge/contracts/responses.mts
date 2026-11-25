@@ -10,7 +10,7 @@ export const BatchResponse=object({batch_id:id,session_id:id,committed:z.boolean
 export const CursorsResponse=object({mismatch:z.array(id)}).meta({id:'CursorsResponse'});
 export const VerifyResponse=object({session_id:id,match:z.boolean(),reason:z.enum(['missing','match','differs']),cloud_cursor:counter.optional(),cloud_count:counter.optional()}).meta({id:'VerifyResponse'});
 export const RuntimeAlert=object({incident:counter,stale_for_ms:counter}).meta({id:'RuntimeAlert'});
-export const PollResponse=object({pending:z.boolean(),generation:counter,active_until:counter,runtime_alert:RuntimeAlert.nullable().optional()}).meta({id:'PollResponse'});
+export const PollResponse=object({pending:z.boolean(),generation:counter,active_until:counter,runtime_alert:RuntimeAlert.nullable().optional(),probe:object({probe_id:id,session_id:id}).nullable().optional()}).meta({id:'PollResponse'});
 export const MessageLease=object({operation_id:id,session_id:id,message_id:id,text:z.string().min(1).max(50_000),base_cursor:counter,expires_at:counter,context:ReadContext.nullable().optional()}).meta({id:'MessageLease'});
 export const ConfirmationLease=object({needs_confirmation:id}).meta({id:'ConfirmationLease'});
 export const LeaseResponse=object({message:z.union([MessageLease,ConfirmationLease]).nullable()}).meta({id:'LeaseResponse'});
@@ -24,7 +24,7 @@ export const ArtifactResponse=object({artifact_id:id,sha256:z.string().regex(/^[
 const artifactMetadata=object({artifact_id:id,session_id:id,title:z.string(),name:z.string(),mime_type:z.string(),byte_length:counter,sha256:z.string()}).passthrough();
 export const nativeSchemas={OkResponse,PairStartResponse,PairTokenResponse,BatchResponse,CursorsResponse,VerifyResponse,PollResponse,LeaseResponse,MessageLease,StartLeaseResponse,ReceiptResponse,StartReceiptResponse,ArtifactResponse};
 export const responseByRoute={
-  [routes.checked]:OkResponse,[routes.runtime]:OkResponse,[routes.poll]:PollResponse,[routes.lease]:LeaseResponse,[routes.startLease]:StartLeaseResponse,
+  [routes.checked]:OkResponse,[routes.runtime]:OkResponse,[routes.probe]:OkResponse,[routes.poll]:PollResponse,[routes.lease]:LeaseResponse,[routes.startLease]:StartLeaseResponse,
   [routes.ack]:ReceiptResponse,[routes.startAck]:StartReceiptResponse,[routes.cursors]:CursorsResponse,[routes.verify]:VerifyResponse,
   [routes.batches]:BatchResponse,[routes.artifact]:ArtifactResponse,[routes.pairStart]:PairStartResponse,[routes.pairToken]:PairTokenResponse,
 };

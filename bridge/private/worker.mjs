@@ -10,7 +10,7 @@ import { privateHandler } from '../sync/http.mjs';
 import { digest, SyncError } from '../sync/projection.mjs';
 import { RuntimeSnapshot } from './runtime.mjs';
 import {publishArtifact} from './artifacts.mjs';
-import {CheckedRequest,EmptyRequest,AckRequest,StartAckRequest,routes} from '../contracts/contract.mjs';
+import {CheckedRequest,EmptyRequest,ProbeResult,AckRequest,StartAckRequest,routes} from '../contracts/contract.mjs';
 import {responseByRoute} from '../contracts/responses.mjs';
 export { WakeGate } from './gate.mjs';
 
@@ -53,7 +53,12 @@ export function application({database=openDatabase}={}) {
         if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new SyncError('unauthorized',401);
         await wire(EmptyRequest,request);
         const value=await gate.poll(await digest(token));
-        return json({pending:value.pending,generation:value.generation,active_until:value.active_until,runtime_alert:value.runtime_alert??null}); // No Neon query.
+        return json({pending:value.pending,generation:value.generation,active_until:value.active_until,runtime_alert:value.runtime_alert??null,probe:value.probe??null}); // No Neon query.
+      }
+      if(path===routes.probe && request.method==='POST') {
+        if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new SyncError('unauthorized',401);
+        const result=await wire(ProbeResult,await bounded(request,100_000));
+        await gate.probeWrite(await digest(token),result);return json({ok:true}); // No Neon query.
       }
       if(path===routes.runtime && request.method==='POST') {
         if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new SyncError('unauthorized',401);
@@ -77,7 +82,7 @@ export function application({database=openDatabase}={}) {
       const store=new SyncStore(db),outbox=new Outbox(db,gate),starts=new Starts(db,gate);
       if(path==='/v1/timings' && request.method==='GET') {
         await store.authenticate(token,'read');
-        return json(await gate.callLog());
+        return json(await gate.callLog(Math.min(336,Math.max(1,Number(url.searchParams.get('hours'))||24))));
       }
       if(path==='/mcp') {
         const principal=await timing.time('auth',()=>store.authenticate(token,'read'));
@@ -133,7 +138,8 @@ export function application({database=openDatabase}={}) {
       const header=response.headers.get('server-timing')??'',note=name=>header.match(new RegExp(`${name};desc="([^"]*)"`))?.[1]??null;
       ctx.waitUntil(gateClient(env.GATE,OWNER).logCall({t:started,ms:Date.now()-started,method:String(envelope.method??'').slice(0,40),
         tool:note('tool_name')??(typeof envelope.params?.name==='string'?envelope.params.name.slice(0,40):null),status:response.status,
-        result_chars:Number(note('result_chars'))||null,error:note('error'),phases:header.replace(/;desc="[^"]*"/g,'').slice(0,400)}).catch(()=>{}));
+        result_chars:Number(note('result_chars'))||null,error:note('error'),
+        phases:Object.fromEntries([...header.matchAll(/(?:^|, )([a-z_]+);dur=([\d.]+)/g)].map(m=>[m[1],Math.round(Number(m[2]))]))}).catch(()=>{}));
     }
     if(response.ok&&schema) {
       const parsed=schema.safeParse(await response.clone().json().catch(()=>null));

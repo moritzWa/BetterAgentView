@@ -3,7 +3,7 @@
 import {z} from 'zod';
 
 export const limits={cursorBatch:1000,cursorMax:4000,batchChunk:400,batchMessages:500,snapshotStatuses:1000,artifactBytes:512_000} as const;
-export const routes={runtime:'/v1/connector/runtime',checked:'/v1/connector/checked',poll:'/v1/connector/poll',lease:'/v1/connector/lease',ack:'/v1/connector/ack',startLease:'/v1/connector/start-lease',startAck:'/v1/connector/start-ack',cursors:'/v1/sync/cursors',verify:'/v1/sync/verify',batches:'/v1/sync/batches',artifact:'/v1/artifacts',pairStart:'/pair/start',pairToken:'/pair/token'} as const;
+export const routes={runtime:'/v1/connector/runtime',checked:'/v1/connector/checked',poll:'/v1/connector/poll',probe:'/v1/connector/probe',lease:'/v1/connector/lease',ack:'/v1/connector/ack',startLease:'/v1/connector/start-lease',startAck:'/v1/connector/start-ack',cursors:'/v1/sync/cursors',verify:'/v1/sync/verify',batches:'/v1/sync/batches',artifact:'/v1/artifacts',pairStart:'/pair/start',pairToken:'/pair/token'} as const;
 const id=z.string().min(1).max(200);
 const counter=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const operation=z.string().regex(/^[A-Za-z0-9_-]{8,160}$/);
@@ -59,6 +59,7 @@ export const ReadContext=z.object({version:z.literal(1),anchor_order:z.number().
 export const CursorPointer=z.object({session_id:id,cursor:counter}).strict().meta({id:'CursorPointer'});
 export const CursorRequest=z.object({sessions:z.array(CursorPointer).max(limits.cursorMax)}).strict().meta({id:'CursorRequest'});
 export const CheckedRequest=z.object({complete:z.boolean().optional(),skipped:counter.optional(),behind:counter.max(100_000).optional(),behind_since:counter.nullable().optional()}).strict().meta({id:'CheckedRequest'});
+export const ProbeResult=z.object({probe_id:id,status:RuntimeStatus.nullable()}).strict().meta({id:'ProbeResult'});
 export const EmptyRequest=z.object({}).strict().meta({id:'EmptyRequest'});
 export const AckRequest=z.object({operation_id:id,message_id:id,status:AckStatus}).strict().meta({id:'AckRequest'});
 export const StartAckRequest=z.object({operation_id:id,status:StartAckStatus,session_id:id.nullable(),reason:z.string().regex(/^[a-z_]{1,40}$/).nullable()}).strict().meta({id:'StartAckRequest'});
@@ -92,4 +93,4 @@ export const toolInputs={
 export type ToolName=keyof typeof toolInputs;
 export type ToolInput<K extends ToolName>=z.output<(typeof toolInputs)[K]>;
 
-export const wireSchemas={RuntimeSnapshot,Message,Session,Batch:BatchShape,ReadContext,CursorPointer,CursorRequest,CheckedRequest,EmptyRequest,AckRequest,StartAckRequest,VerifyRequest,PairStart,PairToken,ArtifactUpload};
+export const wireSchemas={RuntimeSnapshot,Message,Session,Batch:BatchShape,ReadContext,CursorPointer,CursorRequest,CheckedRequest,EmptyRequest,ProbeResult,AckRequest,StartAckRequest,VerifyRequest,PairStart,PairToken,ArtifactUpload};
