@@ -55,9 +55,13 @@ async function checkLiveGate() {
   const server=await json(service);
   const {base:localBase,authorization:nativeAuth}=nativeConnection(server);
   const title='Bridge release probe '+randomUUID();
-  // A real existing project directory avoids native location creation. The gate
-  // never reads a project's files or executes project code.
-  const cwd=process.env.AGENTVIEW_GATE_DIRECTORY??join(home,'Code/agentview');
+  // An existing folder avoids native location creation, and an empty one of the
+  // gate's own means no project files are read and no project code runs.
+  // In a project folder with a running OpenCode TUI the
+  // daemon gives the new empty session to that process ("waiting at prompt"), the
+  // fixture reads needs_you instead of done, and the gate times out (2026-11-24).
+  const cwd=process.env.AGENTVIEW_GATE_DIRECTORY??join(dir,'gate-fixture');
+  await mkdir(cwd,{recursive:true,mode:0o700});
   const location='?'+new URLSearchParams({'location[directory]':cwd});
   const owner='wallawitsch@gmail.com',reader=randomBytes(32).toString('base64url');
   let db,hash,fixtureId,shellId,shellPid,finished=false,passed=false,cancelled=false;
