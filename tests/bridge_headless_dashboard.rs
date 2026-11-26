@@ -6,6 +6,11 @@ fn connector_can_build_dashboard_without_a_running_terminal_or_snapshot_file() {
     let state = home.path().join("state");
     let root = state.join("agentview/dashboard-snapshots");
     fs::create_dir_all(&root).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(root.parent().unwrap(), fs::Permissions::from_mode(0o700)).unwrap();
+    }
     fs::write(root.join("list-preferences"), r#"["reviewer",true]"#).unwrap();
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/populated-sessions.json");
     let read = || {
