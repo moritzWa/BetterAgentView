@@ -77,6 +77,9 @@
     "MessageLease": {
       "$ref": "#/definitions/MessageLease"
     },
+    "VisibilityLease": {
+      "$ref": "#/definitions/VisibilityLease"
+    },
     "StartLeaseResponse": {
       "$ref": "#/definitions/StartLeaseResponse"
     },
@@ -116,6 +119,7 @@
     "PollResponse",
     "LeaseResponse",
     "MessageLease",
+    "VisibilityLease",
     "StartLeaseResponse",
     "ReceiptResponse",
     "StartReceiptResponse",
@@ -1314,6 +1318,13 @@
               "type": "null"
             }
           ]
+        },
+        "visibility": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/VisibilityLease"
+            }
+          ]
         }
       },
       "required": [
@@ -1388,6 +1399,49 @@
         "needs_confirmation"
       ],
       "additionalProperties": false
+    },
+    "VisibilityLease": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "message_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "action": {
+          "$ref": "#/definitions/VisibilityAction"
+        },
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "operation_id",
+        "session_id",
+        "message_id",
+        "action",
+        "expires_at"
+      ],
+      "additionalProperties": false
+    },
+    "VisibilityAction": {
+      "type": "string",
+      "enum": [
+        "hide",
+        "unhide"
+      ]
     },
     "StartLeaseResponse": {
       "type": "object",

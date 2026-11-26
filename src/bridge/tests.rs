@@ -6,6 +6,63 @@ use source::{Capture, Message};
 use tempfile::tempdir;
 
 #[test]
+fn visibility_delivery_uses_local_registry_and_replays_only_the_receipt() {
+    use contract::AckStatus::{Accepted, Failed};
+    let temp = tempdir().unwrap();
+    let path = temp.path().join("registry").join("hidden-sessions.json");
+    let registry = || crate::hidden::HiddenSessions::load(&path);
+    let journal = Journal::open(&temp.path().join("journal.sqlite")).unwrap();
+    let lease = |operation_id, action, expires_at| {
+        let body = json!({"operation_id":operation_id,"session_id":"ses_fixture",
+            "message_id":"receipt_fixture","action":action,"expires_at":expires_at});
+        journal
+            .db
+            .execute(
+                "INSERT INTO delivery(operation_id,body) VALUES (?1,?2)",
+                rusqlite::params![operation_id, body.to_string()],
+            )
+            .unwrap();
+        body
+    };
+    let later = delivery_now().unwrap() + 60_000;
+    let hide = lease("hide_fixture", "hide", later);
+    assert_eq!(
+        visibility_delivery(&journal, hide, registry).unwrap(),
+        Accepted
+    );
+    assert!(registry().unwrap().contains("ses_fixture"));
+    let unhide = lease("unhide_fixture", "unhide", later);
+    assert_eq!(
+        visibility_delivery(&journal, unhide, registry).unwrap(),
+        Accepted
+    );
+    assert!(!registry().unwrap().contains("ses_fixture"));
+    let recorded: String = journal
+        .db
+        .query_row(
+            "SELECT body FROM delivery WHERE operation_id='hide_fixture'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        visibility_delivery(
+            &journal,
+            serde_json::from_str(&recorded).unwrap(),
+            || panic!("replayed registry mutation")
+        )
+        .unwrap(),
+        Accepted
+    );
+    let expired = lease("expired_fixture", "hide", 1);
+    assert_eq!(
+        visibility_delivery(&journal, expired, || panic!("applied an expired lease")).unwrap(),
+        Failed
+    );
+    assert!(!registry().unwrap().contains("ses_fixture"));
+}
+
+#[test]
 fn generated_wire_types_roundtrip_the_same_fixtures_as_the_worker() {
     let fixtures: Value = serde_json::from_str(include_str!(
         "../../bridge/test/fixtures/wire-payloads.json"

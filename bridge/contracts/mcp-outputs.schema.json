@@ -1567,6 +1567,153 @@
       }
     }
   },
+  "hide_session": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "session_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "action": {
+        "$ref": "#/definitions/VisibilityAction"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "applied",
+          "failed",
+          "expired",
+          "uncertain"
+        ]
+      },
+      "say_to_owner": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "operation_id",
+      "session_id",
+      "action",
+      "status",
+      "say_to_owner"
+    ],
+    "additionalProperties": false,
+    "definitions": {
+      "VisibilityAction": {
+        "type": "string",
+        "enum": [
+          "hide",
+          "unhide"
+        ]
+      }
+    }
+  },
+  "unhide_session": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "session_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "action": {
+        "$ref": "#/definitions/VisibilityAction"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "applied",
+          "failed",
+          "expired",
+          "uncertain"
+        ]
+      },
+      "say_to_owner": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "operation_id",
+      "session_id",
+      "action",
+      "status",
+      "say_to_owner"
+    ],
+    "additionalProperties": false,
+    "definitions": {
+      "VisibilityAction": {
+        "type": "string",
+        "enum": [
+          "hide",
+          "unhide"
+        ]
+      }
+    }
+  },
+  "session_visibility_status": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "session_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "action": {
+        "$ref": "#/definitions/VisibilityAction"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "applied",
+          "failed",
+          "expired",
+          "uncertain"
+        ]
+      },
+      "say_to_owner": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "operation_id",
+      "session_id",
+      "action",
+      "status",
+      "say_to_owner"
+    ],
+    "additionalProperties": false,
+    "definitions": {
+      "VisibilityAction": {
+        "type": "string",
+        "enum": [
+          "hide",
+          "unhide"
+        ]
+      }
+    }
+  },
   "start_session": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",

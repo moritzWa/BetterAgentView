@@ -73,6 +73,8 @@ export const ArtifactUpload = z.object({ artifact_id: z.string().regex(/^[a-f0-9
 }).strict().meta({ id: 'ArtifactUpload' });
 // MCP advertises these same schemas and parses them before a typed handler runs.
 // Keep input defaults here, not in a second registration-site schema.
+export const VisibilityAction = z.enum(['hide', 'unhide']).meta({ id: 'VisibilityAction' });
+const visibilityInput = z.object({ operation_id: operation, session_id: id.regex(/^[^\p{Cc}]+$/u), confirmed: z.literal(true) });
 export const toolInputs = {
     list_visible_sessions: z.object({ directory: z.string().min(1).max(4100).optional(), include_scheduled_and_paused: z.boolean().default(false) }),
     list_artifacts: z.object({ session_id: id }),
@@ -86,6 +88,7 @@ export const toolInputs = {
     read_message: z.object({ session_id: id, message_id: id, offset: z.number().int().min(0).max(1_000_000).default(0) }),
     send_session_message: z.object({ operation_id: operation, session_id: id, text: z.string().min(1).max(50_000), base_cursor: counter.optional(), context: ReadContext.optional(), confirmed: z.literal(true) }),
     message_status: z.object({ operation_id: id }), cancel_message: z.object({ operation_id: id, confirmed: z.literal(true) }),
+    hide_session: visibilityInput, unhide_session: visibilityInput, session_visibility_status: z.object({ operation_id: operation }),
     start_session: z.object({ operation_id: operation, directory: z.string().min(2).max(1024), text: z.string().min(1).max(50_000), confirmed: z.literal(true) }),
     start_status: z.object({ operation_id: id }), cancel_start: z.object({ operation_id: id, confirmed: z.literal(true) }),
 };

@@ -3,14 +3,23 @@ import { ReadContext,readContext,sameContext } from './context.mjs';
 import { requireGrant } from './grant.mjs';
 const scope=p=>[p.owner_id,p.device_id,p.database_epoch];
 const where='owner_id=$1 AND device_id=$2 AND database_epoch=$3';
+// Reserve a receipt ID namespace for local registry operations. The existing
+// outbox stores their action in text; normal sends always use msg_agentvoice_.
+const visibilityPrefix='visibility_agentvoice_';
+const isVisibility=column=>`starts_with(${column},'${visibilityPrefix}')`;
 
 export class Outbox {
   constructor(db,gate) { this.db=db;this.gate=gate; }
-  async send(principal,{operation_id,session_id,text,base_cursor,context}) {
+  send(principal,args) {return this.enqueue(principal,args);}
+  setVisibility(principal,{operation_id,session_id,confirmed},action) {
+    if(confirmed!==true || !['hide','unhide'].includes(action) || typeof session_id!=='string' || !/^[^\p{Cc}]+$/u.test(session_id))throw new SyncError('invalid_visibility_request',400);
+    return this.enqueue(principal,{operation_id,session_id,text:action},true);
+  }
+  async enqueue(principal,{operation_id,session_id,text,base_cursor,context},visibility=false) {
     if(!principal.scopes?.split(' ').includes('messages:send'))throw new SyncError('write_permission_required',403);
     if(!/^[A-Za-z0-9_-]{8,160}$/.test(operation_id??'') || typeof session_id!=='string' || session_id.length>200 || typeof text!=='string' || !text.trim() || text.length>50_000 || (base_cursor!==undefined && (!Number.isSafeInteger(base_cursor) || base_cursor<0)))throw new SyncError('invalid_message',400);
     if(context && !ReadContext.safeParse(context).success)throw new SyncError('invalid_read_context',400);
-    const hash=await digest({operation_id,session_id,text,...(base_cursor===undefined?{}:{base_cursor}),...(context?{context}:{})});
+    const hash=await digest({operation_id,session_id,text,...(visibility?{visibility}:{}),...(base_cursor===undefined?{}:{base_cursor}),...(context?{context}:{})});
     // Signal first: a failed DB write causes a harmless extra poll, not a stranded message.
     await this.gate.signal(`${principal.device_id}|${principal.database_epoch}`);
     const receipt=await this.db.transaction(async tx=>{
@@ -21,15 +30,19 @@ export class Outbox {
       await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',[JSON.stringify([...s,operation_id])]);
       const old=(await tx.query(`SELECT * FROM av_outbox WHERE ${where} AND operation_id=$4`,[...s,operation_id])).rows[0];
       if(old) { if(old.payload_hash!==hash)throw new SyncError('operation_id_conflict');return publicReceipt(old); }
-      const session=(await tx.query(`SELECT cursor,state FROM av_sessions WHERE ${where} AND session_id=$4 AND cursor IS NOT NULL FOR SHARE`,[...s,session_id])).rows[0];
-      if(!session || session.state.deleted)throw new SyncError('session_not_found',404);
-      // Omitted cursor: the owner decided from a review moments ago, so take the current state. The context guard below still stops delivery if the history changes before the Mac accepts it.
-      const cursor=base_cursor===undefined?Number(session.cursor):base_cursor;
-      if(cursor>Number(session.cursor) || (!context && Number(session.cursor)!==cursor))throw new SyncError('context_changed_re_read_and_confirm',409);
-      const guard=await readContext(tx,principal,session_id,context??null);
-      if(context && !sameContext(context,guard))throw new SyncError('history_changed_re_read_and_confirm',409);
+      // -1 can never match a transcript cursor, even if the Worker is rolled back.
+      let cursor=-1,guard=null;
+      if(!visibility) {
+        const session=(await tx.query(`SELECT cursor,state FROM av_sessions WHERE ${where} AND session_id=$4 AND cursor IS NOT NULL FOR SHARE`,[...s,session_id])).rows[0];
+        if(!session || session.state.deleted)throw new SyncError('session_not_found',404);
+        // Omitted cursor: take the current state. The guard still checks it at delivery.
+        cursor=base_cursor===undefined?Number(session.cursor):base_cursor;
+        if(cursor>Number(session.cursor) || (!context && Number(session.cursor)!==cursor))throw new SyncError('context_changed_re_read_and_confirm',409);
+        guard=await readContext(tx,principal,session_id,context??null);
+        if(context && !sameContext(context,guard))throw new SyncError('history_changed_re_read_and_confirm',409);
+      }
       const row=(await tx.query(`INSERT INTO av_outbox (owner_id,device_id,database_epoch,operation_id,session_id,message_id,text,payload_hash,base_cursor,created_at,expires_at,context_guard)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[...s,operation_id,session_id,`msg_agentvoice_${operation_id}`,text,hash,cursor,Date.now(),Date.now()+86400_000,JSON.stringify(guard)])).rows[0];
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[...s,operation_id,session_id,(visibility?visibilityPrefix:'msg_agentvoice_')+operation_id,text,hash,cursor,Date.now(),Date.now()+86400_000,guard===null?null:JSON.stringify(guard)])).rows[0];
       return publicReceipt(row);
     });
     // The first signal can be consumed before Postgres commits. Signal again
@@ -38,16 +51,22 @@ export class Outbox {
     await this.gate.signal(`${principal.device_id}|${principal.database_epoch}`);
     return receipt;
   }
-  async lease(principal) {
+  async lease(principal,supportsVisibility=false) {
     const message=await this.db.transaction(async tx=>{
       await requireGrant(tx,principal,{audience:'sync',scope:'messages:deliver',lock:true});
       const s=scope(principal),now=Date.now();
       await tx.query(`UPDATE av_outbox SET state=CASE WHEN state IN ('queued','needs_confirmation') THEN 'expired' ELSE 'uncertain' END WHERE ${where} AND state IN ('queued','leased','needs_confirmation') AND expires_at<=$4`,[...s,now]);
       const row=(await tx.query(`SELECT * FROM av_outbox q WHERE ${where} AND (state='queued' OR (state='leased' AND lease_until<$4))
+        AND ($5 OR NOT ${isVisibility('q.message_id')})
         AND NOT EXISTS (SELECT 1 FROM av_outbox earlier WHERE earlier.owner_id=q.owner_id AND earlier.device_id=q.device_id AND earlier.database_epoch=q.database_epoch
-        AND earlier.session_id=q.session_id AND earlier.sequence<q.sequence AND earlier.state IN ('queued','leased','needs_confirmation','uncertain'))
-        ORDER BY sequence LIMIT 1 FOR UPDATE SKIP LOCKED`,[...s,now])).rows[0];
+        AND earlier.session_id=q.session_id AND earlier.sequence<q.sequence AND ${isVisibility('earlier.message_id')}=${isVisibility('q.message_id')}
+        AND (earlier.state IN ('queued','leased','needs_confirmation') OR (earlier.state='uncertain' AND NOT ${isVisibility('q.message_id')})))
+        ORDER BY sequence LIMIT 1 FOR UPDATE SKIP LOCKED`,[...s,now,supportsVisibility])).rows[0];
       if(!row)return null;
+      if(row.message_id.startsWith(visibilityPrefix)) {
+        await tx.query(`UPDATE av_outbox SET state='leased',lease_until=$5 WHERE ${where} AND operation_id=$4`,[...s,row.operation_id,now+60_000]);
+        return {operation_id:row.operation_id,session_id:row.session_id,message_id:row.message_id,action:row.text,expires_at:Number(row.expires_at)};
+      }
       const live=(await tx.query(`SELECT cursor,state FROM av_sessions WHERE ${where} AND session_id=$4`,[...s,row.session_id])).rows[0];
       const guard=live && !live.state.deleted && row.context_guard ? await readContext(tx,principal,row.session_id,row.context_guard):null;
       if(!live || live.state.deleted || (row.context_guard ? !sameContext(row.context_guard,guard):Number(live.cursor)!==Number(row.base_cursor))) {
@@ -71,13 +90,14 @@ export class Outbox {
     await this.gate.signalReceipt(`${principal.device_id}|${principal.database_epoch}`,operation_id);
     return publicReceipt(result.rows[0]);
   }
-  async status(principal,operation_id) {
+  async status(principal,operation_id,visibility=false) {
     await this.db.query(`UPDATE av_outbox SET state=CASE WHEN state IN ('queued','needs_confirmation') THEN 'expired' ELSE 'uncertain' END WHERE ${where} AND operation_id=$4 AND state IN ('queued','leased','needs_confirmation') AND expires_at<=$5`,[...scope(principal),operation_id,Date.now()]);
     const row=(await this.db.query(`SELECT * FROM av_outbox WHERE ${where} AND operation_id=$4`,[...scope(principal),operation_id])).rows[0];
-    if(!row)throw new SyncError('message_not_found',404);
+    if(!row || row.message_id.startsWith(visibilityPrefix)!==visibility)throw new SyncError(visibility?'visibility_operation_not_found':'message_not_found',404);
+    if(visibility)return {...publicReceipt(row),action:row.text};
     const receipt=publicReceipt(row);
     if(row.state==='queued') {
-      const earlier=(await this.db.query(`SELECT operation_id,state FROM av_outbox WHERE ${where} AND session_id=$4 AND sequence<$5 AND state IN ('queued','leased','needs_confirmation','uncertain') ORDER BY sequence LIMIT 1`,[...scope(principal),row.session_id,row.sequence])).rows[0];
+      const earlier=(await this.db.query(`SELECT operation_id,state FROM av_outbox WHERE ${where} AND session_id=$4 AND sequence<$5 AND NOT ${isVisibility('message_id')} AND state IN ('queued','leased','needs_confirmation','uncertain') ORDER BY sequence LIMIT 1`,[...scope(principal),row.session_id,row.sequence])).rows[0];
       if(earlier){receipt.blocked_by={operation_id:earlier.operation_id,status:earlier.state};if(['needs_confirmation','uncertain'].includes(earlier.state))receipt.next_action='resolve_earlier_operation';}
     }
     return receipt;
@@ -86,7 +106,7 @@ export class Outbox {
     if(!principal.scopes?.split(' ').includes('messages:send'))throw new SyncError('write_permission_required',403);
     const row=await this.db.transaction(async tx=>{
       await requireGrant(tx,principal,{scope:'messages:send',lock:true});
-      return (await tx.query(`UPDATE av_outbox SET state='cancelled' WHERE ${where} AND operation_id=$4 AND state IN ('queued','needs_confirmation','cancelled') RETURNING *`,[...scope(principal),operation_id])).rows[0];
+      return (await tx.query(`UPDATE av_outbox SET state='cancelled' WHERE ${where} AND operation_id=$4 AND NOT ${isVisibility('message_id')} AND state IN ('queued','needs_confirmation','cancelled') RETURNING *`,[...scope(principal),operation_id])).rows[0];
     });
     if(!row)throw new SyncError('cannot_cancel_admitted_or_inflight_message',409);
     await this.gate.signal(`${principal.device_id}|${principal.database_epoch}`);

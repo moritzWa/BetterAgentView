@@ -81,6 +81,8 @@ pub struct BridgeContracts {
     pub verify_request: VerifyRequest,
 
     pub verify_response: VerifyResponse,
+
+    pub visibility_lease: VisibilityLease,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -288,6 +290,9 @@ pub struct EmptyRequest {}
 pub struct LeaseResponse {
     #[serde(deserialize_with = "required_nullable")]
     pub message: Option<Lease>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<VisibilityLease>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -322,6 +327,27 @@ pub struct ReadContext {
 
     #[serde(deserialize_with = "required_nullable")]
     pub visible_before: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VisibilityLease {
+    pub action: VisibilityAction,
+
+    pub expires_at: i64,
+
+    pub message_id: String,
+
+    pub operation_id: String,
+
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VisibilityAction {
+    Hide,
+
+    Unhide,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -900,6 +926,13 @@ impl std::str::FromStr for StartAckStatus {
 }
 
 impl std::str::FromStr for MimeType {
+    type Err = serde_json::Error;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        serde_json::from_value(serde_json::Value::String(value.to_owned()))
+    }
+}
+
+impl std::str::FromStr for VisibilityAction {
     type Err = serde_json::Error;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         serde_json::from_value(serde_json::Value::String(value.to_owned()))

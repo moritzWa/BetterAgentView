@@ -92,8 +92,10 @@ export function application({database=openDatabase}={}) {
       if(path===routes.lease && request.method==='POST') {
         await wire(EmptyRequest,request);
         const principal=await store.authenticate(token,'sync'),value=await gate.inspect(await digest(token));
-        const message=await outbox.lease(principal);
+        // Old connectors must never interpret a registry operation as a prompt.
+        const message=await outbox.lease(principal,url.searchParams.get('session_visibility')==='1');
         if(!message)await gate.clear(`${principal.device_id}|${principal.database_epoch}`,value.generation);
+        if(message?.action)return json({message:null,visibility:message});
         return json({message});
       }
       if(path===routes.ack && request.method==='POST') {

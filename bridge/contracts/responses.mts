@@ -1,5 +1,5 @@
 import {z} from 'zod';
-import {ReadContext,Status,Health,Reason,DashboardCategory,routes} from './contract.mjs';
+import {ReadContext,Status,Health,Reason,DashboardCategory,VisibilityAction,routes} from './contract.mjs';
 const id=z.string().min(1).max(200),counter=z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 // Consumers tolerate additive response fields, but known fields never change type.
 const object=<T extends z.ZodRawShape>(shape:T)=>z.object(shape);
@@ -13,7 +13,8 @@ export const RuntimeAlert=object({incident:counter,stale_for_ms:counter}).meta({
 export const PollResponse=object({pending:z.boolean(),generation:counter,active_until:counter,runtime_alert:RuntimeAlert.nullable().optional(),probe:object({probe_id:id,session_id:id}).nullable().optional()}).meta({id:'PollResponse'});
 export const MessageLease=object({operation_id:id,session_id:id,message_id:id,text:z.string().min(1).max(50_000),base_cursor:counter,expires_at:counter,context:ReadContext.nullable().optional()}).meta({id:'MessageLease'});
 export const ConfirmationLease=object({needs_confirmation:id}).meta({id:'ConfirmationLease'});
-export const LeaseResponse=object({message:z.union([MessageLease,ConfirmationLease]).nullable()}).meta({id:'LeaseResponse'});
+export const VisibilityLease=object({operation_id:id,session_id:id,message_id:id,action:VisibilityAction,expires_at:counter}).meta({id:'VisibilityLease'});
+export const LeaseResponse=object({message:z.union([MessageLease,ConfirmationLease]).nullable(),visibility:VisibilityLease.optional()}).meta({id:'LeaseResponse'});
 export const StartLease=object({operation_id:id,directory:z.string(),text:z.string(),expires_at:counter}).meta({id:'StartLease'});
 export const StartLeaseResponse=object({start:StartLease.nullable()}).meta({id:'StartLeaseResponse'});
 export const DeliveryStatus=z.enum(['queued','leased','accepted','needs_confirmation','failed','expired','uncertain','cancelled']).meta({id:'DeliveryStatus'});
@@ -22,7 +23,7 @@ export const ReceiptResponse=object({operation_id:id,session_id:id,status:Delive
 export const StartReceiptResponse=object({operation_id:id,status:StartStatus,directory:z.string(),session_id:id.nullable(),started:z.boolean(),prompt_accepted:z.boolean(),reason:z.string().nullable(),expires_at:counter,next_action:z.string().nullable()}).meta({id:'StartReceiptResponse'});
 export const ArtifactResponse=object({artifact_id:id,sha256:z.string().regex(/^[a-f0-9]{64}$/),bytes:counter}).meta({id:'ArtifactResponse'});
 const artifactMetadata=object({artifact_id:id,session_id:id,title:z.string(),name:z.string(),mime_type:z.string(),byte_length:counter,sha256:z.string()}).passthrough();
-export const nativeSchemas={OkResponse,PairStartResponse,PairTokenResponse,BatchResponse,CursorsResponse,VerifyResponse,PollResponse,LeaseResponse,MessageLease,StartLeaseResponse,ReceiptResponse,StartReceiptResponse,ArtifactResponse};
+export const nativeSchemas={OkResponse,PairStartResponse,PairTokenResponse,BatchResponse,CursorsResponse,VerifyResponse,PollResponse,LeaseResponse,MessageLease,VisibilityLease,StartLeaseResponse,ReceiptResponse,StartReceiptResponse,ArtifactResponse};
 export const responseByRoute={
   [routes.checked]:OkResponse,[routes.runtime]:OkResponse,[routes.probe]:OkResponse,[routes.poll]:PollResponse,[routes.lease]:LeaseResponse,[routes.startLease]:StartLeaseResponse,
   [routes.ack]:ReceiptResponse,[routes.startAck]:StartReceiptResponse,[routes.cursors]:CursorsResponse,[routes.verify]:VerifyResponse,
@@ -36,6 +37,7 @@ const row=extensible({session_id:id,title:z.string(),status:Status,health:Health
 const message=extensible({message_id:id,role:z.enum(['user','assistant']),message_order:counter,text:z.string(),truncated:z.boolean().optional(),offset:counter.optional()});
 const delivery=ReceiptResponse.extend({delivery_state:z.string(),claim_ceiling:z.string(),say_to_owner:z.string(),report_rule:z.string(),...freshness}).passthrough();
 const start=StartReceiptResponse.extend({delivery_state:z.string(),claim_ceiling:z.string(),say_to_owner:z.string(),report_rule:z.string(),...freshness}).passthrough();
+const visibility=object({operation_id:id,session_id:id,action:VisibilityAction,status:z.enum(['queued','applied','failed','expired','uncertain']),say_to_owner:z.string()});
 const categoryCounts=z.record(z.string(),counter);
 const messageTruncation=object({truncated:z.literal(true),message_id:id,offset:counter});
 const voiceSession=z.object({id,title:z.string(),status:DashboardCategory,user:z.string().nullable(),agent:z.string().nullable(),user_truncation:messageTruncation.optional(),agent_truncation:messageTruncation.optional(),review:z.literal(true).optional()}).strict();
@@ -52,6 +54,7 @@ export const toolOutputs={
   read_session:extensible({messages:z.array(message),cursor:counter,context:ReadContext,page_kind:z.enum(['older','newer','latest']),next_after:counter.nullable(),next_before:counter.nullable(),...freshness}),
   read_message:extensible({message_id:id,role:z.enum(['user','assistant']),text:z.string(),offset:counter,next_offset:counter.nullable(),...freshness}),
   send_session_message:delivery,message_status:delivery,cancel_message:delivery,
+  hide_session:visibility,unhide_session:visibility,session_visibility_status:visibility,
   start_session:start,start_status:start,cancel_start:start,
 } as const;
 export type OutputName=keyof typeof toolOutputs;

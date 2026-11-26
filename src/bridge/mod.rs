@@ -757,19 +757,24 @@ pub fn deliver_once(dir: &Path) -> Result<bool> {
     } else {
         let lease = http::request::<contract::LeaseResponse>(
             &config.endpoint,
-            contract::ROUTE_LEASE,
+            &format!("{}?session_visibility=1", contract::ROUTE_LEASE),
             Some(&credential),
             Some(&serde_json::to_value(contract::EmptyRequest {})?),
             30,
         )?;
-        let Some(lease) = lease.message else {
-            return Ok(false);
+        let message = if let Some(visibility) = lease.visibility {
+            serde_json::to_value(visibility)?
+        } else {
+            let Some(lease) = lease.message else {
+                return Ok(false);
+            };
+            if lease.needs_confirmation.is_some() {
+                return Ok(false);
+            }
+            let typed: contract::MessageLease =
+                serde_json::from_value(serde_json::to_value(lease)?)?;
+            serde_json::to_value(typed)?
         };
-        if lease.needs_confirmation.is_some() {
-            return Ok(false);
-        }
-        let typed: contract::MessageLease = serde_json::from_value(serde_json::to_value(lease)?)?;
-        let message = serde_json::to_value(typed)?;
         journal.db.execute(
             "INSERT INTO delivery(operation_id,body) VALUES (?1,?2)",
             rusqlite::params![
@@ -779,20 +784,95 @@ pub fn deliver_once(dir: &Path) -> Result<bool> {
         )?;
         message
     };
-    let id = message["session_id"].as_str().context("invalid target")?;
     let mid = message["message_id"].as_str().context("invalid input ID")?;
-    let text = message["text"].as_str().context("invalid input")?;
     let operation = message["operation_id"]
         .as_str()
         .context("invalid operation")?;
+    let status = if message.get("action").is_some() {
+        visibility_delivery(
+            &journal,
+            message.clone(),
+            crate::hidden::HiddenSessions::load_default,
+        )?
+    } else {
+        deliver_message(&config, &journal, &message, mid)?
+    };
+    http::request::<contract::ReceiptResponse>(
+        &config.endpoint,
+        contract::ROUTE_ACK,
+        Some(&credential),
+        Some(&serde_json::to_value(contract::AckRequest {
+            operation_id: operation.to_owned(),
+            message_id: mid.to_owned(),
+            status,
+        })?),
+        30,
+    )?;
+    journal
+        .db
+        .execute("DELETE FROM delivery WHERE operation_id=?1", [operation])?;
+    Ok(true)
+}
+
+fn visibility_delivery(
+    journal: &Journal,
+    mut body: Value,
+    registry: impl FnOnce() -> Result<crate::hidden::HiddenSessions>,
+) -> Result<contract::AckStatus> {
+    // Once applied, keep the outcome even if ACK fails and the lease expires.
+    // Never replay a recorded hide over a later local unhide (or vice versa).
+    if let Some(status) = body.get("registry_outcome") {
+        return Ok(serde_json::from_value(status.clone())?);
+    }
+    let lease: contract::VisibilityLease = serde_json::from_value(body.clone())?;
+    let status = if lease.expires_at <= delivery_now()? {
+        contract::AckStatus::Failed
+    } else {
+        let result = registry().and_then(|registry| apply_visibility(&registry, &lease));
+        match result {
+            Ok(()) => contract::AckStatus::Accepted,
+            Err(error) => {
+                eprintln!("bridge registry change failed: {}", safe_reason(&error));
+                contract::AckStatus::Failed
+            }
+        }
+    };
+    body["registry_outcome"] = serde_json::to_value(&status)?;
+    journal.db.execute(
+        "UPDATE delivery SET body=?1 WHERE operation_id=?2",
+        rusqlite::params![body.to_string(), lease.operation_id],
+    )?;
+    Ok(status)
+}
+
+fn apply_visibility(
+    registry: &crate::hidden::HiddenSessions,
+    lease: &contract::VisibilityLease,
+) -> Result<()> {
+    match lease.action {
+        contract::VisibilityAction::Hide => registry.hide_id(&lease.session_id).map(|_| ()),
+        contract::VisibilityAction::Unhide => registry.unhide(&lease.session_id).map(|_| ()),
+    }
+}
+
+fn delivery_now() -> Result<i64> {
+    Ok(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64)
+}
+
+fn deliver_message(
+    config: &Config,
+    journal: &Journal,
+    message: &Value,
+    mid: &str,
+) -> Result<contract::AckStatus> {
+    let id = message["session_id"].as_str().context("invalid target")?;
+    let text = message["text"].as_str().context("invalid input")?;
     let mut db = source::open(&config.database)?;
     let mut status = "accepted";
     if !already_admitted(&db, mid, id, text)? {
-        if message["expires_at"].as_i64().unwrap_or(0)
-            <= std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_millis() as i64
-        {
+        if message["expires_at"].as_i64().unwrap_or(0) <= delivery_now()? {
             status = "failed";
         } else if let Some(capture) = source::capture(&mut db, id, None).unwrap_or_else(|error| {
             eprintln!(
@@ -834,21 +914,7 @@ pub fn deliver_once(dir: &Path) -> Result<bool> {
             status = "failed";
         }
     }
-    http::request::<contract::ReceiptResponse>(
-        &config.endpoint,
-        contract::ROUTE_ACK,
-        Some(&credential),
-        Some(&serde_json::to_value(contract::AckRequest {
-            operation_id: operation.to_owned(),
-            message_id: mid.to_owned(),
-            status: status.parse()?,
-        })?),
-        30,
-    )?;
-    journal
-        .db
-        .execute("DELETE FROM delivery WHERE operation_id=?1", [operation])?;
-    Ok(true)
+    Ok(status.parse()?)
 }
 
 fn ack_start(

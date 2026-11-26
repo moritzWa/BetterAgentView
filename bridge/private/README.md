@@ -34,8 +34,16 @@ consent precede every new grant. Scopes are `history:read` and `messages:send`.
 Refresh tokens rotate. Replay revokes the token family.
 
 Tools: `list_sessions`, `session_brief`, `search_history`, `read_session`, `read_message`,
-`send_session_message`, `message_status`, `cancel_message`, `list_artifacts`,
+`send_session_message`, `message_status`, `cancel_message`, `hide_session`,
+`unhide_session`, `session_visibility_status`, `list_artifacts`,
 and `preview_artifact`.
+
+Hide and unhide require the write grant and explicit owner approval. Use one
+call with the exact session ID, a new operation ID and `confirmed:true`. Hide
+only fully finished sessions with no pending questions or follow-ups. Never
+hide ongoing workstreams. These tools change only the Mac's hidden-session
+registry, not provider history. Requests can queue while the Mac sleeps and
+expire after 24 hours. Only `applied` means the Mac confirmed the change.
 
 ### Delivery contract
 
@@ -123,8 +131,8 @@ them has not been observed here; do not rely on text alone.
   decision candidates, `data_age`, and `send_params`. A spoken name such as
   "diagram bench" matches "diagram-bench". Several matches return candidates
   without conversation text. It is read-only.
-- **Send.** Only `send_session_message` writes, after the owner has decided, with
-  `session_brief.send_params`. ChatGPT's on-screen approval still applies.
+- **Send.** Call `send_session_message` only after the owner decides what to say
+  and approves on screen. Pass `session_brief.send_params` if already available.
 - **Staleness.** Digest and brief say how old native status and history are, and
   warn when the Mac has not been seen recently.
 - **Session probe.** `session_brief(session_id)` asks the Mac for that one session's

@@ -32,7 +32,8 @@ test('old connector -> new server AND new connector -> old server request matrix
 });
 test('new connector accepts previous server responses; additive fields are compatible',async()=>{
   const responses=await fixture('previous-responses.json');
-  assert.deepEqual(Object.keys(responses).sort(),Object.keys(nativeSchemas).sort());
+  // VisibilityLease is new and did not exist in the pinned response fixtures.
+  assert.deepEqual(Object.keys(responses).sort(),Object.keys(nativeSchemas).filter(name=>name!=='VisibilityLease').sort());
   for(const [name,value] of Object.entries(responses)) {
     assert(nativeSchemas[name].safeParse(value).success,name);
     assert(nativeSchemas[name].safeParse({...value,future_metadata:42}).success,name);
@@ -40,6 +41,11 @@ test('new connector accepts previous server responses; additive fields are compa
   // Previous connector consumes exactly these fields. New monitoring is optional.
   const next=PollResponse.parse({...responses.PollResponse,runtime_alert:{incident:1,stale_for_ms:120000}});
   for(const key of ['pending','generation','active_until'])assert.deepEqual(next[key],responses.PollResponse[key]);
+});
+test('visibility is an additive, typed lease that is never a message',()=>{
+  const payload={message:null,visibility:{operation_id:'hide_fixture',session_id:'ses_fixture',message_id:'receipt_fixture',action:'hide',expires_at:2_000_000}};
+  assert.deepEqual(nativeSchemas.LeaseResponse.parse(payload),payload);
+  assert.equal(nativeSchemas.LeaseResponse.safeParse({...payload,visibility:{...payload.visibility,action:'delete'}}).success,false);
 });
 test('malformed successful responses fail closed, rather than looking like an empty queue',()=>{
   for(const name of ['PollResponse','LeaseResponse','StartLeaseResponse','BatchResponse'])assert.equal(nativeSchemas[name].safeParse({}).success,false,name);

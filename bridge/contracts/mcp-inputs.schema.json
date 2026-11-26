@@ -337,6 +337,69 @@
       "confirmed"
     ]
   },
+  "hide_session": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{8,160}$"
+      },
+      "session_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "pattern": "^[^\\p{Cc}]+$"
+      },
+      "confirmed": {
+        "type": "boolean",
+        "const": true
+      }
+    },
+    "required": [
+      "operation_id",
+      "session_id",
+      "confirmed"
+    ]
+  },
+  "unhide_session": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{8,160}$"
+      },
+      "session_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "pattern": "^[^\\p{Cc}]+$"
+      },
+      "confirmed": {
+        "type": "boolean",
+        "const": true
+      }
+    },
+    "required": [
+      "operation_id",
+      "session_id",
+      "confirmed"
+    ]
+  },
+  "session_visibility_status": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{8,160}$"
+      }
+    },
+    "required": [
+      "operation_id"
+    ]
+  },
   "start_session": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",

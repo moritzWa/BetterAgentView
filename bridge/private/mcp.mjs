@@ -204,6 +204,29 @@ export async function privateMcp(request, { db: rawDb, store, principal, outbox,
     register('message_status', 'Check actual native admission and replies for this operation. accepted is not completed. Only completion_confirmed proves a native completed state plus a new reply tied to this input. Use reply_after as the read_session message offset; never reuse an older reply.', async ({ operation_id }) => operationStatus(operation_id), safeRead, true);
     register('cancel_message', 'MUTATING: cancel a message still queued or awaiting confirmation, only when the current user asks. Cannot undo admitted work. For stale instructions, cancel then read the current session and explicitly send a new operation.', async ({ operation_id }) => { const cancelled = await outbox.cancel(principal, operation_id); return { ...deliveryView(cancelled), ...cancelled }; }, { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }, true);
     const mutating = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+    const visibilityStatus = async (operationId) => {
+        const { operation_id, session_id, action, status } = await outbox.status(principal, operationId, true);
+        const result = { operation_id, session_id, action };
+        switch (status) {
+            case 'accepted': return { ...result, status: 'applied', say_to_owner: action === 'hide' ? 'Hidden in Agent View.' : 'Unhidden in Agent View. It will appear if Agent View still discovers it.' };
+            case 'queued':
+            case 'leased': return { ...result, status: 'queued', say_to_owner: action === 'hide' ? 'Hide queued. The Mac has not confirmed it yet.' : 'Unhide queued. The Mac has not confirmed it yet.' };
+            case 'expired': return { ...result, status: 'expired', say_to_owner: 'The request expired before the Mac picked it up.' };
+            case 'failed': return { ...result, status: 'failed', say_to_owner: 'The Mac reported that it could not apply the change.' };
+            default: return { ...result, status: 'uncertain', say_to_owner: 'I could not confirm whether the Mac applied the change.' };
+        }
+    };
+    const changeVisibility = (action) => async (args) => {
+        const receipt = await outbox.setVisibility(principal, args, action);
+        const source = principal.device_id + '|' + principal.database_epoch;
+        if (['queued', 'leased'].includes(receipt.status) && (await gate.activity(source)).mac_seen_recently)
+            await gate.waitReceipt(source, args.operation_id);
+        return visibilityStatus(args.operation_id);
+    };
+    const visibilityGuide = 'Use the exact session ID. Call directly with a new operation_id and confirmed:true after the owner explicitly asks for this change and approves it on screen. Requires the same write grant as send_session_message. No session_brief or history cursor is required. Preserve operation_id on retries. Say say_to_owner: queued is not applied. Use session_visibility_status to check an earlier request. Provider history is never deleted.';
+    register('hide_session', 'MUTATING: hide one session from Agent View. Hide only an obviously fully finished session: the task is done and there is no pending question or follow-up. Never hide unfinished work automatically. Never hide an ongoing workstream (research, ads, design, or anything Moritz iterates on). ' + visibilityGuide, changeVisibility('hide'), mutating);
+    register('unhide_session', 'MUTATING: remove one session from the Agent View hidden list. This does not recreate or resume it; it appears only if Agent View still discovers it. ' + visibilityGuide, changeVisibility('unhide'), mutating);
+    register('session_visibility_status', 'Check a hide or unhide request by operation_id. Only applied means the Mac confirmed the local registry change. Say say_to_owner.', ({ operation_id }) => visibilityStatus(operation_id));
     register('start_session', 'MUTATING: start a new OpenCode session in a directory the owner named, with the task they decided. State the directory and the exact task first. confirmed:true is the on-screen approval; spoken approval does not count. Queued is not started. Call start_status before claiming a session exists. session_id is set only after OpenCode creates it. started means the task was accepted, not that the work finished. Requires the same write grant as send.', async (args) => {
         let receipt = await startsApi.enqueue(principal, args);
         const source = `${principal.device_id}|${principal.database_epoch}`;
