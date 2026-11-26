@@ -20,7 +20,7 @@ import {macPresence} from './presence.mjs';
 import {deliveryView,errorView} from './delivery.mjs';
 import {sessionHealth} from './health.mjs';
 import {Starts,startView} from './starts.mjs';
-import {listVisibleSessions,REVIEW_RULES} from './visible.mjs';
+import {listVisibleSessions,REVIEW_RULES,snapshotDiagnostics} from './visible.mjs';
 import {timedDatabase,timedGate} from './timing.mjs';
 import {pairedSessionId} from './session-id.mjs';
 
@@ -79,6 +79,7 @@ export async function privateMcp(request: Request,{db:rawDb,store,principal,outb
     try{return CallToolResultSchema.parse(await previewArtifact(db,principal,args));}
     catch(e:any){return {isError:true,content:[{type:'text',text:e instanceof SyncError?e.code:'operation_failed'}]};}
   });
+  register('snapshot_diagnostics','Read-only dashboard sync timestamps and reasons for a stale or missing list. No session names or conversation text.',async()=>snapshotDiagnostics(gate,principal));
   const operationStatus=async (operationId:string)=>{
     const receipt=await outbox.status(principal,operationId);
     const freshness=await gate.activity(source,receipt.status==='accepted','both');

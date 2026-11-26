@@ -73,7 +73,53 @@ pub(super) fn project(session: &AgentSession) -> RuntimeStatus {
 }
 
 pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
-    build(config, None)
+    let mut snapshot = build(config, None)?;
+    use super::contract::{ReadResult, ReadSource};
+    if config.supervisor_state.is_some() {
+        return Ok(snapshot);
+    }
+    let (mut dashboard, mut read_result) = crate::dashboard_snapshot::read_latest();
+    let mut read_source = ReadSource::Desktop;
+    if dashboard.is_none() {
+        match crate::dashboard_snapshot::refresh_in_background() {
+            Ok(fresh) => {
+                dashboard = Some(fresh);
+                read_source = ReadSource::Connector;
+                read_result = ReadResult::Accepted;
+            }
+            Err(ReadResult::Missing) => {} // A dashboard from before this upgrade has no saved settings.
+            Err(error) => {
+                read_source = ReadSource::Connector;
+                read_result = error;
+            }
+        }
+    }
+    let read_at = crate::dashboard_snapshot::now_ms();
+    let desktop = crate::dashboard_snapshot::last_desktop_publish();
+    let trace = super::contract::SnapshotTrace {
+        read_at,
+        read_result,
+        read_source,
+        desktop_generated_at: desktop.as_ref().map(|v| v.0),
+        desktop_session_count: desktop.as_ref().map(|v| v.1),
+        desktop_publish_result: desktop.map(|v| v.2),
+        previous_upload_at: None,
+        previous_upload_result: None,
+    };
+    crate::perf_log::event(
+        "bridge-dashboard-read",
+        format_args!(
+            "read_at={} source={:?} result={:?} captured_at={:?} session_count={:?}",
+            read_at,
+            trace.read_source,
+            trace.read_result,
+            dashboard.as_ref().map(|s| s.captured_at),
+            dashboard.as_ref().map(|s| s.sessions.len())
+        ),
+    );
+    snapshot.dashboard = dashboard;
+    snapshot.snapshot_trace = Some(trace);
+    Ok(snapshot)
 }
 
 /// The status of one session, from the same pipeline as the snapshot. `None` when
@@ -104,10 +150,8 @@ fn build(config: &Config, only: Option<&str>) -> Result<Snapshot> {
         .is_none()
     {
         return Ok(Snapshot {
-            dashboard: only
-                .is_none()
-                .then(crate::dashboard_snapshot::latest)
-                .flatten(),
+            dashboard: None,
+            snapshot_trace: None,
             available: false,
             partial: false,
             truncated: false,
@@ -250,15 +294,9 @@ fn build(config: &Config, only: Option<&str>) -> Result<Snapshot> {
     drop(_source_span);
     // Full directory metadata can make a count-bounded snapshot too large.
     // Keep its serialized body safely inside the existing 850 KB transport cap.
-    let dashboard = only
-        .is_none()
-        .then(crate::dashboard_snapshot::latest)
-        .flatten();
-    let mut bytes = 1024
-        + dashboard
-            .as_ref()
-            .map(|s| serde_json::to_vec(s).map_or(0, |b| b.len()))
-            .unwrap_or(0);
+    // Reserve the dashboard's 100 KB and envelope up front. Its read is only
+    // needed by the full publish path, not by per-session probes.
+    let mut bytes = 101_024;
     let mut keep = 0;
     for status in &statuses {
         let size = serde_json::to_vec(status)?.len() + 1;
@@ -272,7 +310,8 @@ fn build(config: &Config, only: Option<&str>) -> Result<Snapshot> {
     partial |= statuses.iter().skip(keep).any(|s| s.status != Status::Done);
     statuses.truncate(keep);
     Ok(Snapshot {
-        dashboard,
+        dashboard: None,
+        snapshot_trace: None,
         available: true,
         partial,
         truncated,

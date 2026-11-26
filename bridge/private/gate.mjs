@@ -89,6 +89,12 @@ export class WakeGate {
         return {available:true,baseline,changes,checked_at:meta.checked_at??null};
       }));
     }
+    if(path==='/snapshot-diagnostics') {
+      const meta=await s.get(`runtime_meta:${p.source}`)??{};
+      return Response.json({dashboard:meta.dashboard?{captured_at:meta.dashboard.captured_at,partial:meta.dashboard.partial,session_count:meta.dashboard.sessions.length}:null,
+        dashboard_retained:meta.dashboard_retained??false,dashboard_stored_at:meta.dashboard_stored_at??null,checked_at:meta.checked_at??null,
+        last_seen:await s.get(`last_seen:${p.source}`)??null,snapshot_trace:meta.snapshot_trace??null});
+    }
     if(path==='/runtime-read') {
       const keys=Array.from({length:64},(_,i)=>`runtime:${p.source}:${i}`),stored=await s.get(keys);
       const meta=await s.get(`runtime_meta:${p.source}`)??{available:false,partial:false,checked_at:null};
@@ -161,7 +167,8 @@ export class WakeGate {
       // Native status keeps publishing when the desktop list is not being drawn.
       // Keep the prior list without renewing its capture time or claiming it is live.
       const retained=meta.dashboard?null:old.get(metaKey)?.dashboard;
-      const changed={[metaKey]:{...meta,...(retained?{dashboard:retained,dashboard_retained:true}:{}),checked_at:now},[`runtime_checked:${source}`]:now,[`last_seen:${source}`]:now};
+      const storedAt=meta.dashboard?now:old.get(metaKey)?.dashboard_stored_at;
+      const changed={[metaKey]:{...meta,...(retained?{dashboard:retained,dashboard_retained:true}:{}),...(storedAt?{dashboard_stored_at:storedAt}:{}),checked_at:now},[`runtime_checked:${source}`]:now,[`last_seen:${source}`]:now};
       // Partial writes are still visible to readers, but neither reset nor
       // erase the last usable publication for the watchdog. Save the old
       // stamp only on the transition, not on every successful heartbeat.
@@ -172,7 +179,9 @@ export class WakeGate {
         const value=JSON.stringify(buckets[i].sort((a,b)=>a.session_id.localeCompare(b.session_id)));
         if(value!==(old.get(keys[i])??'[]'))changed[keys[i]]=value;
       }
-      await s.put(changed);
+      const event={received_at:now,captured_at:meta.dashboard?.captured_at??null,session_count:meta.dashboard?.sessions.length??null,retained:Boolean(retained)};
+      try{await s.put(changed);}catch(error){console.error('bridge_dashboard_store_failed',event);throw error;}
+      console.info('bridge_dashboard_runtime_stored',{...event,stored_at:Date.now()});
       for(const wake of this.waiters)wake();
       return Response.json({ok:true});
     }
@@ -240,7 +249,7 @@ export function gateClient(namespace,key) {
     inspect:token_hash=>call('/inspect',{token_hash}),checked:(token_hash,meta={})=>call('/checked',{token_hash,...meta}),
     presence:source=>call('/presence-read',{source}),changes:source=>call('/changes',{source}),
     activity:(source,wait=false,kind='history',opts={})=>call('/activity',{source,wait,kind,...opts}),
-    runtime:source=>call('/runtime-read',{source}),setRuntime:(token_hash,snapshot)=>call('/runtime-write',{token_hash,snapshot}),
+    runtime:source=>call('/runtime-read',{source}),snapshotDiagnostics:source=>call('/snapshot-diagnostics',{source}),setRuntime:(token_hash,snapshot)=>call('/runtime-write',{token_hash,snapshot}),
     signalReceipt:(source,operation_id)=>call('/receipt-signal',{source,operation_id}),waitReceipt:(source,operation_id)=>call('/receipt-wait',{source,operation_id}),rate:key=>call('/rate',{key}),logCall:record=>call('/call-log',{record}),callLog:(hours=24)=>call('/call-log-read',{hours}),
     probe:(source,session_id,{max_wait=3000}={})=>call('/probe',{source,session_id,max_wait}),probeWrite:(token_hash,result)=>call('/probe-write',{token_hash,result})};
 }

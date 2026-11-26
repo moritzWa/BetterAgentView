@@ -64,7 +64,7 @@ export function application({database=openDatabase}={}) {
         if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new SyncError('unauthorized',401);
         request=await bounded(request,850_000);
         const parsed=RuntimeSnapshot.safeParse(await request.json());
-        if(!parsed.success)throw new SyncError('invalid_runtime_snapshot',400);
+        if(!parsed.success){console.warn('bridge_dashboard_runtime_rejected',{received_at:Date.now(),reason:'invalid_runtime_snapshot'});throw new SyncError('invalid_runtime_snapshot',400);}
         await gate.setRuntime(await digest(token),parsed.data);return json({ok:true});
       }
       if(AUTH_PATHS.has(path)) {
