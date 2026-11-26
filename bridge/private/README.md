@@ -184,10 +184,10 @@ them has not been observed here; do not rely on text alone.
   titles. The folder label is not a canonical Git repository identifier.
 - `recent_messages` contains the last two nonempty visible messages per role
   (two user messages and two assistant text replies), in original source order.
-  Tool calls, results and reasoning are not conversation context. Latest-message
-  aliases remain for older clients, with full-message IDs for deeper reads.
+  Tool calls, results and reasoning are excluded. Each message appears once,
+  with its ID for deeper reads.
 - Short messages remain complete. Long messages preserve their first 20% and
-  last 20%, capped by the shared 36K-character overview budget including aliases.
+  last 20%, capped by the shared 24K-character overview budget.
   An explicit middle-omitted marker and character counts describe what was cut.
   This preserves opening TLDRs and closing questions without copying huge replies.
   No extra summary-model call or copy of tool output is made. `done` means the
@@ -199,8 +199,9 @@ them has not been observed here; do not rely on text alone.
   runtime freshness are reported separately. New sessions without mirrored
   history still appear in active counts; their context is explicitly unavailable.
 - All authenticated MCP requests already renew mobile activity at the router.
-  Status checks additionally wait for history and native-state refresh, then
-  report freshness. A missing or stale native status cannot confirm completion.
+  Sends return the durable delivery receipt without waiting for history or native
+  status to refresh. A later message status check reports completion and freshness.
+  A missing or stale native status cannot confirm completion.
 - Revocation is rechecked after tool waits and inside queue mutations. Expired,
   never-admitted confirmation requests no longer block later operations forever.
 

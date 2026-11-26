@@ -82,8 +82,8 @@ before(async()=>{
   await store.apply(writer,{version:1,batch_id:'seed',session_id:'ses_delivery',kind:'baseline',from:0,through:100,upload_id:'seed',chunk:0,complete:true,session:{title:'Delivery',archived:false,deleted:false,visible_before:null},messages:[{id:'msg_1',role:'user',order:1,created_at:1,updated_at:1,text:'hello'}],delete_ids:[]});
 });
 after(async()=>db?.close());
-async function rpcRaw(name,args){
-  const response=await privateMcp(new Request('https://test.invalid/mcp',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}})}),{db,store,principal:reader,outbox,gate});
+async function rpcRaw(name,args,rpcGate=gate){
+  const response=await privateMcp(new Request('https://test.invalid/mcp',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}})}),{db,store,principal:reader,outbox,gate:rpcGate});
   return response.json();
 }
 const body=raw=>JSON.parse(raw.result.content[0].text);
@@ -106,6 +106,28 @@ test('after the Mac accepts it, status says the session has it but is not finish
   }
   const out=body(await rpcRaw('message_status',{operation_id:'delivery_accepted_1'}));
   assert.equal(out.delivery_state,'accepted_by_session');assert.equal(out.claim_ceiling,'accepted');assert.equal(out.completion_confirmed,false);
+});
+
+test('send returns the durable admission receipt without waiting for history or runtime',async()=>{
+  const args=input('delivery_fast_receipt_1'),calls=[];
+  const receiptGate={...gate,
+    activity:async(_source,wait)=>{assert(!wait,'send must not wait for freshness');calls.push('presence');return {mac_seen_recently:true};},
+    waitReceipt:async(_source,operation_id)=>{
+      calls.push('receipt');
+      const lease=await outbox.lease(writer);
+      assert.equal(lease.operation_id,operation_id);
+      await outbox.ack(writer,{operation_id,message_id:lease.message_id,status:'accepted'});
+    },
+    runtime:async()=>assert.fail('send must not fetch runtime'),
+  };
+  for(const expected of [['presence','receipt'],[]]){
+    calls.length=0;
+    const raw=await rpcRaw('send_session_message',args,receiptGate);
+    assert(!raw.result.isError,raw.result.content[0].text);const out=body(raw);
+    assert.equal(out.delivery_state,'accepted_by_session');assert.equal(out.delivery_confirmed,true);
+    assert.equal(out.claim_ceiling,'accepted');assert.equal(out.next_action,null);
+    assert(!('completion_confirmed' in out));assert.deepEqual(calls,expected);
+  }
 });
 
 test('a stale cursor is still rejected, now with a structured body that says nothing was sent',async()=>{

@@ -212,7 +212,7 @@ test('one active overview finds actionable sessions beyond hundreds of done rows
  assert.equal(page.counts.total,401);assert.equal(page.counts.working,2);assert.equal(page.counts.needs_you,1);assert.equal(page.counts.done,398);
  assert.equal(page.sessions.length,3);assert.equal(page.next_after,null);assert.equal(page.status_fresh,true);assert.equal(page.context_fresh,true);
  const decision=page.sessions[0];assert.equal(decision.session_id,'overview-decision');assert.equal(decision.attention,'needs_you');
- assert(decision.last_user_message.text.includes('existing design'));assert(decision.last_assistant_message.text.endsWith('option A or option B?'));assert(decision.last_assistant_message.truncated);
+ assert(decision.recent_messages.findLast(m=>m.role==='user').text.includes('existing design'));assert(decision.recent_messages.findLast(m=>m.role==='assistant').text.endsWith('option A or option B?'));assert(decision.recent_messages.findLast(m=>m.role==='assistant').truncated);
  assert(page.note.includes('Counts cover the entire'));assert(page.note.includes('not that the task is finished'));
  const recent=await rpc('list_sessions',{});assert(recent.sessions.some(s=>s.session_id==='overview-decision'));assert(recent.sessions.length<=14);assert.equal(recent.counts.total,401);
  assert.equal(recent.total_matching,recent.sessions.length);assert.equal(recent.remaining_in_selection,0);assert.equal(recent.next_after,null);assert.equal(recent.outside_selection.needs_you,0);
@@ -225,7 +225,7 @@ test('recent unclassified final questions are provided for review, not equated w
  runtime={available:true,partial:false,checked_at:Date.now(),statuses:[{session_id:'overview-unclassified',status:'done',reason:null,updated_at:Date.now(),last_user_ms:Date.now(),last_user_message_id:'msg_1',attention_assessed:false}]};
  const result=await rpc('list_sessions',{status:'active',detail:true});
  assert.equal(result.counts.unassessed_idle,1);assert.equal(result.sessions.length,1);assert.equal(result.sessions[0].attention,'review_last_reply');
- assert.equal(result.sessions[0].last_assistant_message.text,'Which approach do you prefer?');
+ assert.equal(result.sessions[0].recent_messages.findLast(m=>m.role==='assistant').text,'Which approach do you prefer?');
 });
 
 test('overview context excludes reverted/staged text and child sessions, and flags a mirror behind native input',async()=>{
@@ -238,11 +238,11 @@ test('overview context excludes reverted/staged text and child sessions, and fla
  ]};
  const result=await rpc('list_sessions',{view:'all',detail:true});
  assert.equal(result.counts.total,1);assert.equal(result.sessions.length,1);assert.equal(result.context_fresh,false);
- assert.equal(result.sessions[0].last_user_message.text,'Visible request');assert.equal(result.sessions[0].last_assistant_message.text,'Visible answer');
+ assert.equal(result.sessions[0].recent_messages.findLast(m=>m.role==='user').text,'Visible request');assert.equal(result.sessions[0].recent_messages.findLast(m=>m.role==='assistant').text,'Visible answer');
  assert(!JSON.stringify(result).includes('PRIVATE_CANARY'));
  runtime.statuses.push({session_id:'overview-not-mirrored-yet',status:'working',reason:null,updated_at:Date.now(),top_level:true,last_user_message_id:'new_input'});
  const pending=await rpc('list_sessions',{status:'active',detail:true}),fresh=pending.sessions.find(s=>s.session_id==='overview-not-mirrored-yet');
- assert.equal(pending.counts.working,2);assert(fresh);assert.equal(fresh.mirrored,false);assert.equal(fresh.context_fresh,false);assert.equal(fresh.last_assistant_message,null);
+ assert.equal(pending.counts.working,2);assert(fresh);assert.equal(fresh.mirrored,false);assert.equal(fresh.context_fresh,false);assert.deepEqual(fresh.recent_messages,[]);
  runtime.truncated=true;
  const truncated=await rpc('list_sessions',{});assert.equal(truncated.counts_complete,false);assert.equal(truncated.active_counts_complete,true);
 });
@@ -257,7 +257,7 @@ test('overview includes working-directory metadata and the last two actual text 
  const result=await rpc('list_sessions',{status:'active',detail:true}),session=result.sessions[0];
  assert.equal(session.directory,'/Users/test/Code/project-alpha');assert.equal(session.project_name,'project-alpha');
  assert.deepEqual(session.recent_messages.map(m=>[m.message_order,m.role]),[[3,'user'],[4,'assistant'],[5,'user'],[6,'assistant']]);
- assert.equal(session.last_user_message.message_id,'msg_5');assert.equal(session.last_assistant_message.message_id,'msg_6');
+ assert.equal(session.recent_messages.findLast(m=>m.role==='user').message_id,'msg_5');assert.equal(session.recent_messages.findLast(m=>m.role==='assistant').message_id,'msg_6');
  assert(session.recent_messages[1].text.startsWith('TLDR A '));assert(session.recent_messages[1].text.endsWith('Question A?'));
  assert(session.recent_messages[3].text.startsWith('TLDR B '));assert(session.recent_messages[3].text.endsWith('Question B?'));assert(session.recent_messages[3].text.includes('middle omitted'));
  const byDirectory=await rpc('list_sessions',{query:'project-alpha'});assert.equal(byDirectory.sessions.length,1);
@@ -265,7 +265,7 @@ test('overview includes working-directory metadata and the last two actual text 
  assert.equal((await rpc('list_sessions',{})).sessions[0].project_name,null,'never infer a path from title or message text');
 });
 
-test('two messages per role and legacy latest-message aliases stay within the 36K text budget even at 50 sessions',async()=>{
+test('two messages per role stay within the 24K text budget without aliases, even at 50 sessions',async()=>{
  await db.query(`INSERT INTO av_sessions(owner_id,device_id,database_epoch,session_id,generation,cursor,state,synced_at)
   SELECT 'test-owner','test-device','test-epoch','context-budget-'||n,'budget',10,
    jsonb_build_object('title','Budget fixture '||n,'archived',false,'deleted',false,'visible_before',null),now() FROM generate_series(1,50) n`);
@@ -277,7 +277,8 @@ test('two messages per role and legacy latest-message aliases stay within the 36
  let characters=0;
  for(const session of result.sessions){
   assert.equal(session.recent_messages.length,4);
-  for(const m of [...session.recent_messages,session.last_user_message,session.last_assistant_message]){characters+=[...m.text].length;assert(m.text.includes('middle omitted'));}
+  assert(!('last_user_message' in session)&&!('last_assistant_message' in session),'each message is serialized once');
+  for(const m of session.recent_messages){characters+=[...m.text].length;assert(m.text.includes('middle omitted'));}
  }
- assert(characters<=36000);
+ assert(characters<=24000);
 });

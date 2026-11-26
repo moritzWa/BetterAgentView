@@ -60,9 +60,7 @@ export async function listSessions({db,gate,principal},{status='all',view='recen
    candidates.sort((a,b)=>(status==='active'?order(a)-order(b):rank[a.status]-rank[b.status])||byHuman(a,b));
   const snapshot=await digest({source,query,status,view,rows:candidates.map(s=>[s.session_id,s.status,s.reason,s.updated_at,s.title,s.directory])});
   let start=0;if(after){const page=/^page2_([a-f0-9]{64})_([0-9]{1,6})$/.exec(after);if(!page||page[1]!==snapshot)throw new SyncError('session_list_changed_restart_pagination',409);start=Number(page[2]);if(start>candidates.length)throw new SyncError('invalid_page',400);}
-  // Two messages per role plus a latest-message compatibility alias: count
-  // all three copies against the existing 36K overview text budget.
-  // Compact rows unless the caller asks for recent text: the default overview was ~12K tokens, mostly three copies of each message.
+  // Keep the existing excerpt sizes without repeating the latest messages.
   const slim=!detail;
   const selected=candidates.slice(start,start+limit),copies=3*Math.max(1,selected.length),userBudget=Math.min(700,Math.floor(12000/copies)),assistantBudget=Math.min(1800,Math.floor(24000/copies));
   const contexts=selected.length&&!slim?(await tx.query(`SELECT s.session_id,
@@ -82,7 +80,7 @@ export async function listSessions({db,gate,principal},{status='all',view='recen
    const {user_message_id,user_created_at,...session}=row,context=contextById.get(row.session_id)??{};
    const recent_messages=(context.recent_messages??[]).map(m=>contextMessage(m,m.role==='user'?userBudget:assistantBudget));
    const last_user_message=recent_messages.findLast(m=>m.role==='user')??null,last_assistant_message=recent_messages.findLast(m=>m.role==='assistant')??null;
-   return {...session,health:liveHealth(row.health,status_fresh),last_user_ms:humanTime(row),recent_messages,last_user_message,last_assistant_message,
+   return {...session,health:liveHealth(row.health,status_fresh),last_user_ms:humanTime(row),recent_messages,
     assistant_reply_pending:Boolean(last_user_message&&(!last_assistant_message||last_assistant_message.message_order<last_user_message.message_order)),
     context_fresh:status_fresh&&session.mirrored&&(session.last_user_message_id??null)===(last_user_message?.message_id??null),
     attention:attentionOf(row),...(nextAction.has(row.session_id)?{next_action:nextAction.get(row.session_id)}:{}),

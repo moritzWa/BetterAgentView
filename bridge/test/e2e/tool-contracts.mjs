@@ -49,10 +49,10 @@ try{
  console.log('PASS deployed matching search excerpt and Unicode-compatible message offset');
  const overview=await rpc('list_sessions',{status:'active'});
  assert.equal(overview.sessions.length,2);assert.equal(overview.counts.total,3);assert.equal(overview.counts.working,1);assert.equal(overview.counts.needs_you,1);
- const decision=overview.sessions.find(s=>s.session_id===ids[0]);assert(decision.last_assistant_message.text.endsWith('option A or option B?'));assert(decision.last_user_message);assert.equal(decision.attention,'needs_you');
+ const decision=overview.sessions.find(s=>s.session_id===ids[0]);assert(decision.recent_messages.findLast(m=>m.role==='assistant').text.endsWith('option A or option B?'));assert(decision.recent_messages.findLast(m=>m.role==='user'));assert.equal(decision.attention,'needs_you');
  assert.equal(decision.directory,'/fixtures/project-alpha');assert.equal(decision.project_name,'project-alpha');
  assert.deepEqual(decision.recent_messages.map(m=>[m.message_order,m.role]),[[5,'user'],[6,'assistant'],[7,'user'],[8,'assistant']]);
- assert(decision.last_assistant_message.text.startsWith('😀'));assert(decision.last_assistant_message.text.includes('middle omitted'));
+ assert(decision.recent_messages.findLast(m=>m.role==='assistant').text.startsWith('😀'));assert(decision.recent_messages.findLast(m=>m.role==='assistant').text.includes('middle omitted'));
  assert(!JSON.stringify(overview).includes('CONTEXT_TOOL_ONLY_CANARY'));assert(!JSON.stringify(overview).includes('CONTEXT_REASONING_CANARY'));
  assert.equal((await rpc('list_sessions',{query:'project-alpha'})).sessions.length,2);
  console.log('PASS one deployed overview includes active counts and the actual pending question');
