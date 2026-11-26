@@ -99,6 +99,8 @@ test('MCP exposes real read/search tools but rejects ungranted sends and bypass 
     assert.deepEqual([...(tool.inputSchema.required??[])].sort(),[...(expected.required??[])].sort(),tool.name);
   }
   assert.equal(tools.find(t=>t.name==='send_session_message').annotations.readOnlyHint,false);
+  const sendId=tools.find(t=>t.name==='send_session_message').inputSchema.properties.session_id;
+  for(const name of ['hide_session','unhide_session'])assert.deepEqual(tools.find(t=>t.name===name).inputSchema.properties.session_id,sendId);
   await gate.poll(await digest(writerToken));
   await gate.setRuntime(await digest(writerToken),{available:true,partial:false,statuses:[{session_id:'ses_fixture',status:'needs_you',reason:'question',updated_at:123,can_message:false}]});
   const waiting=JSON.parse((await rpc('tools/call',{name:'list_sessions',arguments:{status:'needs_you'}})).result.content[0].text);
@@ -151,6 +153,7 @@ test('visibility tools require confirmation and a write grant, then report queue
   const view=rpc=>JSON.parse(rpc.result.content[0].text);
   const hide={operation_id:'visibility_hide',session_id:'codex:local:fixture',confirmed:true};
   const unhide={...hide,operation_id:'visibility_unhide'};
+  assert.equal((await call('hide_session',{...hide,session_id:'ses_bad\u0000id'})).result.content[0].text,'invalid_visibility_request');
   for(const [name,args] of [['hide_session',hide],['unhide_session',unhide]]) {
     const missing=await call(name,{...args,confirmed:undefined});
     assert(missing.error||missing.result?.isError);

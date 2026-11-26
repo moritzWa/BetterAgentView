@@ -348,8 +348,7 @@
       "session_id": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200,
-        "pattern": "^[^\\p{Cc}]+$"
+        "maxLength": 200
       },
       "confirmed": {
         "type": "boolean",
@@ -373,8 +372,7 @@
       "session_id": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200,
-        "pattern": "^[^\\p{Cc}]+$"
+        "maxLength": 200
       },
       "confirmed": {
         "type": "boolean",

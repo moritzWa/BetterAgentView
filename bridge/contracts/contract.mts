@@ -75,7 +75,9 @@ export const ArtifactUpload=z.object({artifact_id:z.string().regex(/^[a-f0-9]{32
 // MCP advertises these same schemas and parses them before a typed handler runs.
 // Keep input defaults here, not in a second registration-site schema.
 export const VisibilityAction=z.enum(['hide','unhide']).meta({id:'VisibilityAction'});
-const visibilityInput=z.object({operation_id:operation,session_id:id.regex(/^[^\p{Cc}]+$/u),confirmed:z.literal(true)});
+// Keep the client schema identical to other MCP IDs. Outbox.setVisibility
+// rejects control characters before persisting a request.
+const visibilityInput=z.object({operation_id:operation,session_id:id,confirmed:z.literal(true)});
 export const toolInputs={
   list_visible_sessions:z.object({directory:z.string().min(1).max(4100).optional(),include_scheduled_and_paused:z.boolean().default(false)}),
   list_artifacts:z.object({session_id:id}),
