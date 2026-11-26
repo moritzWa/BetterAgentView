@@ -5,7 +5,7 @@ export const REPORT_RULE='Say say_to_owner. Never claim more than claim_ceiling.
 
 const SAYS={
   not_sent:'Not sent. Nothing reached the session.',
-  queued_mac_offline:'It is queued, not delivered. Your Mac looks offline, so the session has not seen it.',
+  queued_mac_offline:'It is queued, not delivered. Your Mac looks offline. It can pick up the message when it reconnects.',
   queued_waiting_for_mac:'It is queued. The session has not received it yet.',
   accepted_by_session:'The session has it. It has not finished yet.',
   completed_confirmed:'The session got it, finished, and replied.',

@@ -35,7 +35,7 @@ export function timedDatabase(db, timing) {
 /** A wait for the Mac to refresh is the one gate call worth its own name. */
 export function timedGate(gate, timing) {
   return Object.fromEntries(Object.entries(gate).map(([name, fn]) => [name, (...args) => {
-    const label = name === 'activity' && args[1] ? 'fresh_wait' : name === 'waitReceipt' ? 'receipt_wait' : 'gate';
+    const label = name === 'activity' && args[1] ? 'fresh_wait' : name === 'waitReceipt' ? 'receipt_wait' : name === 'signal' ? 'queue_signal' : 'gate';
     return timing.time(label, () => fn(...args));
   }]));
 }

@@ -246,17 +246,12 @@
             "$ref": "#/definitions/ReadContext"
           }
         ]
-      },
-      "confirmed": {
-        "type": "boolean",
-        "const": true
       }
     },
     "required": [
       "operation_id",
       "session_id",
-      "text",
-      "confirmed"
+      "text"
     ],
     "definitions": {
       "ReadContext": {
@@ -415,17 +410,12 @@
         "type": "string",
         "minLength": 1,
         "maxLength": 50000
-      },
-      "confirmed": {
-        "type": "boolean",
-        "const": true
       }
     },
     "required": [
       "operation_id",
       "directory",
-      "text",
-      "confirmed"
+      "text"
     ]
   },
   "start_status": {

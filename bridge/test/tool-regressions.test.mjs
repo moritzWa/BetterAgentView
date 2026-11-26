@@ -38,7 +38,7 @@ test('the visible dashboard ID routes to the same native session and operation a
   const view=await rpc('list_visible_sessions',{directory:'/work'});
   const listed=view.directories.flatMap(d=>d.sessions).find(s=>s.id===uiId);
   assert(listed,'fixture must be present in the MCP dashboard');
-  const args={operation_id:'visible_send_fixture',text:'Exact synthetic instruction',confirmed:true};
+  const args={operation_id:'visible_send_fixture',text:'Exact synthetic instruction'};
   const sent=await rpc('send_session_message',{...args,session_id:listed.id});
   assert.equal(sent.session_id,nativeId);
   assert.equal(sent.status,'queued');

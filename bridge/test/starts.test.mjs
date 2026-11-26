@@ -52,14 +52,14 @@ test('cloud path checks reject traversal and system roots before a row exists', 
 });
 
 test('queueing a start does not invent a session, and the id appears only after the Mac ack', async () => {
-  const queued = body(await rpc('start_session', {operation_id:'start_queue_1', directory:'/Users/m/Code/agentview', text:'Add a health tool', confirmed:true}));
+  const queued = body(await rpc('start_session', {operation_id:'start_queue_1', directory:'/Users/m/Code/agentview', text:'Add a health tool'}));
   assert.equal(queued.status, 'queued');
   assert.equal(queued.session_id, null);
   assert.equal(queued.started, false);
   assert.match(queued.say_to_owner, /No session has been created/);
-  const again = body(await rpc('start_session', {operation_id:'start_queue_1', directory:'/Users/m/Code/agentview', text:'Add a health tool', confirmed:true}));
+  const again = body(await rpc('start_session', {operation_id:'start_queue_1', directory:'/Users/m/Code/agentview', text:'Add a health tool'}));
   assert.equal(again.operation_id, queued.operation_id);
-  const conflict = await rpc('start_session', {operation_id:'start_queue_1', directory:'/Users/m/Code/other', text:'Add a health tool', confirmed:true});
+  const conflict = await rpc('start_session', {operation_id:'start_queue_1', directory:'/Users/m/Code/other', text:'Add a health tool'});
   assert.equal(conflict.result.isError, true);
   assert.match(conflict.result.content[0].text, /operation_id_conflict/);
   const leased = await starts.lease(writer);
@@ -73,13 +73,11 @@ test('queueing a start does not invent a session, and the id appears only after 
   assert.match(done.say_to_owner, /does not mean the work is finished/);
 });
 
-test('a rejected path and a missing approval do not create a start', async () => {
+test('a rejected path does not create a start', async () => {
   const before = (await db.query('SELECT count(*)::int AS n FROM av_starts')).rows[0].n;
   const bad = await rpc('start_session', {operation_id:'start_bad_path', directory:'/etc', text:'nope', confirmed:true});
   assert.equal(bad.result.isError, true);
   assert.match(bad.result.content[0].text, /directory_not_allowed/);
-  const unconfirmed = await rpc('start_session', {operation_id:'start_no_confirm', directory:'/Users/m/Code/agentview', text:'nope', confirmed:false});
-  assert(unconfirmed.error || unconfirmed.result?.isError);
   assert.equal((await db.query('SELECT count(*)::int AS n FROM av_starts')).rows[0].n, before);
 });
 

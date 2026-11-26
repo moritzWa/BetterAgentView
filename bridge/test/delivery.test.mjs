@@ -87,7 +87,7 @@ async function rpcRaw(name,args,rpcGate=gate){
   return response.json();
 }
 const body=raw=>JSON.parse(raw.result.content[0].text);
-const input=id=>({operation_id:id,session_id:'ses_delivery',text:'Synthetic approved text',base_cursor:100,confirmed:true});
+const input=id=>({operation_id:id,session_id:'ses_delivery',text:'Synthetic approved text',base_cursor:100});
 
 test('send with the Mac offline reports queued, not delivered, and claims at most queued',async()=>{
   macSeen=false;
@@ -130,6 +130,17 @@ test('send returns the durable admission receipt without waiting for history or 
   }
 });
 
+test('a failed receipt wait preserves the queued result and later status confirms delivery',async()=>{
+  const args=input('delivery_wait_unavailable_1');
+  const raw=await rpcRaw('send_session_message',args,{...gate,waitReceipt:async()=>{throw new Error('unavailable');}});
+  assert(!raw.result.isError);
+  assert.equal(body(raw).delivery_state,'queued_waiting_for_mac');
+  const leased=await outbox.lease(writer);
+  assert.equal(leased.operation_id,args.operation_id);
+  await outbox.ack(writer,{operation_id:leased.operation_id,message_id:leased.message_id,status:'accepted'});
+  assert.equal(body(await rpcRaw('message_status',{operation_id:args.operation_id})).delivery_state,'accepted_by_session');
+});
+
 test('a stale cursor is still rejected, now with a structured body that says nothing was sent',async()=>{
   const before=(await db.query('SELECT count(*)::int AS n FROM av_outbox')).rows[0].n;
   const raw=await rpcRaw('send_session_message',{...input('delivery_stale_1'),base_cursor:99});
@@ -139,10 +150,7 @@ test('a stale cursor is still rejected, now with a structured body that says not
   assert.equal((await db.query('SELECT count(*)::int AS n FROM av_outbox')).rows[0].n,before,'a rejected send must not create a row');
 });
 
-test('safety checks are unchanged: confirmed must be literal true, same id with other text conflicts, unknown sessions fail',async()=>{
-  const noConfirm=await rpcRaw('send_session_message',{...input('delivery_noconfirm_1'),confirmed:false});
-  assert(noConfirm.error||noConfirm.result?.isError);
-  assert.equal((await db.query("SELECT count(*)::int AS n FROM av_outbox WHERE operation_id='delivery_noconfirm_1'")).rows[0].n,0);
+test('same id with other text conflicts, and unknown sessions fail',async()=>{
   const conflict=await rpcRaw('send_session_message',{...input('delivery_accepted_1'),text:'Different text'});
   assert(conflict.result.isError);assert.equal(body(conflict).error,'operation_id_conflict');assert.equal(body(conflict).delivery_state,'not_sent');
   const missing=await rpcRaw('send_session_message',{...input('delivery_missing_1'),session_id:'ses_nope'});

@@ -20,8 +20,6 @@ export class Outbox {
     if(!/^[A-Za-z0-9_-]{8,160}$/.test(operation_id??'') || typeof session_id!=='string' || session_id.length>200 || typeof text!=='string' || !text.trim() || text.length>50_000 || (base_cursor!==undefined && (!Number.isSafeInteger(base_cursor) || base_cursor<0)))throw new SyncError('invalid_message',400);
     if(context && !ReadContext.safeParse(context).success)throw new SyncError('invalid_read_context',400);
     const hash=await digest({operation_id,session_id,text,...(visibility?{visibility}:{}),...(base_cursor===undefined?{}:{base_cursor}),...(context?{context}:{})});
-    // Signal first: a failed DB write causes a harmless extra poll, not a stranded message.
-    await this.gate.signal(`${principal.device_id}|${principal.database_epoch}`);
     const receipt=await this.db.transaction(async tx=>{
       await requireGrant(tx,principal,{scope:'messages:send',lock:true});
       const s=scope(principal);
@@ -45,10 +43,11 @@ export class Outbox {
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[...s,operation_id,session_id,(visibility?visibilityPrefix:'msg_agentvoice_')+operation_id,text,hash,cursor,Date.now(),Date.now()+86400_000,guard===null?null:JSON.stringify(guard)])).rows[0];
       return publicReceipt(row);
     });
-    // The first signal can be consumed before Postgres commits. Signal again
-    // after commit; periodic connector reconciliation covers a process crash
-    // between these two durable services.
-    await this.gate.signal(`${principal.device_id}|${principal.database_epoch}`);
+    // Wake only after commit. The connector also reconciles the durable queue.
+    if (['queued','leased'].includes(receipt.status)) {
+      try { await this.gate.signal(`${principal.device_id}|${principal.database_epoch}`);}
+      catch { console.error('bridge_queue_signal_failed'); }
+    }
     return receipt;
   }
   async lease(principal,supportsVisibility=false) {
@@ -91,8 +90,11 @@ export class Outbox {
     return publicReceipt(result.rows[0]);
   }
   async status(principal,operation_id,visibility=false) {
-    await this.db.query(`UPDATE av_outbox SET state=CASE WHEN state IN ('queued','needs_confirmation') THEN 'expired' ELSE 'uncertain' END WHERE ${where} AND operation_id=$4 AND state IN ('queued','leased','needs_confirmation') AND expires_at<=$5`,[...scope(principal),operation_id,Date.now()]);
-    const row=(await this.db.query(`SELECT * FROM av_outbox WHERE ${where} AND operation_id=$4`,[...scope(principal),operation_id])).rows[0];
+    let row=(await this.db.query(`SELECT * FROM av_outbox WHERE ${where} AND operation_id=$4`,[...scope(principal),operation_id])).rows[0];
+    if(row && row.message_id.startsWith(visibilityPrefix)===visibility && ['queued','leased','needs_confirmation'].includes(row.state) && Number(row.expires_at)<=Date.now()) {
+      const expired = await this.db.query(`UPDATE av_outbox SET state=CASE WHEN state IN ('queued','needs_confirmation') THEN 'expired' ELSE 'uncertain' END WHERE ${where} AND operation_id=$4 AND state IN ('queued','leased','needs_confirmation') AND expires_at<=$5 RETURNING *`,[...scope(principal),operation_id,Date.now()]);
+      row=expired.rows[0]??(await this.db.query(`SELECT * FROM av_outbox WHERE ${where} AND operation_id=$4`,[...scope(principal),operation_id])).rows[0];
+    }
     if(!row || row.message_id.startsWith(visibilityPrefix)!==visibility)throw new SyncError(visibility?'visibility_operation_not_found':'message_not_found',404);
     if(visibility)return {...publicReceipt(row),action:row.text};
     const receipt=publicReceipt(row);

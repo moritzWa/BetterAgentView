@@ -56,8 +56,22 @@ Every `send_session_message`, `message_status` and `cancel_message` result start
 return a JSON body (`error` keeps the old code, plus `sent`, `say_to_owner`, `next_step`).
 `sent: null` means unknown, so check `message_status` before claiming anything.
 `message_status` for an operation that was never sent returns `not_sent`, which is how a
-skipped send is caught. The logic is pure and lives in `delivery.mjs`. No safety check
-changed. Read-tool errors stay bare codes.
+skipped send is caught. If queued, retain the operation ID and check it on the next relevant
+turn, without resending. Send and start need the write grant but no per-action
+approval. Cancellation and visibility changes still require confirmation.
+Stale context still stops delivery. Read-tool errors stay bare codes.
+
+### November 25–26 voice incident
+
+Some voice turns stopped before ChatGPT called AgentVoice. On November 25,
+ChatGPT fetched session context again instead of submitting the write. The
+November 26 transcript showed reads but no send or start call when ChatGPT said
+it was waiting for approval. Those turns never reached Neon. Two later sends did
+reach the Worker and queue. The Mac lost network access and delivered both on
+reconnect. The first receipts accurately said queued, but ChatGPT did not check
+again. The Worker deduplicates retries by operation ID, the Mac checks the
+session context and hands off to OpenCode, and its durable acknowledgment marks
+native admission, not task completion.
 
 ### Artifact previews
 
@@ -131,8 +145,8 @@ them has not been observed here; do not rely on text alone.
   decision candidates, `data_age`, and `send_params`. A spoken name such as
   "diagram bench" matches "diagram-bench". Several matches return candidates
   without conversation text. It is read-only.
-- **Send.** Call `send_session_message` only after the owner decides what to say
-  and approves on screen. Pass `session_brief.send_params` if already available.
+- **Send.** Call `send_session_message` as soon as the owner gives the instruction.
+  Pass `session_brief.send_params` if already available.
 - **Staleness.** Digest and brief say how old native status and history are, and
   warn when the Mac has not been seen recently.
 - **Session probe.** `session_brief(session_id)` asks the Mac for that one session's
@@ -239,8 +253,9 @@ last week only, and only the end of the last reply.
 `session_health` reports running, idle, potentially_stalled, or failed from the Mac's
 OpenCode database. A long tool or shell call stays running. A failed read, a bridge
 restart, or a stale snapshot is unknown, not a stall. Overview rows carry only the
-word. `start_session` queues a new OpenCode session after the same write grant and
-on-screen approval as a send. The session id is returned only after OpenCode creates
+word. `start_session` queues a new OpenCode session with the same write grant
+as a send. Neither needs per-action approval. The session ID is returned only
+after OpenCode creates
 it. A queued start is not a started session. Deployment needs the additive
 `av_starts` table and `GRANT USAGE, SELECT ON SEQUENCE av_starts_sequence_seq`.
 `agentview bridge status` shows `stuck_sessions`,

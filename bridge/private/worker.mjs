@@ -86,8 +86,8 @@ export function application({database=openDatabase}={}) {
       }
       if(path==='/mcp') {
         const principal=await timing.time('auth',()=>store.authenticate(token,'read'));
-        await timing.time('touch',()=>gate.activity(`${principal.device_id}|${principal.database_epoch}`));
-        return await privateMcp(request,{db,store,principal,outbox,gate,starts,timing});
+        const initialPresence=await timing.time('touch',()=>gate.activity(`${principal.device_id}|${principal.database_epoch}`));
+        return await privateMcp(request,{db,store,principal,gate,timing,initialPresence});
       }
       if(path===routes.lease && request.method==='POST') {
         await wire(EmptyRequest,request);

@@ -85,9 +85,11 @@ test('pairing requires Google owner consent and is consumed once',async()=>{
 });
 test('MCP exposes real read/search tools but rejects ungranted sends and bypass attempts',async()=>{
   const app=application({database:async()=>({query:(...args)=>db.query(...args),transaction:fn=>db.transaction(fn),close:async()=>{}})});
-  const rpc=async(method,params={})=>{
+  const readOnly='x'.repeat(43);
+  await db.query('INSERT INTO av_credentials (token_hash,owner_id,device_id,database_epoch,audience,expires_at,scopes) VALUES ($1,$2,$3,$4,$5,$6,$7)',[await digest(readOnly),OWNER,'device123','epoch123','read',Date.now()+3600_000,'history:read']);
+  const rpc=async(method,params={},token=readerToken)=>{
     await gate.checked(await digest(writerToken));
-    const response=await app.fetch(req('/mcp',{method:'POST',headers:{authorization:`Bearer ${readerToken}`,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})}),env);
+    const response=await app.fetch(req('/mcp',{method:'POST',headers:{authorization:`Bearer ${token}`,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})}),env);
     assert.equal(response.status,200);return response.json();
   };
   const tools=(await rpc('tools/list')).result.tools;
@@ -98,7 +100,14 @@ test('MCP exposes real read/search tools but rejects ungranted sends and bypass 
     assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(),Object.keys(expected.properties).sort(),tool.name);
     assert.deepEqual([...(tool.inputSchema.required??[])].sort(),[...(expected.required??[])].sort(),tool.name);
   }
-  assert.equal(tools.find(t=>t.name==='send_session_message').annotations.readOnlyHint,false);
+  for(const name of ['send_session_message','start_session']) {
+    const tool=tools.find(t=>t.name===name);
+    assert.deepEqual(tool.annotations,{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false});
+    assert(!('confirmed' in tool.inputSchema.properties));
+  }
+  for(const name of ['cancel_message','cancel_start','hide_session','unhide_session']) {
+    assert(tools.find(t=>t.name===name).inputSchema.required.includes('confirmed'));
+  }
   const sendId=tools.find(t=>t.name==='send_session_message').inputSchema.properties.session_id;
   for(const name of ['hide_session','unhide_session'])assert.deepEqual(tools.find(t=>t.name===name).inputSchema.properties.session_id,sendId);
   await gate.poll(await digest(writerToken));
@@ -107,8 +116,14 @@ test('MCP exposes real read/search tools but rejects ungranted sends and bypass 
   assert.equal(waiting.sessions.length,1);assert.equal(waiting.sessions[0].reason,'question');assert.equal(waiting.status_fresh,true);
   const search=await rpc('tools/call',{name:'search_history',arguments:{query:'penguin'}});
   assert.match(search.result.content[0].text,/canary visible/);
-  const forbidden=await rpc('tools/call',{name:'send_session_message',arguments:{operation_id:'op-short',session_id:'ses_fixture',text:'Do not run',base_cursor:10,confirmed:false}});
-  assert(forbidden.error || forbidden.result?.isError);
+  for(const [name,args] of [
+    ['send_session_message',{session_id:'ses_fixture',base_cursor:10}],
+    ['start_session',{directory:'/Users/m/project'}],
+  ]) {
+    const forbidden=await rpc('tools/call',{name,arguments:{...args,operation_id:'ungranted_operation',text:'Do not run'}},readOnly);
+    assert.equal(forbidden.result.isError,true);
+    assert.equal(JSON.parse(forbidden.result.content[0].text).error,'write_permission_required');
+  }
   assert.equal((await app.fetch(req('/mcp'),env)).status,401);
   const store=new SyncStore(db),writer=await store.authenticate(writerToken,'sync');
   const pages=Array.from({length:30},(_,i)=>({id:`page_${i}`,role:i===0?'user':'assistant',order:(i+1)*100,created_at:i,updated_at:i,text:`Visible message ${i}`}));

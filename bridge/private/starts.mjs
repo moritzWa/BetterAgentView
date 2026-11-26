@@ -23,7 +23,6 @@ export class Starts {
     if (!/^[A-Za-z0-9_-]{8,160}$/.test(operation_id ?? '') || typeof text !== 'string' || !text.trim() || text.length > 50_000) throw new SyncError('invalid_start', 400);
     directory = directoryShape(directory);
     const hash = await digest({ operation_id, directory, text });
-    await this.gate.signal(`${principal.device_id}|${principal.database_epoch}`);
     const receipt = await this.db.transaction(async tx => {
       await requireGrant(tx, principal, { scope: 'messages:send', lock: true });
       const s = scope(principal);
@@ -36,7 +35,11 @@ export class Starts {
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [...s, operation_id, directory, text, hash, Date.now(), Date.now() + 86400_000])).rows[0];
       return publicReceipt(row);
     });
-    await this.gate.signal(`${principal.device_id}|${principal.database_epoch}`);
+    // Wake only after commit. The connector also reconciles the durable queue.
+    if (['queued','leased'].includes(receipt.status)) {
+      try { await this.gate.signal(`${principal.device_id}|${principal.database_epoch}`);}
+      catch { console.error('bridge_queue_signal_failed'); }
+    }
     return receipt;
   }
   async lease(principal) {
@@ -67,8 +70,11 @@ export class Starts {
     return publicReceipt(result.rows[0]);
   }
   async status(principal, operation_id) {
-    await this.db.query(`UPDATE av_starts SET state=CASE WHEN state='queued' THEN 'expired' ELSE 'uncertain' END WHERE ${where} AND operation_id=$4 AND state IN ('queued','leased') AND expires_at<=$5`, [...scope(principal), operation_id, Date.now()]);
-    const row = (await this.db.query(`SELECT * FROM av_starts WHERE ${where} AND operation_id=$4`, [...scope(principal), operation_id])).rows[0];
+    let row = (await this.db.query(`SELECT * FROM av_starts WHERE ${where} AND operation_id=$4`, [...scope(principal), operation_id])).rows[0];
+    if(row && ['queued','leased'].includes(row.state) && Number(row.expires_at)<=Date.now()) {
+      const expired = await this.db.query(`UPDATE av_starts SET state=CASE WHEN state='queued' THEN 'expired' ELSE 'uncertain' END WHERE ${where} AND operation_id=$4 AND state IN ('queued','leased') AND expires_at<=$5 RETURNING *`, [...scope(principal), operation_id, Date.now()]);
+      row=expired.rows[0]??(await this.db.query(`SELECT * FROM av_starts WHERE ${where} AND operation_id=$4`, [...scope(principal), operation_id])).rows[0];
+    }
     if (!row) throw new SyncError('start_not_found', 404);
     return publicReceipt(row);
   }
@@ -103,7 +109,7 @@ export const START_RULE = 'Say say_to_owner. Never claim a session exists unless
 const SAYS = {
   not_started: 'Not started. No session was created.',
   queued: 'Queued. No session has been created yet.',
-  queued_offline: 'Queued. Your Mac looks offline, so no session has been created.',
+  queued_offline: 'Queued. No session has been created. Your Mac can pick it up when it reconnects.',
   started: 'OpenCode created the session and accepted the task. That does not mean the work is finished.',
   created_not_started: 'OpenCode created a session but did not accept the task. It is not working.',
   failed: 'Not started. The Mac could not create it.',

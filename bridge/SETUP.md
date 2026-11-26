@@ -96,14 +96,14 @@ raw MCP tests do not exercise ChatGPT's tools or approval UI.
    fresh chat.
 2. Ask ChatGPT to call `list_visible_sessions` for that directory and send a
    unique, harmless instruction to the test session. Check that it passed the
-   exact row `id` to `send_session_message` without stripping the prefix. Complete
-   ChatGPT's on-screen approval for that instruction only.
+   exact row `id` to `send_session_message` without stripping the prefix. Send and start should not ask for per-action
+   approval after the owner gives the instruction. Both still require the write grant.
 3. Record the operation and message IDs, verify native admission, then check the
    target OpenCode history for exactly one user message with that ID and text.
    A queued receipt or a ChatGPT success claim is not proof. If verifying task
    completion, require a new reply tied to that input.
 4. Repeat with a different marker in voice if the client offers AgentVoice in
-   voice mode. Use the same on-screen approval. If blocked, record the client,
+   voice mode. Check that no on-screen approval is required. If blocked, record the client,
    what was tried, and what prevented verification. Record the deployed Worker
    version and the text and voice results separately. Remove only your fixture.
 

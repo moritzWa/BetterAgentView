@@ -89,10 +89,10 @@ export const toolInputs={
   search_history:z.object({query:z.string().min(1).max(200),limit:z.number().int().min(1).max(30).default(8),excerpt_chars:z.number().int().min(100).max(2000).default(400),offset:z.number().int().min(0).max(500).default(0)}),
   read_session:z.object({session_id:id,after:z.number().int().min(-1).optional(),before:counter.optional(),limit:z.number().int().min(1).max(20).default(10)}),
   read_message:z.object({session_id:id,message_id:id,offset:z.number().int().min(0).max(1_000_000).default(0)}),
-  send_session_message:z.object({operation_id:operation,session_id:id,text:z.string().min(1).max(50_000),base_cursor:counter.optional(),context:ReadContext.optional(),confirmed:z.literal(true)}),
+  send_session_message:z.object({operation_id:operation,session_id:id,text:z.string().min(1).max(50_000),base_cursor:counter.optional(),context:ReadContext.optional()}),
   message_status:z.object({operation_id:id}),cancel_message:z.object({operation_id:id,confirmed:z.literal(true)}),
   hide_session:visibilityInput,unhide_session:visibilityInput,session_visibility_status:z.object({operation_id:operation}),
-  start_session:z.object({operation_id:operation,directory:z.string().min(2).max(1024),text:z.string().min(1).max(50_000),confirmed:z.literal(true)}),
+  start_session:z.object({operation_id:operation,directory:z.string().min(2).max(1024),text:z.string().min(1).max(50_000)}),
   start_status:z.object({operation_id:id}),cancel_start:z.object({operation_id:id,confirmed:z.literal(true)}),
 } as const;
 export type ToolName=keyof typeof toolInputs;
