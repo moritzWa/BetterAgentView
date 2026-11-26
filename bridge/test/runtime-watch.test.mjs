@@ -77,3 +77,32 @@ test('MCP calls renew one active window and a request after expiry starts a new 
   t.mock.timers.setTime(1_590_000);await touch();
   assert.equal(map.get('active_since:'+source),1_590_000);
 });
+
+test('one partial upload does not erase the last usable runtime publication',async t=>{
+  const now=1_684_000,source='fixture|epoch';
+  t.mock.timers.enable({apis:['Date'],now:now-12_000});
+  const map=new Map([
+    ['token:hash',{device_id:'fixture',database_epoch:'epoch',expires_at:now+3600_000}],
+    ['pending:'+source,true],['active_until:'+source,now+300_000],['active_since:'+source,now-300_000],
+    ['runtime_watch:'+source,{since:now-684_000,last_poll:now-20_000,incident:null}],
+  ]);
+  const storage={get:async k=>Array.isArray(k)?new Map(k.filter(k=>map.has(k)).map(k=>[k,map.get(k)])):map.get(k),put:async (k,v)=>{for(const [key,value] of typeof k==='object'?Object.entries(k):[[k,v]])map.set(key,value);}};
+  const gate=new WakeGate({storage});
+  const call=async(path,p={})=>(await gate.fetch(new Request('https://internal'+path,{method:'POST',body:JSON.stringify({token_hash:'hash',...p})}))).json();
+  const snapshot=partial=>({available:true,partial,truncated:false,statuses:[]});
+  await call('/runtime-write',{snapshot:snapshot(false)});
+  t.mock.timers.setTime(now);
+  await call('/runtime-write',{snapshot:snapshot(true)});
+  assert.equal((await call('/poll')).runtime_alert,null);
+  for(let at=now+20_000;at<now+120_000;at+=20_000){
+    t.mock.timers.setTime(at);
+    await call('/runtime-write',{snapshot:snapshot(true)});
+    const {runtime_alert}=await call('/poll');
+    assert.equal(Boolean(runtime_alert),at>=now-12_000+WATCH.activeStale);
+  }
+  t.mock.timers.setTime(now+120_000);
+  await call('/runtime-write',{snapshot:snapshot(true)});
+  assert((await call('/poll')).runtime_alert,'partial uploads cannot conceal a real failure');
+  await call('/runtime-write',{snapshot:snapshot(false)});
+  assert.equal((await call('/poll')).runtime_alert,null);
+});

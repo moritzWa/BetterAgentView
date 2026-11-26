@@ -156,11 +156,18 @@ export class WakeGate {
       const {statuses,...meta}=p.snapshot,now=Date.now(),buckets=Array.from({length:64},()=>[]);
       for(const status of statuses)buckets[runtimeBucket(status.session_id)].push(status);
       const metaKey=`runtime_meta:${source}`,keys=buckets.map((_,i)=>`runtime:${source}:${i}`);
-      const old=await s.get(meta.dashboard?keys:[...keys,metaKey]);
+      const usable=meta.available&&!meta.partial;
+      const old=await s.get(meta.dashboard&&usable?keys:[...keys,metaKey]);
       // Native status keeps publishing when the desktop list is not being drawn.
       // Keep the prior list without renewing its capture time or claiming it is live.
       const retained=meta.dashboard?null:old.get(metaKey)?.dashboard;
       const changed={[metaKey]:{...meta,...(retained?{dashboard:retained,dashboard_retained:true}:{}),checked_at:now},[`runtime_checked:${source}`]:now,[`last_seen:${source}`]:now};
+      // Partial writes are still visible to readers, but neither reset nor
+      // erase the last usable publication for the watchdog. Save the old
+      // stamp only on the transition, not on every successful heartbeat.
+      const previous=old.get(metaKey);
+      if(!usable&&previous?.available&&!previous.partial)
+        changed['runtime_usable:'+source]=previous.checked_at;
       for(let i=0;i<buckets.length;i++) {
         const value=JSON.stringify(buckets[i].sort((a,b)=>a.session_id.localeCompare(b.session_id)));
         if(value!==(old.get(keys[i])??'[]'))changed[keys[i]]=value;
@@ -185,7 +192,7 @@ export class WakeGate {
       const old=await s.get('runtime_watch:'+source);
       const now=Date.now(),watch=runtimeWatch(now,{
         last_seen:await s.get('last_seen:'+source)??null,
-        runtime_checked:meta?.available&&!meta.partial?(await s.get('runtime_checked:'+source)??null):null,
+        runtime_checked:meta?.available&&!meta.partial?(await s.get('runtime_checked:'+source)??null):(await s.get('runtime_usable:'+source)??null),
         active_until:await s.get('active_until:'+source)??0,
         active_since:await s.get('active_since:'+source)??null,
       },old??{});

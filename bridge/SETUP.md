@@ -71,8 +71,9 @@ After rollout, each authenticated connector poll checks runtime publication age
 independently of heartbeats. A continuously online Mac alerts after two minutes
 without a usable runtime snapshot while the phone is active, or 20 minutes while
 idle (normal idle sync is 15 minutes). Time spent idle does not count toward the
-active deadline. The incident log records snapshot age, active-window age, poll
-gap, and snapshot availability. Startup/wake gets a two-minute grace period;
+active deadline. Partial snapshots do not erase the last usable time. The incident
+log records snapshot age, active-window age, poll gap, and snapshot availability.
+Startup/wake gets a two-minute grace period;
 offline gaps reset continuity. The cloud logs one incident and includes it in poll
 responses. The installed Mac bridge shows a notification once per incident, with
 durable deduplication across restarts, and logs recovery. No chat text, tokens or
