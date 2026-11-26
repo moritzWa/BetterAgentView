@@ -23,7 +23,12 @@ export class WakeGate {
       return Response.json({allowed});
     }
     if(path==='/activity') {
-      const now=Date.now();await s.put(`active_until:${p.source}`,now+5*60_000);
+      const now=Date.now(),untilKey='active_until:'+p.source,sinceKey='active_since:'+p.source;
+      await s.transaction(async tx=>{
+        const until=await tx.get(untilKey)??0;
+        const since=until>now?(await tx.get(sinceKey)??now):now;
+        await tx.put({[untilKey]:Math.max(until,now+5*60_000),[sinceKey]:since});
+      });
       for(const wake of this.waiters)wake();
       const seen=await s.get(`last_seen:${p.source}`)??0;
       const historyAge=p.history_ms??5000,runtimeAge=p.runtime_ms??20_000,checks=p.kind==='both'?[['checked',historyAge],['runtime_checked',runtimeAge]]:[[p.kind==='runtime'?'runtime_checked':'checked',p.kind==='runtime'?runtimeAge:historyAge]];
@@ -177,14 +182,16 @@ export class WakeGate {
     let probe=null;
     if(path==='/poll') {
       const meta=await s.get(`runtime_meta:${source}`);
+      const old=await s.get('runtime_watch:'+source);
       const now=Date.now(),watch=runtimeWatch(now,{
-        last_seen:await s.get(`last_seen:${source}`)??null,
-        runtime_checked:meta?.available&&!meta.partial?(await s.get(`runtime_checked:${source}`)??null):null,
-        active_until:await s.get(`active_until:${source}`)??0,
-      },await s.get(`runtime_watch:${source}`)??{});
-      const old=await s.get(`runtime_watch:${source}`);
-      if(watch.incident&&watch.incident!==old?.incident)console.error('bridge_runtime_publication_stale');
-      if(!watch.incident&&old?.incident)console.info('bridge_runtime_publication_recovered');
+        last_seen:await s.get('last_seen:'+source)??null,
+        runtime_checked:meta?.available&&!meta.partial?(await s.get('runtime_checked:'+source)??null):null,
+        active_until:await s.get('active_until:'+source)??0,
+        active_since:await s.get('active_since:'+source)??null,
+      },old??{});
+      const diagnostic={snapshot_age_ms:watch.stale_for_ms,active_age_ms:watch.active_age_ms,poll_gap_ms:old?now-old.last_poll:null,available:meta?.available??false,partial:meta?.partial??false};
+      if(watch.incident&&watch.incident!==old?.incident)console.error('bridge_runtime_publication_stale',diagnostic);
+      if(!watch.incident&&old?.incident)console.info('bridge_runtime_publication_recovered',diagnostic);
       await s.put({[`last_seen:${source}`]:now,[`runtime_watch:${source}`]:watch});
       const probeWaiting=async()=>{const q=await s.get(`probe:${source}`);return Boolean(q&&!q.taken&&q.expires_at>Date.now());};
       if(!(await s.get(`pending:${source}`))&&!await probeWaiting()) {

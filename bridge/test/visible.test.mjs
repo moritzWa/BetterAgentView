@@ -35,7 +35,7 @@ test('no UI, stale UI, partial UI and old connector never fall back to history',
 test('native-only writes retain the last dashboard for that source and mark it stale',async()=>{
   const map=new Map();
   const storage={get:async k=>Array.isArray(k)?new Map(k.filter(key=>map.has(key)).map(key=>[key,map.get(key)])):map.get(k),
-    put:async (entries,value)=>{for(const [key,item] of typeof entries==='string'?[[entries,value]]:Object.entries(entries))map.set(key,structuredClone(item));}};
+    put:async (entries,value)=>{for(const [key,item] of typeof entries==='string'?[[entries,value]]:Object.entries(entries))map.set(key,structuredClone(item));},transaction:async fn=>fn(storage)};
   const gate=gateClient({idFromName:()=>0,get:()=>({fetch:(url,init)=>new WakeGate({storage}).fetch(new Request(url,init))})},'owner');
   const principal={owner_id:'owner',device_id:'d',database_epoch:'e'},source='d|e';
   const db={transaction:async fn=>fn({query:async()=>({rows:[]})})};
