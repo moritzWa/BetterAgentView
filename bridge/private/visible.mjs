@@ -1,4 +1,4 @@
-import {DashboardSnapshot} from '../contracts/contract.mjs';
+import {DashboardSnapshot,SnapshotTrace} from '../contracts/contract.mjs';
 import {addVisibleContext} from './visible-context.mjs';
 import {voiceView} from './voice-view.mjs';
 
@@ -27,11 +27,13 @@ function snapshotReasons(runtime,macSeen,now) {
 
 /** @returns {Promise<import('../contracts/responses.mjs').ToolOutput<'snapshot_diagnostics'>>} */
 export async function snapshotDiagnostics(gate,principal) {
-  const runtime=await gate.snapshotDiagnostics(`${principal.device_id}|${principal.database_epoch}`),now=Date.now();
-  const reasons=snapshotReasons(runtime,runtime.last_seen>now-60_000,now);
+  const source=`${principal.device_id}|${principal.database_epoch}`;
+  const [runtime,presence]=await Promise.all([gate.runtime(source),gate.presence(source)]),now=Date.now();
+  const reasons=snapshotReasons(runtime,presence.last_seen>now-60_000,now);
+  const trace=SnapshotTrace.safeParse(runtime.snapshot_trace);
   return {state:!runtime.dashboard?'unavailable':reasons.length?'stale':'fresh',reasons,checked_at:now,
-    runtime_stored_at:runtime.checked_at,last_mac_seen_at:runtime.last_seen,snapshot_captured_at:runtime.dashboard?.captured_at??null,
-    snapshot_stored_at:runtime.dashboard_stored_at,session_count:runtime.dashboard?.session_count??null,connector:runtime.snapshot_trace};
+    runtime_stored_at:runtime.checked_at??null,last_mac_seen_at:presence.last_seen??null,snapshot_captured_at:runtime.dashboard?.captured_at??null,
+    snapshot_stored_at:runtime.dashboard_stored_at??null,session_count:runtime.dashboard?.sessions?.length??null,connector:trace.success?trace.data:null};
 }
 
 export function visibleView(runtime,freshness={},now=Date.now(),{directory,include_scheduled_and_paused=false}={}) {

@@ -92,7 +92,16 @@ test('the Worker reports phase durations in Server-Timing without any text',asyn
  for(const name of ['connect','auth','touch','tool','fresh_wait','db'])assert(phases[name],`${name} phase: ${header}`);
  assert(phases.db.n>=2,'query count is visible: the search plus the grant recheck');
  assert.match(header,/^[A-Za-z_;=0-9." ,]+$/,'only names, durations and counts');
- const body=await response.json();assert(!body.result.isError);assert(!header.includes('pagetoken'));
+  const body=await response.json();assert(!body.result.isError);assert(!header.includes('pagetoken'));
+  const dashboard=JSON.parse(await readFile(new URL('./fixtures/dashboard.json',import.meta.url)));
+  dashboard.captured_at=Date.now();
+  const trace={read_source:'connector',read_at:Date.now(),read_result:'accepted'};
+  await realGate.setRuntime(await digest(writerToken),{available:true,partial:false,dashboard,snapshot_trace:trace,statuses:[]});
+  const check=await app.fetch(new Request('https://bridge.invalid/mcp',{method:'POST',headers:{authorization:`Bearer ${readerToken}`,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'snapshot_diagnostics',arguments:{}}})}),env);
+  const rpc=await check.json();assert(!rpc.result.isError,rpc.result.content[0].text);
+  const diagnostic=JSON.parse(rpc.result.content[0].text);
+  assert.equal(diagnostic.state,'fresh');assert.equal(diagnostic.session_count,5);
+  assert.deepEqual(diagnostic.connector,trace);assert(!JSON.stringify(diagnostic).includes(dashboard.sessions[0].title));
 });
 
 // The Neon driver returns bigint columns as strings; PGlite returns numbers. The
