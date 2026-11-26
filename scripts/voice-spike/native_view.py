@@ -77,7 +77,7 @@ os.write(fd, title.encode()); pump(0.5)
 os.write(fd, b"\r"); pump(1.5)
 os.write(fd, b"\r"); pump(8)               # enter: open the session's own view
 screen = "\n".join(vt.display)
-check("the session's own view is showing", "agentview v0.2.0" not in screen.split("\n")[0], screen.split("\n")[0][:80])
+check("the session's own view is showing", "BetterAgentView v0.2.0" not in screen.split("\n")[0], screen.split("\n")[0][:80])
 os.write(fd, voice_key); pump(1.5)           # the voice key
 def badge_cells():
     out = []
@@ -119,7 +119,7 @@ print("   last rows:", [vt.display[n].rstrip()[-110:] for n in (-3, -2, -1)])
 os.write(fd, voice_key); pump(1.5)
 pump(1.5)
 check("the key again ends it quietly", not badge_cells() and "ended" not in row(), f"{badge_cells()[:1]} {row()}")
-os.write(fd, b"\x1b[1;2D"); pump(3)        # shift+left: back to the dashboard
+os.write(fd, b"\x1b[18~"); pump(3)        # F7: back to the dashboard
 pump(2.5)
 check("the badge is gone after the call", "voice" not in row(), row())
 check("shift+left returns to the dashboard", "agentview" in vt.display[0] or "agentview" in "\n".join(vt.display[:4]), vt.display[0][:80])

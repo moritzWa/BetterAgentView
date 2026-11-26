@@ -56,6 +56,10 @@ if grok:
     env["AGENTVIEW_XAI_API_KEY"] = xai_key
     with open(os.path.join(_scratch, "settings.json"), "w") as settings:
         settings.write('{"provider": "grok"}')
+elif use_driver:
+    # The page driver is the browser: agentview must not start or retire one.
+    with open(os.path.join(_scratch, "settings.json"), "w") as settings:
+        settings.write('{"browser": "none"}')
 elif os.path.exists(os.path.join(_scratch, "settings.json")):
     os.remove(os.path.join(_scratch, "settings.json"))
 if use_driver:
@@ -102,7 +106,7 @@ driver = None
 if use_driver or stale_tab:
     pump(2)
     driver = subprocess.Popen(
-        ["python3", os.path.expanduser("~/.claude/scripts/heavy-job.py"), "--wait", "--", "node", f"{here}/page-driver.mjs", "47617", f"{tmp}/mic.wav", str(RUN - 8)],
+        ["python3", os.path.expanduser("~/.claude/scripts/heavy-job.py"), "--wait", "--", "node", f"{here}/page-driver.mjs", os.environ.get("AGENTVIEW_VOICE_PORT", "47617"), f"{tmp}/mic.wav", str(RUN - 8)],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 start = time.time()
 last = ""

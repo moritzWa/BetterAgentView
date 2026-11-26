@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - 'bridge/**'
+      - 'src/bridge/**'
       - '.github/workflows/mobile-bridge.yml'
   pull_request:
     paths:
       - 'bridge/**'
+      - 'src/bridge/**'
       - '.github/workflows/mobile-bridge.yml'
   workflow_dispatch:
 
@@ -23,6 +25,9 @@ jobs:
         working-directory: bridge
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.75.0
+        with:
+          components: rustfmt
       - uses: actions/setup-node@v6
         with:
           node-version: '24'

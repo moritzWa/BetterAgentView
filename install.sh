@@ -2,31 +2,31 @@
 
 set -euo pipefail
 
-repo="${AGENTVIEW_REPO:-moritzWa/agentview}"
+repo="${AGENTVIEW_REPO:-moritzWa/betteragentview}"
 requested_version="${AGENTVIEW_VERSION:-latest}"
 install_dir="${AGENTVIEW_INSTALL_DIR:-${HOME}/.local/bin}"
 release_base_url="${AGENTVIEW_RELEASE_BASE_URL:-}"
 github_api_url="${AGENTVIEW_GITHUB_API_URL:-https://api.github.com}"
 
 say() {
-  printf 'agentview: %s\n' "$*"
+  printf 'BetterAgentView: %s\n' "$*"
 }
 
 fail() {
-  printf 'agentview: error: %s\n' "$*" >&2
+  printf 'BetterAgentView: error: %s\n' "$*" >&2
   exit 1
 }
 
 usage() {
   cat <<'EOF'
-Install agentview from a verified GitHub release.
+Install BetterAgentView from a verified GitHub release.
 
 Usage: install.sh [OPTIONS]
 
 Options:
   --version VERSION      Install a specific version (for example, 0.1.12)
   --install-dir DIR      Install directory (default: ~/.local/bin)
-  --repo OWNER/REPO      GitHub repository (default: moritzWa/agentview)
+  --repo OWNER/REPO      GitHub repository (default: moritzWa/betteragentview)
   -h, --help             Show this help
 
 Environment variables:
@@ -36,7 +36,7 @@ Environment variables:
   GH_TOKEN               Optional token for API rate limits or a private fork
 
 The installer downloads a prebuilt archive and verifies its SHA-256 checksum.
-It installs agentview plus the av shorthand symlink.
+It installs betteragentview, the bav shorthand, and the legacy av and agentview commands.
 It never installs Rust, invokes Cargo, or edits shell configuration files.
 EOF
 }
@@ -190,11 +190,14 @@ install_alias() {
   staged_binary=""
 }
 
+install_alias betteragentview
+install_alias bav
 install_alias av
 
-say "installed agentview ${version} to ${install_dir}/agentview"
-say "installed shorthand: av"
+say "installed BetterAgentView ${version} to ${install_dir}/betteragentview"
+say "installed shorthand: bav (av still works)"
+say "run bav to choose a coding harness and connect your account"
 case ":${PATH}:" in
   *":${install_dir}:"*) ;;
-  *) say "add ${install_dir} to PATH, then run: agentview (or av)" ;;
+  *) say "add ${install_dir} to PATH, then run: bav" ;;
 esac

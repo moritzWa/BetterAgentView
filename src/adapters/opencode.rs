@@ -521,6 +521,17 @@ impl ProviderController for OpenCodeController {
             .abort_any(&session.provider_session_id, &session.cwd)
     }
 
+    fn rename(&self, session: &AgentSession, title: &str) -> Result<()> {
+        anyhow::ensure!(
+            session.runtime == Runtime::Host,
+            "only host OpenCode sessions can be renamed"
+        );
+        self.supervisor
+            .as_ref()
+            .context("managed OpenCode control is not configured")?
+            .rename_session(&session.provider_session_id, &session.cwd, title)
+    }
+
     fn running_shells(
         &self,
         session: &AgentSession,
@@ -537,6 +548,10 @@ impl ProviderController for OpenCodeController {
         turns: usize,
     ) -> Result<Vec<super::opencode_db::SessionTurn>> {
         super::opencode_db::recent_turns(&self.executable, &session.provider_session_id, turns)
+    }
+
+    fn completion_context(&self, session: &AgentSession) -> Result<String> {
+        super::opencode_db::completion_context(&self.executable, &session.provider_session_id)
     }
 
     fn edit_last_message(&self, session: &AgentSession, text: &str) -> Result<ControlOutcome> {
@@ -1489,8 +1504,30 @@ impl SessionSource for OpenCodeSource {
     }
 
     fn discover_with_warnings(&self, request: &DiscoveryRequest) -> Result<SourceDiscovery> {
+        self.discover_scoped(request, None)
+    }
+
+    fn cancel(&self) {
+        self.runner.cancel();
+    }
+}
+
+impl OpenCodeSource {
+    /// One session, classified exactly as a full discovery would classify it: the
+    /// same managed overlay, holds and background shells, with the history query
+    /// limited to that session (and to its folder's sessions when a live process
+    /// there could be assigned to one of them).
+    pub fn discover_one(&self, request: &DiscoveryRequest, id: &str) -> Result<SourceDiscovery> {
+        self.discover_scoped(request, Some(id))
+    }
+
+    fn discover_scoped(
+        &self,
+        request: &DiscoveryRequest,
+        only: Option<&str>,
+    ) -> Result<SourceDiscovery> {
         let Some(shells) = &self.background_shells else {
-            return self.discover_sessions(request);
+            return self.discover_sessions(request, only);
         };
         let (discovery, running) = std::thread::scope(|scope| {
             let running = scope.spawn(|| {
@@ -1512,7 +1549,7 @@ impl SessionSource for OpenCodeSource {
                     Ok(output.stdout_text()?.to_owned())
                 })
             });
-            let discovery = self.discover_sessions(request);
+            let discovery = self.discover_sessions(request, only);
             (discovery, running.join().unwrap_or_default())
         });
         let mut discovery = discovery?;
@@ -1521,13 +1558,11 @@ impl SessionSource for OpenCodeSource {
         Ok(discovery)
     }
 
-    fn cancel(&self) {
-        self.runner.cancel();
-    }
-}
-
-impl OpenCodeSource {
-    fn discover_sessions(&self, request: &DiscoveryRequest) -> Result<SourceDiscovery> {
+    fn discover_sessions(
+        &self,
+        request: &DiscoveryRequest,
+        only: Option<&str>,
+    ) -> Result<SourceDiscovery> {
         // The managed sessions come from the server and do not depend on the
         // database or process lookups, so ask while those run.
         std::thread::scope(|scope| {
@@ -1540,11 +1575,15 @@ impl OpenCodeSource {
                     let _ = supervisor.list_recent(MANAGED_LIST_SHARED_FOR);
                 });
             }
-            self.discover_listed_sessions(request)
+            self.discover_listed_sessions(request, only)
         })
     }
 
-    fn discover_listed_sessions(&self, request: &DiscoveryRequest) -> Result<SourceDiscovery> {
+    fn discover_listed_sessions(
+        &self,
+        request: &DiscoveryRequest,
+        only: Option<&str>,
+    ) -> Result<SourceDiscovery> {
         let mut sessions = BTreeMap::new();
         let mut warnings = Vec::new();
         let external = self.discover_external_history && request.include_external;
@@ -1569,7 +1608,7 @@ impl OpenCodeSource {
                 Err(error) => warnings.push(format!("OpenCode managed sessions: {error:#}")),
             }
         }
-        if external || !owned.is_empty() {
+        if only.is_some() || external || !owned.is_empty() {
             let holders = {
                 let _span = crate::perf_log::span("opencode-holder-probe");
                 if self.runtime == Runtime::Host {
@@ -1592,7 +1631,9 @@ impl OpenCodeSource {
             };
             if request.include_completed || !holders.is_empty() || server_live {
                 let history_limit = request.history_limit.max(1);
-                let scope = if external {
+                let scope = if let Some(id) = only {
+                    Scope::Only(BTreeSet::from([id.to_owned()]))
+                } else if external {
                     Scope::Recent {
                         limit: history_limit.saturating_add(1),
                         oldest_first: request.history_oldest_first,
@@ -1604,10 +1645,26 @@ impl OpenCodeSource {
                 } else {
                     Scope::Only(owned.clone())
                 };
-                let records = {
+                let mut records = {
                     let _span = crate::perf_log::span("opencode-history-query");
                     self.query(&scope)?
                 };
+                if only.is_some() {
+                    // A live process in the folder is given the session it most
+                    // plausibly runs, so judge it against the folder's other
+                    // recent sessions too, as the full listing does.
+                    let peers = records.first().and_then(|first| {
+                        opencode_live::directory_holders_since(&holders, &first.directory)
+                            .map(|since| (first.directory.clone(), first.id.clone(), since))
+                    });
+                    if let Some((directory, id, since_ms)) = peers {
+                        let found = self.query(&Scope::Directory {
+                            directory,
+                            since_ms,
+                        })?;
+                        records.extend(found.into_iter().filter(|record| record.id != id));
+                    }
+                }
                 let unfinished = unfinished_directories(&records);
                 let _activity_span = crate::perf_log::span("opencode-server-activity");
                 let activity = server
@@ -1695,6 +1752,9 @@ impl OpenCodeSource {
                 &inherited_subagent_holds(self.holds.as_deref(), &self.invocation.program),
             );
         }
+        if let Some(id) = only {
+            sessions.retain(|key, _| key == id);
+        }
         let kept = sessions
             .values()
             .filter(|session| owned.contains(&session.provider_session_id))
@@ -1719,10 +1779,91 @@ enum Scope {
     },
     /// Exactly these sessions.
     Only(BTreeSet<String>),
+    /// Root sessions in one folder updated at or after a time.
+    Directory { directory: PathBuf, since_ms: u64 },
 }
 
 impl OpenCodeSource {
     fn query(&self, scope: &Scope) -> Result<Vec<OpenCodeRecord>> {
+        // Unit tests drive `query` with scripted runners that expect one exact
+        // command; the incremental path has its own tests.
+        if let (
+            Scope::Recent {
+                limit,
+                oldest_first,
+                pinned,
+            },
+            true,
+        ) = (scope, self.runtime == Runtime::Host && !cfg!(test))
+        {
+            let _span = crate::perf_log::span("opencode-history-incremental");
+            if let Some(records) = self.query_incremental(*limit, *oldest_first, pinned) {
+                return Ok(records);
+            }
+        }
+        self.query_full(scope)
+    }
+
+    /// Runs one `opencode db` query and returns its TSV, or None on any trouble.
+    fn db_text(&self, sql: String) -> Option<String> {
+        let mut args = self.invocation.prefix_args.clone();
+        args.extend(["db".into(), sql, "--format".into(), "tsv".into()]);
+        let mut command = CommandRequest::new(self.invocation.program.clone(), args);
+        command.timeout = Duration::from_secs(8);
+        let output = self.runner.run(&command).ok()?;
+        if output.status != 0 {
+            return None;
+        }
+        output.stdout_text().ok().map(str::to_owned)
+    }
+
+    /// The listing the full query would return, rebuilding only the sessions
+    /// whose change key moved. None means "could not tell"; callers then run the
+    /// full query, so a failure here costs time, never correctness.
+    fn query_incremental(
+        &self,
+        limit: usize,
+        oldest_first: bool,
+        pinned: &BTreeSet<String>,
+    ) -> Option<Vec<OpenCodeRecord>> {
+        use super::opencode_records as cache;
+        let tables = self.db_text(cache::TABLES_SQL.into())?;
+        let names: BTreeSet<&str> = tables.lines().skip(1).map(str::trim).collect();
+        if tables.lines().next()?.trim() != "name"
+            || !names.contains("session_v2")
+            || !names.contains("event_sequence")
+        {
+            return None;
+        }
+        let mut sql = cache::KEY_SQL.to_owned();
+        if names.contains("session") {
+            sql.push_str(cache::KEY_SQL_LEGACY);
+        }
+        let keys = cache::parse_keys(&self.db_text(sql)?)?;
+        if keys.is_empty() {
+            return None;
+        }
+        let chosen = cache::window(&keys, limit, oldest_first, pinned);
+        let scope = format!(
+            "{}|{:?}",
+            self.invocation.program, self.invocation.prefix_args
+        );
+        let (mut lines, rebuild) = cache::plan(&scope, &chosen, opencode_live::now_ms());
+        for chunk in rebuild.chunks(cache::REBUILD_CHUNK) {
+            let ids: BTreeSet<String> = chunk.iter().cloned().collect();
+            let text = self.db_text(session_query(&Scope::Only(ids)))?;
+            lines.extend(cache::split_records(&text)?);
+        }
+        cache::remember(&scope, &chosen, &lines);
+        let mut tsv = String::from("record\n");
+        for (_, line) in &lines {
+            tsv.push_str(line);
+            tsv.push('\n');
+        }
+        parse_opencode_db_records(&tsv).ok()
+    }
+
+    fn query_full(&self, scope: &Scope) -> Result<Vec<OpenCodeRecord>> {
         let mut args = self.invocation.prefix_args.clone();
         args.extend([
             "db".into(),
@@ -2219,6 +2360,13 @@ fn session_query(scope: &Scope) -> String {
             "{GLOBAL_SESSION_ROWS} AND s.id IN ({})",
             sql_id_list(ids).unwrap_or_else(|| "NULL".into())
         ),
+        Scope::Directory {
+            directory,
+            since_ms,
+        } => format!(
+            "{GLOBAL_SESSION_ROWS} AND s.directory = '{}' AND s.time_updated >= {since_ms}",
+            directory.to_string_lossy().replace('\'', "''")
+        ),
     }
 }
 
@@ -2323,7 +2471,11 @@ fn grant_managed_capabilities(session: &mut AgentSession, managed: &ManagedOpenC
             session.capabilities.insert(Capability::Reply);
             session.capabilities.insert(Capability::Interrupt);
         }
-        SessionState::Completed | SessionState::ReadyForReview | SessionState::Scheduled => {
+        SessionState::Completed
+        | SessionState::TaskDone
+        | SessionState::ProjectDone
+        | SessionState::ReadyForReview
+        | SessionState::Scheduled => {
             session.capabilities.insert(Capability::Reply);
         }
         SessionState::NeedsInput if managed.raw_state == "turn failed" => {
@@ -2523,6 +2675,67 @@ fn is_throwaway_directory(directory: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// Not part of the normal run: checks the incremental listing against the full
+    /// query on this Mac's real store, and prints how long each takes.
+    ///   cargo test --release incremental_listing_matches -- --ignored --nocapture
+    #[test]
+    #[ignore = "reads the real OpenCode store"]
+    fn incremental_listing_matches_the_full_query_on_the_real_store() {
+        let bin = std::env::var("OPENCODE_BIN").unwrap_or_else(|_| {
+            format!("{}/.local/bin/opencode-dev", std::env::var("HOME").unwrap())
+        });
+        let source = OpenCodeSource::host(bin);
+        let pinned = BTreeSet::new();
+        let scope = Scope::Recent {
+            limit: 5001,
+            oldest_first: false,
+            pinned: pinned.clone(),
+        };
+        let timed = |label: &str, f: &dyn Fn() -> Vec<OpenCodeRecord>| {
+            let started = std::time::Instant::now();
+            let records = f();
+            println!(
+                "{label}: {} ms, {} records",
+                started.elapsed().as_millis(),
+                records.len()
+            );
+            records
+        };
+        let full = timed("full", &|| source.query_full(&scope).unwrap());
+        let first = timed("incremental (fills the cache)", &|| {
+            source
+                .query_incremental(5001, false, &pinned)
+                .expect("incremental")
+        });
+        let second = timed("incremental (reuses it)", &|| {
+            source
+                .query_incremental(5001, false, &pinned)
+                .expect("incremental")
+        });
+        let by_id = |records: &[OpenCodeRecord]| {
+            records
+                .iter()
+                .map(|r| (r.id.clone(), format!("{r:?}")))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        let (full, first, second) = (by_id(&full), by_id(&first), by_id(&second));
+        for (label, got) in [("first", &first), ("second", &second)] {
+            assert_eq!(full.len(), got.len(), "{label}: same sessions");
+            let moved: Vec<_> = full
+                .iter()
+                .filter(|(id, text)| got.get(*id) != Some(text))
+                .map(|(id, _)| id.clone())
+                .collect();
+            // Sessions being written to while the test runs may legitimately differ.
+            println!(
+                "{label}: {} of {} records differ: {moved:?}",
+                moved.len(),
+                full.len()
+            );
+            assert!(moved.len() <= 3, "{label}: too many differences");
+        }
+    }
+
     #[test]
     fn a_session_row_bumped_by_a_model_switch_keeps_its_last_message_time() {
         let sessions = parse_opencode_session_list(

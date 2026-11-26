@@ -21,6 +21,7 @@ pub mod maintenance;
 pub mod migration;
 pub mod model_catalog;
 pub mod native_session;
+pub mod onboarding;
 pub mod opencode_supervisor;
 pub mod order;
 pub mod paused;
@@ -29,6 +30,7 @@ pub mod pi_supervisor;
 pub mod proc_info;
 pub mod process;
 pub mod queue;
+pub mod search_opens;
 pub mod session_focus;
 pub mod session_tree;
 pub mod terminal;
@@ -58,3 +60,5 @@ pub(crate) mod test_support {
     }
 }
 pub mod bridge;
+pub mod completion;
+pub mod dashboard_snapshot;

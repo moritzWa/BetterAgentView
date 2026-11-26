@@ -1,6 +1,18 @@
 //! Opt-in private mobile history bridge. The dashboard does not own its lifecycle.
 mod artifacts;
 mod context;
+/// Generated shared bridge wire types.
+///
+/// ```
+/// use agentview::bridge::contract::Status;
+/// let _status = Status::Working;
+/// ```
+///
+/// ```compile_fail
+/// use agentview::bridge::contract::Status;
+/// let _status = Status::InventedStatus;
+/// ```
+pub mod contract;
 mod health;
 mod http;
 mod journal;
@@ -20,7 +32,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
 };
 use std::time::Duration;
@@ -125,37 +137,35 @@ pub fn pair(
     drop(source);
     let device_id = random_id()?;
     let epoch = random_id()?;
-    let started = http::request(
+    let started = http::request::<contract::PairStartResponse>(
         endpoint,
-        "/pair/start",
+        contract::ROUTE_PAIR_START,
         None,
-        Some(
-            &json!({"device_id":device_id,"database_epoch":epoch,"label":std::env::var("USER").unwrap_or_else(|_|"Mac".into())+" Agent View"}),
-        ),
+        Some(&serde_json::to_value(contract::PairStart {
+            device_id: device_id.clone(),
+            database_epoch: epoch.clone(),
+            label: std::env::var("USER").unwrap_or_else(|_| "Mac".into()) + " BetterAgentView",
+        })?),
         30,
     )?;
-    let code = started["device_code"]
-        .as_str()
-        .context("missing pairing code")?;
+    let code = &started.device_code;
     println!(
         "Approve this device in your browser:\n{}",
-        started["verification_uri"]
-            .as_str()
-            .context("missing approval URL")?
+        started.verification_uri
     );
     let deadline = std::time::Instant::now() + Duration::from_secs(600);
     loop {
-        match http::request(
+        match http::request::<contract::PairTokenResponse>(
             endpoint,
-            "/pair/token",
+            contract::ROUTE_PAIR_TOKEN,
             None,
-            Some(&json!({"device_code":code})),
+            Some(&serde_json::to_value(contract::PairToken {
+                device_code: code.to_owned(),
+            })?),
             30,
         ) {
             Ok(response) => {
-                let credential = response["access_token"]
-                    .as_str()
-                    .context("missing connector credential")?;
+                let credential = &response.access_token;
                 let service = format!("agentview-bridge-{device_id}");
                 save_token(&service, credential)?;
                 let config = Config {
@@ -295,14 +305,14 @@ fn flush_isolating(journal: &mut Journal, config: &Config, token: &str) -> Resul
     let mut faults: Faults = Vec::new();
     while let Some(body) = journal.pending()? {
         let session = body["session_id"].as_str().unwrap_or_default().to_owned();
-        let sent = http::request(
+        let sent = http::request::<contract::BatchResponse>(
             &config.endpoint,
-            "/v1/sync/batches",
+            contract::ROUTE_BATCHES,
             Some(token),
             Some(&body),
             60,
         )
-        .and_then(|receipt| journal.ack(&receipt));
+        .and_then(|receipt| journal.ack(&serde_json::to_value(receipt)?));
         match sent {
             Ok(()) => count += 1,
             Err(error) => match classify(&error) {
@@ -400,6 +410,15 @@ fn sync_session(
 }
 
 pub fn sync_once(dir: &Path) -> Result<usize> {
+    sync_pass(dir, true)
+}
+
+/// One history pass. `reconcile` also compares every local pointer with the
+/// cloud's. That costs one request per 1,000 sessions, which dominated a pass
+/// that otherwise only compares local watermarks. The service reconciles on its
+/// idle cadence rather than on every wake from the phone.
+fn sync_pass(dir: &Path, reconcile: bool) -> Result<usize> {
+    let _pass_span = crate::perf_log::span("bridge-sync-pass");
     let _sync_lock = local_lock(&dir.join("sync.lock"))?;
     let started = std::time::Instant::now();
     let config = load(dir)?;
@@ -441,6 +460,15 @@ pub fn sync_once(dir: &Path) -> Result<usize> {
             note(&mut failing, &id, stage, &error);
         }
     }
+    let scan_span = crate::perf_log::span("bridge-sync-scan");
+    // Any failure here only means every session takes the per-session path.
+    let unchanged = journal
+        .observed_marks()
+        .and_then(|marks| {
+            let held = journal.held_sessions()?.into_iter().collect();
+            source::unchanged_native(&db, &marks, &held)
+        })
+        .unwrap_or_default();
     let mut server_errors = 0;
     for id in &ids {
         if failing.iter().any(|f| &f.session_id == id) {
@@ -452,6 +480,9 @@ pub fn sync_once(dir: &Path) -> Result<usize> {
                 failing.push(f.clone());
                 continue;
             }
+        }
+        if unchanged.contains(id) {
+            continue;
         }
         match sync_session(
             &mut db,
@@ -476,38 +507,56 @@ pub fn sync_once(dir: &Path) -> Result<usize> {
             }
         }
     }
+    drop(scan_span);
     // A restored journal can look caught up locally while the cloud pointer differs.
     // Compare pointers and replace those sessions. A network failure here is not a stall.
-    if let Ok(local) = journal.checkpoints() {
+    let _cursor_span = crate::perf_log::span("bridge-sync-cursors");
+    if let Ok(local) = if reconcile {
+        journal.checkpoints()
+    } else {
+        Ok(Vec::new())
+    } {
         if !local.is_empty() {
-            let sessions: Vec<Value> = local
-                .iter()
-                .map(|(id, cursor)| json!({"session_id": id, "cursor": cursor}))
-                .collect();
-            match http::request(
-                &config.endpoint,
-                "/v1/sync/cursors",
-                Some(&credential),
-                Some(&json!({"sessions": sessions})),
-                60,
-            ) {
-                Ok(report) => {
-                    for id in report["mismatch"].as_array().cloned().unwrap_or_default() {
-                        let Some(id) = id.as_str() else { continue };
-                        if !ids.contains(id) || failing.iter().any(|f| f.session_id == id) {
-                            continue;
-                        }
-                        match replace_session(&mut db, &mut journal, &config, &credential, id) {
-                            Ok(n) => uploads += n,
-                            Err(("transport", error)) => return Err(error),
-                            Err((stage, error)) => note(&mut failing, id, stage, &error),
+            let mut complete = true;
+            for chunk in local.chunks(CURSOR_BATCH_SIZE) {
+                let sessions: Vec<contract::CursorPointer> = chunk
+                    .iter()
+                    .map(|(id, cursor)| contract::CursorPointer {
+                        session_id: id.clone(),
+                        cursor: *cursor,
+                    })
+                    .collect();
+                match http::request::<contract::CursorsResponse>(
+                    &config.endpoint,
+                    contract::ROUTE_CURSORS,
+                    Some(&credential),
+                    Some(&serde_json::to_value(contract::CursorRequest { sessions })?),
+                    60,
+                ) {
+                    Ok(report) => {
+                        for id in &report.mismatch {
+                            if !ids.contains(id) || failing.iter().any(|f| f.session_id == *id) {
+                                continue;
+                            }
+                            match replace_session(&mut db, &mut journal, &config, &credential, id) {
+                                Ok(n) => uploads += n,
+                                Err(("transport", error)) => return Err(error),
+                                Err((stage, error)) => note(&mut failing, id, stage, &error),
+                            }
                         }
                     }
+                    Err(error) => {
+                        complete = false;
+                        log_unavailable("cursors", &error);
+                    }
                 }
-                Err(error) => log_unavailable("cursors", &error),
+            }
+            if complete {
+                log_recovered("cursors");
             }
         }
     }
+    drop(_cursor_span);
     for id in journal.known()? {
         if !ids.contains(&id) {
             if journal.has_held(&id)? {
@@ -536,13 +585,21 @@ pub fn sync_once(dir: &Path) -> Result<usize> {
     };
     let _ = crate::fs_util::write_private_json(&dir.join("sync-health.json"), &health);
     // A scan with stuck sessions must not stamp history as fresh.
-    http::request(
+    http::request::<contract::OkResponse>(
         &config.endpoint,
-        "/v1/connector/checked",
+        contract::ROUTE_CHECKED,
         Some(&credential),
-        Some(
-            &json!({"complete":health.failing.is_empty(),"skipped":health.failing.len(),"behind":health.failing.len(),"behind_since":health.failing.iter().map(|f| f.since).min().map(|s| s * 1000)}),
-        ),
+        Some(&serde_json::to_value(contract::CheckedRequest {
+            complete: Some(health.failing.is_empty()),
+            skipped: Some(health.failing.len() as i64),
+            behind: Some(health.failing.len() as i64),
+            behind_since: health
+                .failing
+                .iter()
+                .map(|f| f.since)
+                .min()
+                .map(|s| (s * 1000) as i64),
+        })?),
         30,
     )?;
     if let Err(error) = publish_runtime(dir, &config, &credential) {
@@ -551,26 +608,163 @@ pub fn sync_once(dir: &Path) -> Result<usize> {
     Ok(uploads)
 }
 
+/// Reads one session's status and sends it back. Any failure answers `null`, so
+/// the reader falls back to the snapshot at once instead of waiting out a timeout.
+fn answer_probe(
+    _dir: &Path,
+    config: &Config,
+    credential: &str,
+    probe: &contract::Probe,
+    read: bool,
+) {
+    let _span = crate::perf_log::span("bridge-probe-answer");
+    let status = if !read {
+        None
+    } else {
+        match runtime::session_status(config, &probe.session_id) {
+            Ok(status) => status,
+            Err(error) => {
+                log_unavailable("probe", &error);
+                None
+            }
+        }
+    };
+    let body = contract::ProbeResult {
+        probe_id: probe.probe_id.clone(),
+        status,
+    };
+    let sent = serde_json::to_value(body)
+        .map_err(anyhow::Error::from)
+        .and_then(|body| {
+            http::request::<contract::OkResponse>(
+                &config.endpoint,
+                contract::ROUTE_PROBE,
+                Some(credential),
+                Some(&body),
+                10,
+            )
+        });
+    if let Err(error) = sent {
+        log_unavailable("probe", &error);
+    }
+}
+
 fn publish_runtime(dir: &Path, config: &Config, credential: &str) -> Result<()> {
-    let _lock = local_lock(&dir.join("runtime.lock"))?;
+    // The poll thread and the sync loop both publish. If the other one is mid-publish,
+    // its result is the one the phone needs, so this call has nothing to add.
+    let Some(_lock) = try_local_lock(&dir.join("runtime.lock"))? else {
+        return Ok(());
+    };
     let stamp = dir.join("runtime-checked.json");
     if std::fs::metadata(&stamp)
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| t.elapsed().ok())
-        .is_some_and(|age| age < Duration::from_secs(15))
+        .is_some_and(|age| age < RUNTIME_MIN_INTERVAL)
     {
         return Ok(());
     }
-    let snapshot = runtime::snapshot(config)?;
-    http::request(
+    let started = std::time::Instant::now();
+    // One quick retry: a native read can fail for a moment while OpenCode writes.
+    let mut snapshot = match runtime::snapshot(config) {
+        Ok(snapshot) => snapshot,
+        Err(first) => {
+            log_unavailable("runtime", &first);
+            std::thread::sleep(Duration::from_secs(2));
+            runtime::snapshot(config)?
+        }
+    };
+    let trace_path = dir.join("snapshot-upload.json");
+    if let Some(trace) = &mut snapshot.snapshot_trace {
+        if let Ok(bytes) = std::fs::read(&trace_path) {
+            if let Ok((at, result)) = serde_json::from_slice(&bytes) {
+                trace.previous_upload_at = Some(at);
+                trace.previous_upload_result = Some(result);
+            }
+        }
+    }
+    let dashboard_at = snapshot.dashboard.as_ref().map(|s| s.captured_at);
+    let mut payload = serde_json::to_value(snapshot)?;
+    if crate::perf_log::enabled() {
+        crate::perf_log::event(
+            "bridge-runtime-payload",
+            format_args!("bytes={}", payload.to_string().len()),
+        );
+    }
+    let _upload_span = crate::perf_log::span("bridge-runtime-upload");
+    let published = http::request::<contract::OkResponse>(
         &config.endpoint,
-        "/v1/connector/runtime",
+        contract::ROUTE_RUNTIME,
         Some(credential),
-        Some(&serde_json::to_value(snapshot)?),
+        Some(&payload),
         35,
-    )?;
+    );
+    let (published, legacy_retry) = match published {
+        // Retry without trace first so old Workers keep receiving the dashboard.
+        Err(error)
+            if error.to_string() == "bridge HTTP 400 invalid_runtime_snapshot"
+                && payload.get("snapshot_trace").is_some() =>
+        {
+            payload.as_object_mut().unwrap().remove("snapshot_trace");
+            (
+                http::request::<contract::OkResponse>(
+                    &config.endpoint,
+                    contract::ROUTE_RUNTIME,
+                    Some(credential),
+                    Some(&payload),
+                    35,
+                ),
+                true,
+            )
+        }
+        other => (other, false),
+    };
+    let (published, legacy_retry) = match published {
+        Err(error)
+            if error.to_string() == "bridge HTTP 400 invalid_runtime_snapshot"
+                && payload.get("dashboard").is_some() =>
+        {
+            payload.as_object_mut().unwrap().remove("dashboard");
+            (
+                http::request::<contract::OkResponse>(
+                    &config.endpoint,
+                    contract::ROUTE_RUNTIME,
+                    Some(credential),
+                    Some(&payload),
+                    35,
+                ),
+                true,
+            )
+        }
+        other => (other, legacy_retry),
+    };
+    use contract::PreviousUploadResult;
+    let upload_result = if published.is_err() {
+        PreviousUploadResult::Failed
+    } else if legacy_retry {
+        PreviousUploadResult::LegacyRetry
+    } else {
+        PreviousUploadResult::PreviousUploadResultOk
+    };
+    let upload_at = crate::dashboard_snapshot::now_ms();
+    crate::perf_log::event(
+        "bridge-dashboard-upload",
+        format_args!(
+            "finished_at={} captured_at={:?} result={:?}",
+            upload_at, dashboard_at, upload_result
+        ),
+    );
+    let _ = crate::fs_util::write_private_json(&trace_path, &(upload_at, upload_result));
+    published?;
     crate::fs_util::write_private_json(&stamp, &json!({"checked":true}))?;
+    log_recovered("runtime");
+    if started.elapsed() > Duration::from_secs(3) {
+        eprintln!(
+            "bridge runtime slow ms={} time={}",
+            started.elapsed().as_millis(),
+            now_secs()
+        );
+    }
     Ok(())
 }
 
@@ -615,17 +809,26 @@ pub fn deliver_once(dir: &Path) -> Result<bool> {
     let message = if let Some(body) = pending {
         serde_json::from_str::<Value>(&body)?
     } else {
-        let lease = http::request(
+        let lease = http::request::<contract::LeaseResponse>(
             &config.endpoint,
-            "/v1/connector/lease",
+            &format!("{}?session_visibility=1", contract::ROUTE_LEASE),
             Some(&credential),
-            Some(&json!({})),
+            Some(&serde_json::to_value(contract::EmptyRequest {})?),
             30,
         )?;
-        if lease["message"].is_null() || lease["message"].get("needs_confirmation").is_some() {
-            return Ok(false);
-        }
-        let message = lease["message"].clone();
+        let message = if let Some(visibility) = lease.visibility {
+            serde_json::to_value(visibility)?
+        } else {
+            let Some(lease) = lease.message else {
+                return Ok(false);
+            };
+            if lease.needs_confirmation.is_some() {
+                return Ok(false);
+            }
+            let typed: contract::MessageLease =
+                serde_json::from_value(serde_json::to_value(lease)?)?;
+            serde_json::to_value(typed)?
+        };
         journal.db.execute(
             "INSERT INTO delivery(operation_id,body) VALUES (?1,?2)",
             rusqlite::params![
@@ -635,20 +838,95 @@ pub fn deliver_once(dir: &Path) -> Result<bool> {
         )?;
         message
     };
-    let id = message["session_id"].as_str().context("invalid target")?;
     let mid = message["message_id"].as_str().context("invalid input ID")?;
-    let text = message["text"].as_str().context("invalid input")?;
     let operation = message["operation_id"]
         .as_str()
         .context("invalid operation")?;
+    let status = if message.get("action").is_some() {
+        visibility_delivery(
+            &journal,
+            message.clone(),
+            crate::hidden::HiddenSessions::load_default,
+        )?
+    } else {
+        deliver_message(&config, &journal, &message, mid)?
+    };
+    http::request::<contract::ReceiptResponse>(
+        &config.endpoint,
+        contract::ROUTE_ACK,
+        Some(&credential),
+        Some(&serde_json::to_value(contract::AckRequest {
+            operation_id: operation.to_owned(),
+            message_id: mid.to_owned(),
+            status,
+        })?),
+        30,
+    )?;
+    journal
+        .db
+        .execute("DELETE FROM delivery WHERE operation_id=?1", [operation])?;
+    Ok(true)
+}
+
+fn visibility_delivery(
+    journal: &Journal,
+    mut body: Value,
+    registry: impl FnOnce() -> Result<crate::hidden::HiddenSessions>,
+) -> Result<contract::AckStatus> {
+    // Once applied, keep the outcome even if ACK fails and the lease expires.
+    // Never replay a recorded hide over a later local unhide (or vice versa).
+    if let Some(status) = body.get("registry_outcome") {
+        return Ok(serde_json::from_value(status.clone())?);
+    }
+    let lease: contract::VisibilityLease = serde_json::from_value(body.clone())?;
+    let status = if lease.expires_at <= delivery_now()? {
+        contract::AckStatus::Failed
+    } else {
+        let result = registry().and_then(|registry| apply_visibility(&registry, &lease));
+        match result {
+            Ok(()) => contract::AckStatus::Accepted,
+            Err(error) => {
+                eprintln!("bridge registry change failed: {}", safe_reason(&error));
+                contract::AckStatus::Failed
+            }
+        }
+    };
+    body["registry_outcome"] = serde_json::to_value(&status)?;
+    journal.db.execute(
+        "UPDATE delivery SET body=?1 WHERE operation_id=?2",
+        rusqlite::params![body.to_string(), lease.operation_id],
+    )?;
+    Ok(status)
+}
+
+fn apply_visibility(
+    registry: &crate::hidden::HiddenSessions,
+    lease: &contract::VisibilityLease,
+) -> Result<()> {
+    match lease.action {
+        contract::VisibilityAction::Hide => registry.hide_id(&lease.session_id).map(|_| ()),
+        contract::VisibilityAction::Unhide => registry.unhide(&lease.session_id).map(|_| ()),
+    }
+}
+
+fn delivery_now() -> Result<i64> {
+    Ok(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as i64)
+}
+
+fn deliver_message(
+    config: &Config,
+    journal: &Journal,
+    message: &Value,
+    mid: &str,
+) -> Result<contract::AckStatus> {
+    let id = message["session_id"].as_str().context("invalid target")?;
+    let text = message["text"].as_str().context("invalid input")?;
     let mut db = source::open(&config.database)?;
     let mut status = "accepted";
     if !already_admitted(&db, mid, id, text)? {
-        if message["expires_at"].as_i64().unwrap_or(0)
-            <= std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_millis() as i64
-        {
+        if message["expires_at"].as_i64().unwrap_or(0) <= delivery_now()? {
             status = "failed";
         } else if let Some(capture) = source::capture(&mut db, id, None).unwrap_or_else(|error| {
             eprintln!(
@@ -690,17 +968,7 @@ pub fn deliver_once(dir: &Path) -> Result<bool> {
             status = "failed";
         }
     }
-    http::request(
-        &config.endpoint,
-        "/v1/connector/ack",
-        Some(&credential),
-        Some(&json!({"operation_id":operation,"message_id":mid,"status":status})),
-        30,
-    )?;
-    journal
-        .db
-        .execute("DELETE FROM delivery WHERE operation_id=?1", [operation])?;
-    Ok(true)
+    Ok(status.parse()?)
 }
 
 fn ack_start(
@@ -711,13 +979,16 @@ fn ack_start(
     session_id: Option<&str>,
     reason: &str,
 ) -> Result<()> {
-    http::request(
+    http::request::<contract::StartReceiptResponse>(
         endpoint,
-        "/v1/connector/start-ack",
+        contract::ROUTE_START_ACK,
         Some(credential),
-        Some(
-            &json!({"operation_id": operation, "status": status, "session_id": session_id, "reason": if reason.is_empty() { Value::Null } else { json!(reason) }}),
-        ),
+        Some(&serde_json::to_value(contract::StartAckRequest {
+            operation_id: operation.to_owned(),
+            status: status.parse()?,
+            session_id: session_id.map(str::to_owned),
+            reason: (!reason.is_empty()).then(|| reason.to_owned()),
+        })?),
         30,
     )?;
     Ok(())
@@ -774,38 +1045,26 @@ pub fn start_once(dir: &Path) -> Result<bool> {
         start::finish(&journal.db, &operation)?;
         return Ok(true);
     }
-    let lease = http::request(
+    let lease = http::request::<contract::StartLeaseResponse>(
         &config.endpoint,
-        "/v1/connector/start-lease",
+        contract::ROUTE_START_LEASE,
         Some(&credential),
-        Some(&json!({})),
+        Some(&serde_json::to_value(contract::EmptyRequest {})?),
         30,
     )?;
-    if lease["start"].is_null() {
+    let Some(start) = lease.start else {
         return Ok(false);
-    }
-    let start = lease["start"].clone();
+    };
+    let start = serde_json::to_value(start)?;
     let operation = start["operation_id"].as_str().context("invalid start")?;
     let directory = start["directory"]
         .as_str()
         .context("invalid start directory")?;
     let text = start["text"].as_str().context("invalid start prompt")?;
-    let home = std::env::var_os("HOME").context("HOME is not set");
-    let allowed = home
-        .as_ref()
-        .ok()
-        .and_then(|home| start::allowed_directory(Path::new(directory), Path::new(home)).ok());
-    let deny = if home.is_err() {
-        Some("server")
-    } else if allowed.is_none() {
-        Some(
-            start::allowed_directory(Path::new(directory), Path::new(home.as_ref().unwrap()))
-                .unwrap_err(),
-        )
-    } else {
-        None
-    };
-    if let Some(reason) = deny {
+    let allowed = std::env::var_os("HOME")
+        .ok_or("server")
+        .and_then(|home| start::allowed_directory(Path::new(directory), Path::new(&home)));
+    if let Err(reason) = &allowed {
         ack_start(
             &config.endpoint,
             &credential,
@@ -816,7 +1075,7 @@ pub fn start_once(dir: &Path) -> Result<bool> {
         )?;
         return Ok(true);
     }
-    let canonical = allowed.context("start directory")?;
+    let canonical = allowed.map_err(|reason| anyhow::anyhow!("start directory: {reason}"))?;
     match start::claim(&journal.db, operation, &start.to_string())? {
         start::Claim::Uncertain => {
             ack_start(
@@ -899,6 +1158,35 @@ pub fn start_once(dir: &Path) -> Result<bool> {
     Ok(true)
 }
 
+fn is_busy(error: &anyhow::Error) -> bool {
+    error.to_string().contains("already running")
+}
+
+/// `None` when another thread or process holds the lock. That is the job being
+/// done already, not a failure, so callers skip quietly instead of logging an
+/// outage and backing off.
+fn try_local_lock(path: &Path) -> Result<Option<std::fs::File>> {
+    match local_lock(path) {
+        Ok(lock) => Ok(Some(lock)),
+        Err(error) if is_busy(&error) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn deliver_unless_busy(dir: &Path) -> Result<bool> {
+    match deliver_once(dir) {
+        Err(error) if is_busy(&error) => Ok(false),
+        other => other,
+    }
+}
+
+fn start_unless_busy(dir: &Path) -> Result<bool> {
+    match start_once(dir) {
+        Err(error) if is_busy(&error) => Ok(false),
+        other => other,
+    }
+}
+
 fn local_lock(path: &Path) -> Result<std::fs::File> {
     let lock = std::fs::OpenOptions::new()
         .create(true)
@@ -916,68 +1204,151 @@ fn local_lock(path: &Path) -> Result<std::fs::File> {
 }
 
 pub fn run(dir: &Path) -> Result<()> {
+    // Stage timings for slow snapshots and passes go to the shared perf log.
+    crate::perf_log::use_default_file();
     let _ = load(dir)?;
     let _lock = local_lock(&dir.join("daemon.lock"))?;
     let queue_dir = dir.to_owned();
     let active_until = Arc::new(AtomicU64::new(0));
     let activity = active_until.clone();
+    let reconnect_sync = Arc::new(AtomicBool::new(false));
+    let request_sync = reconnect_sync.clone();
     // The cloud wakes the poll thread the moment someone reads history. Waking
     // the sync loop from it saves up to a full tick on the first read after idle.
     let (wake, woken) = std::sync::mpsc::channel::<()>();
-    std::thread::spawn(move || loop {
-        let result = (|| -> Result<()> {
-            let config = load(&queue_dir)?;
-            let credential = token(&config)?;
-            let poll = http::request(
-                &config.endpoint,
-                "/v1/connector/poll",
-                Some(&credential),
-                Some(&json!({})),
-                35,
-            )?;
-            activity.store(
-                poll["active_until"].as_u64().unwrap_or(0),
-                Ordering::Relaxed,
-            );
-            let _ = wake.send(());
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_millis() as u64;
-            if poll["pending"] == true {
-                while deliver_once(&queue_dir)? {}
-                while start_once(&queue_dir)? {}
-            }
-            if poll["active_until"].as_u64().unwrap_or(0) > now {
-                // The sync loop publishes too. Losing that race is not a delivery
-                // failure and must not stop this thread from polling for 10 s.
+    std::thread::spawn(move || {
+        let mut retrying = false;
+        // Fill the session-record cache and publish once at start, so the first
+        // phone read after a restart does not pay for a full listing.
+        if let Ok(config) = load(&queue_dir) {
+            if let Ok(credential) = token(&config) {
                 if let Err(error) = publish_runtime(&queue_dir, &config, &credential) {
                     log_unavailable("runtime", &error);
                 }
             }
-            Ok(())
-        })();
-        if let Err(error) = result {
-            log_unavailable("delivery", &error);
-            std::thread::sleep(Duration::from_secs(10));
+        }
+        loop {
+            let result = (|| -> Result<()> {
+                let config = load(&queue_dir)?;
+                let credential = token(&config)?;
+                let poll = http::request::<contract::PollResponse>(
+                    &config.endpoint,
+                    contract::ROUTE_POLL,
+                    Some(&credential),
+                    Some(&serde_json::to_value(contract::EmptyRequest {})?),
+                    35,
+                )?;
+                if runtime_alert_changed(&queue_dir, poll.runtime_alert.as_ref())? {
+                    notify_runtime_stale();
+                }
+                // A recovered connection must catch history up even when the phone
+                // is idle. A plain wake alone does not bypass the 15-minute timer.
+                if retrying {
+                    request_sync.store(true, Ordering::Relaxed);
+                    retrying = false;
+                }
+                activity.store(poll.active_until.max(0) as u64, Ordering::Relaxed);
+                // A phone read is waiting on one session's status. Answer from
+                // its own thread so a publication in progress here does not delay it.
+                if let Some(probe) = poll.probe.clone() {
+                    let (dir, config, credential) =
+                        (queue_dir.clone(), config.clone(), credential.clone());
+                    // One at a time: a reader that gave up has already moved on, so
+                    // piling a second read onto the first only slows both. A busy
+                    // daemon says so at once and the reader uses the snapshot.
+                    let take = !PROBE_BUSY.swap(true, Ordering::SeqCst);
+                    std::thread::spawn(move || {
+                        if take {
+                            answer_probe(&dir, &config, &credential, &probe, true);
+                            PROBE_BUSY.store(false, Ordering::SeqCst);
+                        } else {
+                            answer_probe(&dir, &config, &credential, &probe, false);
+                        }
+                    });
+                }
+                let _ = wake.send(());
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_millis() as u64;
+                // Delivery and the session-state publish are independent. A failed
+                // delivery must not leave the phone reading a stale state.
+                let delivery = (|| -> Result<()> {
+                    if poll.pending {
+                        while deliver_unless_busy(&queue_dir)? {}
+                        while start_unless_busy(&queue_dir)? {}
+                    }
+                    Ok(())
+                })();
+                if poll.active_until.max(0) as u64 > now {
+                    // Publish from its own thread: the next poll is how a phone
+                    // read's probe reaches this Mac, and it should not wait out a
+                    // snapshot first. The runtime lock keeps publishes from overlapping.
+                    let (dir, config, credential) =
+                        (queue_dir.clone(), config.clone(), credential.clone());
+                    std::thread::spawn(move || {
+                        if let Err(error) = publish_runtime(&dir, &config, &credential) {
+                            log_unavailable("runtime", &error);
+                        }
+                    });
+                }
+                delivery
+            })();
+            match result {
+                Ok(()) => log_recovered("delivery"),
+                Err(error) => {
+                    retrying = true;
+                    log_unavailable("delivery", &error);
+                    std::thread::sleep(Duration::from_secs(10));
+                }
+            }
         }
     });
     let mut last_sync = std::time::Instant::now() - Duration::from_secs(900);
+    let mut last_reconcile: Option<std::time::Instant> = None;
     let mut unhealthy_since: Option<std::time::Instant> = None;
     let mut last_alert: Option<std::time::Instant> = None;
+    let mut force_sync = false;
+    let mut previous_tick = (std::time::SystemTime::now(), std::time::Instant::now());
     loop {
+        force_sync |= reconnect_sync.swap(false, Ordering::Relaxed);
+        // The idle timer below stops counting while the Mac sleeps. A wall clock that
+        // ran ahead of it means we just woke up: sync now instead of waiting out
+        // the rest of the interval.
+        let tick = (std::time::SystemTime::now(), std::time::Instant::now());
+        let wall = tick.0.duration_since(previous_tick.0).unwrap_or_default();
+        if slept_between(wall, tick.1.duration_since(previous_tick.1)) {
+            eprintln!("bridge woke after {}s asleep; syncing", wall.as_secs());
+            force_sync = true;
+        }
+        previous_tick = tick;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_millis() as u64;
         // Idle backfill every 15 minutes lets Neon's five-minute autosuspend
         // actually take effect. Active mobile use requests near-live checks.
-        if active_until.load(Ordering::Relaxed) <= now
-            && last_sync.elapsed() < Duration::from_secs(900)
+        if !force_sync
+            && active_until.load(Ordering::Relaxed) <= now
+            && last_sync.elapsed() < IDLE_SYNC_INTERVAL
         {
-            let _ = woken.recv_timeout(Duration::from_secs(5));
+            let _ = woken.recv_timeout(IDLE_SYNC_PAUSE);
             continue;
         }
         while woken.try_recv().is_ok() {}
-        let outcome = sync_once(dir);
+        // Pointer reconciliation is the slow part of a pass. Phone activity only
+        // needs to know the source has not changed, so run it on the idle cadence
+        // and after a reconnect or wake from sleep. A phone that stays active
+        // still reconciles, at the longer interval, instead of every tick.
+        let phone_active = active_until.load(Ordering::Relaxed) > now;
+        let reconcile = should_reconcile(
+            force_sync,
+            phone_active,
+            last_reconcile.map(|at| at.elapsed()),
+        );
+        force_sync = false;
+        let outcome = sync_pass(dir, reconcile);
+        if reconcile && outcome.is_ok() {
+            last_reconcile = Some(std::time::Instant::now());
+        }
         let healthy = outcome.is_ok() && read_health(dir).failing.is_empty();
         let offline = outcome
             .as_ref()
@@ -997,28 +1368,100 @@ pub fn run(dir: &Path) -> Result<()> {
         match outcome {
             Ok(n) => {
                 last_sync = std::time::Instant::now();
+                log_recovered("sync");
                 if n > 0 {
                     eprintln!("bridge synced {n} history batches");
                 }
                 // Reconcile Postgres at the same cadence that already wakes it
                 // for history. A crash between commit and wake signaling must
                 // not strand a queued instruction indefinitely.
-                if deliver_once(dir).is_err() {
+                if deliver_unless_busy(dir).is_err() {
                     eprintln!("bridge queue reconciliation deferred");
                 }
-                if start_once(dir).is_err() {
+                if start_unless_busy(dir).is_err() {
                     eprintln!("bridge start reconciliation deferred");
                 }
             }
             Err(error) => log_unavailable("sync", &error),
         };
-        // Sleep between passes, but not past a fresh wake from the cloud.
-        let _ = woken.recv_timeout(Duration::from_secs(5));
+        // Sleep between passes, but not past a fresh wake from the cloud. While
+        // the phone is active a pass is cheap, and history older than five
+        // seconds makes the next read wait for one, so pass often enough that
+        // a read finds a recent check.
+        let active = active_until.load(Ordering::Relaxed)
+            > std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis() as u64;
+        let _ = woken.recv_timeout(if active {
+            ACTIVE_SYNC_PAUSE
+        } else {
+            IDLE_SYNC_PAUSE
+        });
     }
 }
 
+/// Pointer reconciliation asks the cloud about every session, so it is kept off
+/// the path of a phone read: due on the idle cadence, or half-hourly while the
+/// phone stays active, and always after a reconnect, a wake or a restart.
+fn should_reconcile(forced: bool, phone_active: bool, since_last: Option<Duration>) -> bool {
+    forced
+        || since_last.map_or(true, |elapsed| {
+            elapsed
+                >= if phone_active {
+                    ACTIVE_RECONCILE_INTERVAL
+                } else {
+                    IDLE_SYNC_INTERVAL
+                }
+        })
+}
+
+/// Shortest gap between two runtime publications. The Worker treats a snapshot
+/// older than 20 s as stale and makes a status read wait for the next one, and a
+/// pass now takes under a second, so publishing this often keeps reads from waiting.
+const RUNTIME_MIN_INTERVAL: Duration = Duration::from_secs(10);
+static PROBE_BUSY: AtomicBool = AtomicBool::new(false);
+const IDLE_SYNC_INTERVAL: Duration = Duration::from_secs(900);
+const IDLE_SYNC_PAUSE: Duration = Duration::from_secs(5);
+const ACTIVE_SYNC_PAUSE: Duration = Duration::from_secs(2);
+const ACTIVE_RECONCILE_INTERVAL: Duration = Duration::from_secs(1800);
+
+/// Wall-clock age after which `status` calls the last pass stale. A Mac that
+/// slept will read stale until it wakes and syncs.
+const STALE_AFTER_SECS: u64 = 30 * 60;
+// The Worker accepts at most 4,000 pointers and bounds request bytes. History
+// includes legacy sessions too, so a whole-source inventory can exceed that.
+const CURSOR_BATCH_SIZE: usize = contract::CURSOR_BATCH;
 const STUCK_ALERT_AFTER: Duration = Duration::from_secs(30 * 60);
 const STUCK_ALERT_EVERY: Duration = Duration::from_secs(6 * 3600);
+
+// Durable deduplication: daemon restarts do not re-notify the same incident.
+fn runtime_alert_changed(dir: &Path, alert: Option<&contract::RuntimeAlert>) -> Result<bool> {
+    let path = dir.join("runtime-alert.json");
+    let old: Value = std::fs::read(&path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or(Value::Null);
+    let incident = alert.map(|a| a.incident);
+    if old.get("incident").and_then(Value::as_i64) == incident {
+        return Ok(false);
+    }
+    crate::fs_util::write_private_json(&path, &json!({"incident":incident}))?;
+    if let Some(alert) = alert {
+        eprintln!(
+            "bridge runtime publication stale for {} seconds; notifying",
+            alert.stale_for_ms / 1000
+        );
+        Ok(true)
+    } else {
+        eprintln!("bridge runtime publication recovered");
+        Ok(false)
+    }
+}
+
+fn notify_runtime_stale() {
+    #[cfg(target_os="macos")]
+    let _=std::process::Command::new("osascript").args(["-e","display notification \"Your Mac is online, but phone session status has stopped updating. Run: agentview bridge status\" with title \"BetterAgentView bridge\""]).status();
+}
 
 fn notify_stuck() {
     eprintln!("bridge sync stuck for 30+ minutes; notifying");
@@ -1026,7 +1469,7 @@ fn notify_stuck() {
     let _ = std::process::Command::new("osascript")
         .args([
             "-e",
-            "display notification \"Phone sync has not completed for 30+ minutes. Run: agentview bridge status\" with title \"Agent View bridge\"",
+            "display notification \"Phone sync has not completed for 30+ minutes. Run: agentview bridge status\" with title \"BetterAgentView bridge\"",
         ])
         .status();
 }
@@ -1038,48 +1481,200 @@ fn error_kind(message: &str) -> &'static str {
         "rate_limit"
     } else if message.contains("HTTP 5") {
         "cloud_service"
+    } else if message.contains("HTTP 4") {
+        "protocol"
     } else if message.contains("already running") {
         "busy"
     } else if message.contains("Keychain") {
         "credential"
     } else if message.contains("network") {
         "network"
+    } else if message.contains("timed out") {
+        "timeout"
+    } else if message.contains("database is locked") || message.contains("table is locked") {
+        "source_locked"
+    } else if message.contains("unsupported OpenCode source schema") {
+        "source_schema"
     } else {
         "local_or_native"
     }
 }
 
+/// Which step of the session-state snapshot failed. Only these fixed names are printed.
+fn runtime_stage(chain: &str) -> Option<&'static str> {
+    [
+        "supervisor",
+        "server_check",
+        "discover",
+        "registries",
+        "source_open",
+        "last_user",
+    ]
+    .into_iter()
+    .find(|stage| chain.contains(&format!("runtime snapshot: {stage}")))
+}
+
+/// The curl exit code from a transport failure (6 DNS, 7 connect, 28 timeout, 35 TLS).
+fn curl_code(chain: &str) -> Option<i32> {
+    let rest = chain.split("(curl ").nth(1)?;
+    rest.split(')').next()?.trim().parse().ok()
+}
+
+fn http_failure(chain: &str) -> Option<String> {
+    let rest = chain.strip_prefix("bridge HTTP ")?;
+    let mut parts = rest.split_whitespace();
+    let status = parts.next()?.parse::<u16>().ok()?;
+    if !(400..600).contains(&status) {
+        return None;
+    }
+    // Only the transport's sanitized error token is safe to log. Never print
+    // arbitrary response text or an anyhow context containing private data.
+    let code = parts.next().filter(|code| {
+        code.len() <= 80 && code.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    });
+    Some(format!(
+        " http={status}{}",
+        code.map_or(String::new(), |c| format!(" code={c}"))
+    ))
+}
+
+struct Outage {
+    kind: &'static str,
+    since: u64,
+    last_logged: u64,
+    suppressed: u32,
+}
+
+const OUTAGE_REPEAT_SECS: u64 = 300;
+
+static OUTAGES: std::sync::Mutex<std::collections::BTreeMap<String, Outage>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// True when this failure should be printed: the first one, a change of kind, or
+/// a repeat after five minutes. The rest are counted, not printed.
+fn outage_failed(
+    outages: &mut std::collections::BTreeMap<String, Outage>,
+    channel: &str,
+    kind: &'static str,
+    now: u64,
+) -> Option<(u64, u32)> {
+    match outages.get_mut(channel) {
+        None => {
+            outages.insert(
+                channel.to_owned(),
+                Outage {
+                    kind,
+                    since: now,
+                    last_logged: now,
+                    suppressed: 0,
+                },
+            );
+            Some((0, 0))
+        }
+        Some(o) if o.kind != kind || now.saturating_sub(o.last_logged) >= OUTAGE_REPEAT_SECS => {
+            let suppressed = std::mem::take(&mut o.suppressed);
+            o.kind = kind;
+            o.last_logged = now;
+            Some((now.saturating_sub(o.since), suppressed))
+        }
+        Some(o) => {
+            o.suppressed += 1;
+            None
+        }
+    }
+}
+
+/// How long the channel was failing, if it was.
+fn outage_recovered(
+    outages: &mut std::collections::BTreeMap<String, Outage>,
+    channel: &str,
+    now: u64,
+) -> Option<u64> {
+    outages.remove(channel).map(|o| now.saturating_sub(o.since))
+}
+
+fn log_recovered(channel: &str) {
+    let now = now_secs();
+    let lasted = OUTAGES
+        .lock()
+        .ok()
+        .and_then(|mut outages| outage_recovered(&mut outages, channel, now));
+    if let Some(secs) = lasted.filter(|secs| *secs >= 10) {
+        eprintln!("bridge {channel} recovered after {secs}s time={now}");
+    }
+}
+
+/// True when the machine slept or stalled: the wall clock moved on while the
+/// monotonic clock, which stops during sleep, did not.
+fn slept_between(wall: Duration, monotonic: Duration) -> bool {
+    wall > monotonic + Duration::from_secs(30)
+}
+
 fn log_unavailable(channel: &str, error: &anyhow::Error) {
-    let kind = error_kind(&error.to_string());
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    // No exception text: it can contain paths, SQL, headers or prompt content.
-    eprintln!("bridge {channel} unavailable kind={kind} time={now}; retrying");
+    // The whole cause chain decides the kind. Only the kind, a fixed stage name and
+    // a curl exit code are printed: the text can contain paths, SQL, headers or
+    // prompt content.
+    let chain = format!("{error:#}");
+    let kind = error_kind(&chain);
+    let now = now_secs();
+    let print = OUTAGES
+        .lock()
+        .ok()
+        .and_then(|mut outages| outage_failed(&mut outages, channel, kind, now));
+    let Some((failing_for, repeats)) = print else {
+        return;
+    };
+    let stage = runtime_stage(&chain).map_or(String::new(), |stage| format!(" stage={stage}"));
+    let curl = curl_code(&chain).map_or(String::new(), |code| format!(" curl={code}"));
+    let http = http_failure(&error.to_string()).unwrap_or_default();
+    let since = if failing_for > 0 {
+        format!(" failing_for={failing_for}s repeats={repeats}")
+    } else {
+        String::new()
+    };
+    eprintln!(
+        "bridge {channel} unavailable kind={kind}{stage}{curl}{http}{since} time={now}; retrying"
+    );
 }
 
 /// Compares each local projection with the cloud copy. Prints no message text.
 pub fn verify(dir: &Path) -> Result<Value> {
     let config = load(dir)?;
     let credential = token(&config)?;
+    let journal = Journal::open(&dir.join("journal.sqlite"))?;
     let mut db = source::open(&config.database)?;
     let ids = source::sessions(&db)?;
     let mut checked = 0;
+    let mut matched = 0;
+    let mut moved = 0;
     let mut mismatches = Vec::new();
     let mut failed = Vec::new();
     for id in &ids {
         let Some(capture) = source::capture(&mut db, id, None)? else {
             continue;
         };
-        let text = source::projection_text(capture.through, &capture.state, &capture.messages);
+        let checkpoint = journal.checkpoint(id)?;
+        // A session that changed after the last sync pass is waiting for the next
+        // pass. It is not a mismatch, and comparing it would only add noise.
+        if checkpoint
+            .as_ref()
+            .is_some_and(|p| p.observed != capture.through)
+        {
+            moved += 1;
+            continue;
+        }
+        let text = source::projection_text(&capture.state, &capture.messages);
         let local_hash = format!("{:x}", md5::Md5::digest(text.as_bytes()));
-        let report = match http::request(
+        let report = match http::request::<contract::VerifyResponse>(
             &config.endpoint,
-            "/v1/sync/verify",
+            contract::ROUTE_VERIFY,
             Some(&credential),
-            Some(
-                &json!({"session_id": id, "hash": local_hash, "cursor": capture.through, "count": capture.messages.len()}),
-            ),
+            Some(&serde_json::to_value(contract::VerifyRequest {
+                session_id: id.to_owned(),
+                hash: local_hash,
+                cursor: Some(capture.through),
+                count: Some(capture.messages.len() as i64),
+            })?),
             60,
         ) {
             Ok(report) => report,
@@ -1089,21 +1684,34 @@ pub fn verify(dir: &Path) -> Result<Value> {
             }
         };
         checked += 1;
-        if report["match"] != true {
+        // Same text but a different pointer is still a problem: the next delta would
+        // be refused. A moved watermark with no upload is not.
+        let pointer_differs = checkpoint
+            .as_ref()
+            .is_some_and(|p| report.cloud_cursor != Some(p.cursor));
+        if report.verify_response_match && !pointer_differs {
+            matched += 1;
+        } else {
             mismatches.push(json!({
                 "session_id": id,
-                "reason": report["reason"],
-                "local_cursor": capture.through,
-                "cloud_cursor": report["cloud_cursor"],
+                "reason": if report.verify_response_match { json!("pointer") } else { json!(report.reason) },
+                "local_checkpoint": checkpoint.as_ref().map(|p| p.cursor),
+                "cloud_cursor": report.cloud_cursor,
                 "local_count": capture.messages.len(),
-                "cloud_count": report["cloud_count"],
+                "cloud_count": report.cloud_count,
             }));
         }
         if checked % 200 == 0 {
             eprintln!("bridge verify checked {checked}");
         }
     }
-    Ok(json!({"checked": checked, "mismatches": mismatches, "failed": failed}))
+    Ok(json!({
+        "checked": checked,
+        "matched": matched,
+        "moved_since_last_sync": moved,
+        "mismatches": mismatches,
+        "failed": failed,
+    }))
 }
 
 pub fn status(dir: &Path) -> Result<Value> {
@@ -1121,8 +1729,16 @@ pub fn status(dir: &Path) -> Result<Value> {
             .db
             .query_row("SELECT count(*) FROM pending", [], |r| r.get(0))?,
     );
+    let age = (health.last_pass_at > 0).then(|| now_secs().saturating_sub(health.last_pass_at));
+    // A successful history scan/heartbeat does not imply that the separately
+    // published native-state snapshot was accepted by the Worker.
+    let runtime_age = std::fs::metadata(dir.join("runtime-checked.json"))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .map(|age| age.as_secs());
     Ok(
-        json!({"paired":true,"endpoint":config.endpoint,"sessions":sessions,"messages":messages,"pending_batches":pending,"device_id":config.device_id,"database_epoch":config.database_epoch,"last_fully_synced":health.last_ok,"last_pass_at":health.last_pass_at,"last_pass_ms":health.last_pass_ms,"scanned_sessions":health.scanned,"stuck_sessions":health.failing,"held_batches_for":journal.held_sessions()?}),
+        json!({"paired":true,"endpoint":config.endpoint,"sessions":sessions,"messages":messages,"pending_batches":pending,"device_id":config.device_id,"database_epoch":config.database_epoch,"last_fully_synced":health.last_ok,"last_pass_at":health.last_pass_at,"last_pass_age_seconds":age,"stale":age.map_or(true, |age| age > STALE_AFTER_SECS),"runtime_age_seconds":runtime_age,"runtime_stale":runtime_age.map_or(true, |age| age >= 30),"last_pass_ms":health.last_pass_ms,"scanned_sessions":health.scanned,"stuck_sessions":health.failing,"held_batches_for":journal.held_sessions()?}),
     )
 }
 

@@ -1,34 +1,34 @@
 # CLI and keyboard reference
 
-This reference describes the current checkout. `agentview --help` and
-`agentview <subcommand> --help` remain authoritative for the installed
-binary. `av` is the installed shorthand. Both commands execute the same canonical
-binary and report `agentview VERSION`.
+This reference describes the current checkout. `betteragentview --help` and
+`betteragentview <subcommand> --help` remain authoritative for the installed
+binary. `bav` is the installed shorthand; `av` remains compatible. These commands execute the same canonical
+binary and report `betteragentview VERSION`.
 
 ## Dashboard and JSON options
 
 Notification handlers can open an exact session in a running dashboard:
 
 ```console
-agentview sessions open opencode:host:ses_example
+betteragentview sessions open opencode:host:ses_example
 ```
 
-Use the normalized ID from `agentview --json`. On macOS and Linux, the command
+Use the normalized ID from `betteragentview --json`. On macOS and Linux, the command
 targets the most recently started dashboard. It returns from the current native
 session without stopping its work, clears the dashboard search, and opens the
 target session. On macOS it also brings the dashboard's terminal app forward.
 Restart dashboards after updating to enable this command.
 
 ```text
-agentview [OPTIONS]
+betteragentview [OPTIONS]
 ```
 
 Version and self-update commands:
 
 ```console
-agentview --version   # -v and -V are accepted
-av update
-av upgrade                # alias of update
+betteragentview --version   # -v and -V are accepted
+bav update
+bav upgrade               # alias of update
 ```
 
 `update` downloads the repository's public installer over HTTPS and runs it for
@@ -38,8 +38,8 @@ published release asset and verifies its SHA-256 checksum before replacing the
 binary. `AGENTVIEW_REPO` and `AGENTVIEW_INSTALL_DIR` retain their documented installer
 overrides; `GH_TOKEN` is optional and only needed for API rate limits or private
 forks. The final line verifies the binary that was installed and reports
-`Updated agentview from X to Y.`; if both versions match, it reports that
-agentview is already up to date.
+`Updated betteragentview from X to Y.`; if both versions match, it reports that
+betteragentview is already up to date.
 
 | Option | Meaning |
 | --- | --- |
@@ -50,7 +50,7 @@ agentview is already up to date.
 | `--hide-completed` / `--active-only` | Hide completed sessions at startup. `/completed show` restores them without restarting. |
 | `--include-interactive` | Include provider sessions reported as foreground/interactive. |
 | `--include-temp` | Include sessions whose working directory is a system temp directory (`/tmp`, `/var/tmp`, `/var/folders`, `$TMPDIR`). They are hidden by default because agents start throwaway sessions there; pinned sessions and `--cwd` inside a temp directory still show them. |
-| `--include-external` | Include provider sessions not created or managed by agentview. External history is excluded by default. |
+| `--include-external` | Include provider sessions not created or managed by betteragentview. External history is excluded by default. |
 | `--history-limit N` | Read at most `N` persisted-history records per provider per refresh; default 100, range 1–10,000. Live/owned inventories are separate. |
 | `--cwd PATH` | Keep sessions whose working directory starts with `PATH`. |
 | `--fixture FILE` | Read a normalized snapshot/session array instead of probing providers; all provider operations are fenced. |
@@ -63,7 +63,7 @@ agentview is already up to date.
 | `--no-host-pi` | Disable host Pi history and managed supervision. |
 | `--opencode-bin PATH` / `--no-host-opencode` | Select or disable OpenCode history and launch: durable managed supervision on Linux, OpenCode's own interface elsewhere. |
 | `--copilot-bin PATH` / `--no-host-copilot` | Select or disable persisted Copilot discovery and process-local managed ACP control. |
-| `--cursor-bin PATH` / `--no-host-cursor` | Select or disable Cursor support on the host. External chats are read from Cursor's own chat store with `--include-external --include-interactive`. On Linux, launch and inline reply go through agentview's managed supervisor. Elsewhere, choosing Cursor in the harness list runs `cursor-agent create-chat` and opens that chat with the prompt in Cursor's interface; agentview records the chat id in `cursor-owned.json`, so its row is listed without `--include-external`. Inline reply stays Linux-only. |
+| `--cursor-bin PATH` / `--no-host-cursor` | Select or disable Cursor support on the host. External chats are read from Cursor's own chat store with `--include-external --include-interactive`. On Linux, launch and inline reply go through betteragentview's managed supervisor. Elsewhere, choosing Cursor in the harness list runs `cursor-agent create-chat` and opens that chat with the prompt in Cursor's interface; betteragentview records the chat id in `cursor-owned.json`, so its row is listed without `--include-external`. Inline reply stays Linux-only. |
 | `--cursor-chats-dir PATH` | Override the chat store Cursor's CLI writes to (default `~/.cursor/chats`). |
 | `--antigravity-bin PATH` / `--no-host-antigravity` | Select or disable host Antigravity discovery. |
 | `--mistral-vibe-bin PATH` / `--mistral-vibe-app-server-bin PATH` / `--no-host-mistral-vibe` | Select or disable Mistral Vibe native control and app-server discovery. |
@@ -76,7 +76,7 @@ agentview is already up to date.
 | `--openhands-bin PATH` / `--no-host-openhands` | Select or disable OpenHands native control plus bounded event-store discovery. |
 | `--docker-container NAME_OR_ID` | Observe Claude and Codex in one explicitly selected running container; repeatable. |
 | `--docker-bin PATH` | Use a particular Docker executable; default `docker`. |
-| `--session-migrate-bin PATH` | Use a particular session-migrate executable for `ctrl+m` moves and `/migrate`; default `session-migrate`. |
+| `--session-migrate-bin PATH` | Use a particular session-migrate executable for `F6` moves and `/migrate`; default `session-migrate`. |
 | `--harness` / `--launch-provider claude\|codex\|pi\|omp\|opencode\|cursor\|copilot\|antigravity\|mistral-vibe\|muse\|qwen\|kimi\|grok\|kilo\|openhands\|terminal` | Initial harness for new-session prompts; default Claude. Each configured coding harness opens its native full-screen UI; Terminal opens the user's shell. `oh-my-pi` and `kilo-code` are accepted aliases. |
 | `--launch-cwd PATH` | Working directory for newly launched host sessions; default current directory. |
 | `--refresh-ms N` | Refresh interval, at least 250 ms; default 15000 ms. Refresh runs off the input thread, and first-launch results appear provider by provider. Use `ctrl+l` for an immediate refresh. |
@@ -87,13 +87,13 @@ snapshot rather than hiding healthy sessions from another adapter.
 
 ### Explicit YOLO mode
 
-`av --yolo` is deliberately off by default. While it is active, the dashboard,
+`bav --yolo` is deliberately off by default. While it is active, the dashboard,
 new-task composer, and every native session launched in that mode display a
 persistent warning. Returning to or resuming the native screen does not clear
-the warning. Stop agentview and restart without `--yolo` to return new launches to
+the warning. Stop betteragentview and restart without `--yolo` to return new launches to
 their normal security settings.
 
-agentview enables the mode only where the installed harness exposes a verified native
+betteragentview enables the mode only where the installed harness exposes a verified native
 equivalent:
 
 | Harness | Native setting used for a new session |
@@ -112,15 +112,15 @@ equivalent:
 | OpenHands | `--always-approve` |
 
 Pi, OpenCode, GitHub Copilot, and Terminal are intentionally unsupported.
-Pi's `--approve` only trusts a project; it is not a permission bypass. agentview's
+Pi's `--approve` only trusts a project; it is not a permission bypass. betteragentview's
 managed OpenCode path starts a server and attaches a client, and the attach
 command does not accept OpenCode's top-level YOLO flag. No equivalent is claimed
 for Copilot or a shell. Selecting any unsupported harness while `--yolo` is
-active returns an error before a provider process is launched. agentview never guesses
+active returns an error before a provider process is launched. betteragentview never guesses
 at a similar-looking flag.
 
-The setting applies only to new sessions created by this agentview process. It does
-not weaken discovery, adopt external sessions, change credentials, or grant agentview
+The setting applies only to new sessions created by this betteragentview process. It does
+not weaken discovery, adopt external sessions, change credentials, or grant betteragentview
 additional control over an existing session.
 
 Bare provider command defaults are resolved from `PATH` first, then from the
@@ -137,21 +137,21 @@ I/O. This makes committed fixtures safe for real-TTY interaction tests.
 Useful read-only invocations:
 
 ```console
-agentview --json
-agentview --hide-completed
-agentview --include-external --history-limit 500
-agentview --json --no-host-claude --no-host-codex
-agentview --json --cwd /absolute/project
-agentview doctor
-agentview doctor --json
-agentview doctor --docker-container exact-name-or-id
+betteragentview --json
+betteragentview --hide-completed
+betteragentview --include-external --history-limit 500
+betteragentview --json --no-host-claude --no-host-codex
+betteragentview --json --cwd /absolute/project
+betteragentview doctor
+betteragentview doctor --json
+betteragentview doctor --docker-container exact-name-or-id
 ```
 
 Install one missing provider CLI through its official user-local installer:
 
 ```console
-agentview setup HARNESS
-agentview setup HARNESS --yes
+betteragentview setup HARNESS
+betteragentview setup HARNESS --yes
 ```
 
 `HARNESS` accepts the eighteen coding-harness values plus `terminal` (which is built
@@ -201,7 +201,7 @@ model IDs from its saved configuration plus `LLM_MODEL`. An exact OpenHands ID
 can also be entered directly. A catalog is informative,
 not proof that the current account can successfully invoke every listed model.
 
-A launch-time authentication failure follows the same route: agentview preserves the
+A launch-time authentication failure follows the same route: betteragentview preserves the
 task draft and selected model, opens the provider's setup picker, and makes
 Enter/`l` run native login. This avoids leaving a Cursor/Copilot error as a
 passive footer where Enter would open an unrelated selected row.
@@ -209,10 +209,10 @@ passive footer where Enter would open an unrelated selected row.
 The native setup surfaces are `claude auth login`, `codex login`, Pi's
 no-session TUI (`/login` inside Pi), `opencode auth login`, `cursor-agent login`,
 `copilot login`, Antigravity's first-run `agy` flow, Oh My Pi's no-session TUI,
-`grok login`, `kilo auth login`, and `openhands login`. agentview suspends its
+`grok login`, `kilo auth login`, and `openhands login`. betteragentview suspends its
 alternate screen before these commands and never reads or copies credentials.
 The setup/login UI always gets its own private terminal; Left/Right twice at a
-cursor boundary or Shift+Left/Right anywhere returns to the dashboard and
+cursor boundary or F7 anywhere returns to the dashboard and
 leaves that process running. Enter/Right shows its latest screen. The
 frontend is stopped only when the dashboard itself exits. `/setup
 HARNESS` uses the same terminal for an installation check, confirmed official
@@ -220,15 +220,15 @@ installer, and native login. It never attaches setup to the last agent session.
 
 Select `Terminal` (or `/harness terminal`) to create a plain interactive shell.
 The task text becomes the terminal's display name, not a command. A boundary
-double-arrow or Shift+Left/Right returns to agentview, Enter/Right resumes, the first
+double-arrow or F7 returns to betteragentview, Enter/Right resumes, the first
 Ctrl+X stops it, and the second Ctrl+X
 deletes its completed row. These terminal frontends are process-local and are
 stopped when the dashboard itself exits. `/shell` and `/model` both open a
 searchable shell picker. It shows the configured default and installed Bash,
 Zsh, Fish, Nushell, Xonsh, and Elvish executables. A missing supported shell is
-shown as an explicit `install` row; selecting that row suspends agentview and opens
+shown as an explicit `install` row; selecting that row suspends betteragentview and opens
 the host package manager (`brew`, `apt-get`, `dnf`, `pacman`, or `zypper`) in
-the native terminal. agentview never evaluates the session name or shell choice as a
+the native terminal. betteragentview never evaluates the session name or shell choice as a
 command string.
 
 New Copilot dashboard tasks reserve an exact UUID and open Copilot's native
@@ -252,7 +252,7 @@ or `--hide-completed` provides an active-only managed view, while `/completed
 show` restores completed sessions. These controls do not read unrelated
 provider history. Add
 `--include-external` when provider-wide history is actually wanted. For
-example, `agentview --include-external --history-limit 500` opts into
+example, `betteragentview --include-external --history-limit 500` opts into
 a bounded completed-history review.
 
 Completed filtering is applied by adapters and again at the central discovery
@@ -267,18 +267,81 @@ and `--all` remains accepted for compatibility. External history is
 limited to 100 records per provider by default, with a warning when more exist.
 The Show-more row pages only the already discovered window.
 
-### Needs input versus done
+### Completion labels
 
-Most providers report an idle session as completed or as waiting at its prompt
-without saying whether the agent asked something. When an OpenRouter key is set
-in `OPENROUTER_API_KEY` or `~/.config/agentview/openrouter-api-key`, the
-dashboard sends the transcript tail of each session that went idle in the last
-24 hours to a small model once per turn. A turn that waits on the user moves to
-Needs input; a finished one stays Completed. Permission and question prompts are
-already known and are never sent. `AGENTVIEW_TURN_CLASSIFIER_MODEL` overrides
-the default `google/gemini-2.5-flash-lite`, and `AGENTVIEW_TURN_CLASSIFIER=off`
-disables it. The terminal tab title shows the same counts, for example
-`2 need input · 1 working · 3 done · agentview`.
+Provider idle signals alone do not prove completion:
+
+- **Idle:** not assessed yet, or no classifier is configured. It is not a settled
+  verdict for a stopped, unfinished turn.
+- **Task done:** the latest request finished, but the workstream remains open or
+  still has user follow-through, such as loading or reviewing delivered changes.
+- **Project done:** the agreed workstream is wrapped up, with no work, follow-up,
+  review or decision left. This means the session's workstream, not the entire repository.
+- **Needs input:** the agent is waiting for a human answer, approval, review or
+  action before it can proceed, or its turn stopped without a completed result
+  and needs review/resumption. Usage instructions after delivery are not a blocker.
+
+With an OpenRouter key, dashboard refreshes classify eligible discovered idle
+sessions, including older sessions without a current verdict. Hidden sessions
+are excluded before classification. The default is `typesafe/jev-1.14` through OpenRouter's Decisions
+API. The app-specific `~/.config/agentview/openrouter-api-key` takes precedence
+over `OPENROUTER_API_KEY`; XDG config/state locations are respected.
+`AGENTVIEW_TURN_CLASSIFIER_MODEL` selects another **Decisions** model, not a chat
+model. `AGENTVIEW_TURN_CLASSIFIER=off` disables the model.
+
+One request asks two independent questions over the same evidence: whether the
+agent is blocked on the user, and what scope of work is finished. A human blocker
+takes precedence over either completion label.
+If an unheld session is judged unclear, one bounded second check reads only the
+latest exchange, without older project context. It can confirm Task done, never
+promote Project done. A still-unclear stopped turn shows Needs input, with an
+unfinished-turn reason, rather than staying Idle indefinitely. A missing final
+reply is treated the same way without an API request; database/network errors
+remain errors, not claims that the user is needed. This
+keeps an older unfinished project from obscuring a completed summary or answer.
+
+For OpenCode and Claude transcript history, evidence contains the initial user request and the last two
+user/final-assistant exchanges, capped at about 4,000 characters in total.
+The latest exchange is an explicit top-level ordered list: user message, then
+assistant reply. The original request and previous exchange are background context,
+not extra requirements for the current task. Ordered lists also prevent JSON key
+sorting from reversing the conversation. The replay uses the same compact, sorted-key
+serialization as production.
+Reasoning, commentary, tools, logs, synthetic messages and system instructions
+are excluded. Other adapters can supply a cached assistant reply; without safe
+message evidence, their native state stays unchanged. No raw inspection transcript
+is sent as a fallback.
+
+Verdicts are saved per exchange and reused across restarts regardless of age.
+New user activity, replies, model changes, classifier prompt/schema changes
+and background-work changes invalidate the cache. Four requests run at most
+concurrently. Permission requests, native
+questions and failed turns remain authoritative. Running work stays Working;
+deferred follow-ups stay Scheduled. A reminder or active descendant prevents
+Project done. Classifications never hide, archive or close a session.
+
+Voice uses `task_done`, `project_done`, `needs_you` and `idle` separately. A task
+completion watch accepts either completion category, but Idle alone does not
+confirm an answer. The mobile bridge retains legacy `status: done` for idle
+compatibility and adds `completion: task_done | project_done | unconfirmed`.
+
+The replay script is `scripts/eval-completion.py`. Its checked-in 18-case fixture
+mixes constructed edge cases with adapted replies. On November 22, 2026, that
+fixture plus eight actual bounded AgentView exchanges gave Jev 26/26 matching
+labels, Perplexity Decider v1.3 free 24/26, and Luna Decisions 25/26. Jev's median
+was 157 ms and average cost was about $0.000034 per request (813 input tokens).
+After the backfill exposed bad Idle labels, the latest exchange was separated
+from older context and the criteria clarified task delivery versus project closure.
+The expanded 27-case checked-in fixture matched 81/81 judgments over three replays.
+A separate 21-session real-history replay using the production ordering matched
+57/63 judgments over three runs, with no false Project done labels. The six
+disagreements concerned two mixed-progress reports: a delivered gate with wider
+CI pending and finished benchmark judging with deferred generation. Neither was
+called Project done. A live Rust-to-Decisions
+probe also verified a formerly misclassified deployed result, with its evidence
+matching the replay exactly. This remains a model judgment,
+not a correctness guarantee. These small, developer-labeled replays are not production accuracy estimates.
+No model is treated as proof that a deployment or task succeeded.
 
 ### Timing log
 
@@ -329,14 +392,14 @@ The local hidden-ID registry can also be managed without opening the TUI:
 ```console
 # Obtain the stable normalized ID from Peek or JSON output. Add
 # --include-external when the target is not agentview-managed.
-agentview --json --include-external --all
+betteragentview --json --include-external --all
 
-agentview sessions hide 'pi:host:EXACT_ID'
-agentview sessions hidden
-agentview sessions unhide 'pi:host:EXACT_ID'
+betteragentview sessions hide 'pi:host:EXACT_ID'
+betteragentview sessions hidden
+betteragentview sessions unhide 'pi:host:EXACT_ID'
 
 # Each maintenance command also supports machine-readable output.
-agentview --json sessions hidden
+betteragentview --json sessions hidden
 ```
 
 `sessions hide` is idempotent and accepts an exact normalized ID even if its
@@ -349,14 +412,14 @@ Private display names use a separate registry and never call a provider rename
 surface:
 
 ```console
-agentview sessions rename 'pi:host:EXACT_ID' 'release captain'
-agentview sessions aliases
-agentview --json sessions aliases
-agentview sessions reset-name 'pi:host:EXACT_ID'
+betteragentview sessions rename 'pi:host:EXACT_ID' 'release captain'
+betteragentview sessions aliases
+betteragentview --json sessions aliases
+betteragentview sessions reset-name 'pi:host:EXACT_ID'
 ```
 
 `rename` and `reset-name` are idempotent. If a native harness renames the same
-conversation, the local agentview name continues to win until reset. After reset, the
+conversation, the local betteragentview name continues to win until reset. After reset, the
 next refresh displays the provider's latest title. In the TUI, `ctrl+r` edits
 the same local name and an empty submission resets it.
 
@@ -364,9 +427,9 @@ Provider-native bulk archive is currently available for exact agentview-owned,
 completed host Codex threads. The first command is always a read-only preview:
 
 ```console
-agentview sessions archive
-agentview sessions archive --cwd /absolute/project --older-than-days 30 --limit 100
-agentview --json sessions archive --older-than-days 30
+betteragentview sessions archive
+betteragentview sessions archive --cwd /absolute/project --older-than-days 30 --limit 100
+betteragentview --json sessions archive --older-than-days 30
 ```
 
 The report distinguishes all completed threads seen, those matching the
@@ -375,7 +438,7 @@ selected. It lists skipped matched threads that are visible but unowned. To
 apply the reviewed batch, repeat the exact command with `--yes`:
 
 ```console
-agentview sessions archive --cwd /absolute/project --older-than-days 30 --limit 100 --yes
+betteragentview sessions archive --cwd /absolute/project --older-than-days 30 --limit 100 --yes
 ```
 
 The default batch limit is 100 and the maximum is 1,100. Every archive is independently revalidated against
@@ -383,24 +446,24 @@ the live owning App Server; one refusal is reported without granting authority
 to or silently skipping the remaining selected records. Fixture mode, disabled
 host Codex, missing Codex, active threads, external threads, Docker threads,
 and providers without a documented archive operation are refused or reported
-as ineligible. agentview does not call deletion an archive.
+as ineligible. betteragentview does not call deletion an archive.
 
 ## Restarting the OpenCode server
 
-agentview runs one OpenCode server that its attached OpenCode sessions use.
+betteragentview runs one OpenCode server that its attached OpenCode sessions use.
 Restarting it, for example to pick up a new OpenCode build, normally cuts off
 every turn in flight. This command restarts it and resumes those turns:
 
 ```console
-agentview opencode restart
-agentview --json opencode restart
+betteragentview opencode restart
+betteragentview --json opencode restart
 ```
 
 To avoid cutting off turns at all, wait for them to finish first:
 
 ```console
-agentview opencode restart --when-idle
-agentview opencode restart --when-idle --wait-timeout 120
+betteragentview opencode restart --when-idle
+betteragentview opencode restart --when-idle --wait-timeout 120
 ```
 
 It polls until no top-level session has a running turn and no session has a
@@ -423,14 +486,14 @@ or permission prompt are listed rather than resumed, since that prompt does not
 survive the restart and only you can answer it. If the restart fails partway,
 running the command again resumes the sessions it recorded.
 For a registered V2 managed service, OpenCode itself resumes durable execution
-claims at boot and displays a restart notice. agentview does not inject an
+claims at boot and displays a restart notice. betteragentview does not inject an
 additional `continue`, which would queue duplicate work behind native recovery.
 Native recovery also owns interrupted tools, child execution, and background
 shell notices; idle owners of long-lived shells are not woken just for a restart.
 
-After reboot, open agentview: interactive startup recovers unfinished turns
+After reboot, open betteragentview: interactive startup recovers unfinished turns
 without opening a session or typing `continue`. This is not a login item;
-agentview must be launched. Read-only `--json` discovery does not resume work.
+betteragentview must be launched. Read-only `--json` discovery does not resume work.
 The recorded native service is started if it died, and native recovery resumes
 only its unfinished claims, including turns interrupted before their first
 response. Completed and deliberately interrupted turns stay stopped. The same
@@ -442,7 +505,7 @@ could still own other turns.
 To stop the server without restarting it:
 
 ```console
-agentview opencode stop
+betteragentview opencode stop
 ```
 
 It records the running turns as `restart` does, and the next server start
@@ -454,7 +517,7 @@ it between that folder's sessions with `/tui/select-session`, addressed to that
 window's `--client` ID. The first time you open a session after a restart, it
 replaces that window with a fresh one. A window running a session you opened
 before this feature existed keeps running until you close it. Shared windows
-need a server whose `/tui/select-session` accepts `client`; agentview reads the
+need a server whose `/tui/select-session` accepts `client`; betteragentview reads the
 server's `/doc` to check, because older servers accept the field and then
 switch every attached window.
 
@@ -462,7 +525,7 @@ switch every attached window.
 
 Managed Docker is distinct from `--docker-container`. The latter enrolls one
 already-running container for observation only. Lifecycle authority exists
-only when agentview created the container and its exact immutable ID,
+only when betteragentview created the container and its exact immutable ID,
 random instance label, and protected external owner record still agree.
 
 Create the mount sources first. Do not make the state home a parent or child of
@@ -470,7 +533,7 @@ the workspace:
 
 ```console
 install -d /absolute/project /absolute/dedicated-agent-home
-agentview docker create \
+betteragentview docker create \
   --name agentview-agent \
   --image registry.example/agents/runtime@sha256:FULL_64_HEX_DIGEST \
   --workspace /absolute/project \
@@ -496,12 +559,12 @@ Every later command accepts the registered name or immutable ID and revalidates
 the immutable identity before acting:
 
 ```console
-agentview docker list
-agentview docker status agentview-agent
-agentview docker start agentview-agent
-agentview docker stop agentview-agent --yes
-agentview docker status agentview-agent --json
-agentview docker remove agentview-agent --yes
+betteragentview docker list
+betteragentview docker status agentview-agent
+betteragentview docker start agentview-agent
+betteragentview docker stop agentview-agent --yes
+betteragentview docker status agentview-agent --json
+betteragentview docker remove agentview-agent --yes
 ```
 
 `start` refuses an already-running container. `stop` refuses a stopped
@@ -536,6 +599,18 @@ and mount details.
 
 ## TUI keys and mode behavior
 
+`/onboarding` copies a setup prompt for your coding agent. The same prompt is
+available from `betteragentview onboarding` (print) or
+`betteragentview onboarding --copy` (clipboard). See [Getting started](onboarding.md)
+for harness login, optional desktop voice keys, shortcut configuration and
+self-hosted mobile MCP sync.
+
+Moving the mouse does not change the selected session or directory. Click a row
+to open it; the mouse wheel still moves selection. `--mouse-hover` opts into the
+old hover-to-select behavior. Set `AGENTVIEW_MOUSE_HOVER=true` in your shell
+profile to keep that preference. This changes only the dashboard, not mouse
+behavior inside a harness's own interface.
+
 Every session row spells out its provider name, including Oh My Pi, Grok, Kilo
 Code, and OpenHands. Provider identity takes priority over task summary width on narrow
 terminals. Peek expands the selected row with the full host or container runtime
@@ -547,8 +622,8 @@ label.
 | Show more row | `enter` | Reveal the next terminal-sized page (at most 25) in that group. |
 | Group heading | `enter` | Collapse or expand the group. |
 | Session row | `enter` or `→` | Suspend the dashboard and open the provider's full native interface. The physical screen is cleared before the provider draws. |
-| Provider-native interface | `←` / `→` twice at a cursor boundary | The first arrow is forwarded. If the cursor does not move, a 1.6-second bottom-line hint appears; repeat the same arrow to retain the frontend and return to agentview. In Claude Code, `←` at an empty prompt (where Claude shows "← for agents") returns at once and never opens Claude's agents view; OpenCode also returns on one `←`. |
-| Provider-native interface | `F13`, `shift+←` / `shift+→` | Return immediately from anywhere. In an OpenCode session whose prompt has a draft, Shift+arrow selects text instead and only F13 returns. A plain arrow that only collapses a selection never returns. Plain arrows otherwise remain available for line editing. `enter` or `→` on the same dashboard row reattaches and restores its terminal screen. |
+| Provider-native interface | `←` / `→` twice at a cursor boundary | The first arrow is forwarded. If the cursor does not move, a 1.6-second bottom-line hint appears; repeat the same arrow to retain the frontend and return to betteragentview. In Claude Code, `←` at an empty prompt (where Claude shows "← for agents") returns at once and never opens Claude's agents view; OpenCode also returns on one `←`. |
+| Provider-native interface | `F7` (existing `F13` mappings also work) | Return immediately from anywhere without stopping the agent. Shift+arrows pass through for text selection in every provider. A plain arrow that only collapses a selection never returns. Plain arrows otherwise remain available for line editing. `enter` or `→` on the same dashboard row reattaches and restores its terminal screen. |
 | Inline Peek | `←` | Return to the session list without opening the native provider interface. |
 | Session row | `space` | Open the inline Peek panel and inspect transcript/request details when capability is advertised. |
 | Inspect peek | type, `enter` | Send an owned provider reply/steer or the current structured answer. |
@@ -566,7 +641,7 @@ label.
 | New-task composer | `shift` with any of those, e.g. `shift+←` / `shift+→`, `option+shift+←` / `option+shift+→`, `cmd+shift+←` / `cmd+shift+→` | Select by character, word, or to the line edge, growing the selection on each press, as in OpenCode. Typing, pasting, `backspace`, or `delete` replaces the selection; a plain arrow collapses it. |
 | New-task composer | `tab` | Open the visible harness picker. |
 | New-task composer | `shift+tab` | Open the selected harness's model picker—or Terminal shell picker—without changing the task draft. From the session list it opens an empty composer first. |
-| Session list or new-task composer | `ctrl+b` | Keep the model and switch to the next provider that serves it (`anthropic/claude-opus-5-5` → `cursor/claude-opus-5-5` → back). The model picked for each harness is remembered across restarts. |
+| Session list or new-task composer | `ctrl+b` | Keep the model and switch to the next provider that serves it (`anthropic/claude-opus-5-5` → `cursor/claude-opus-5-5` → back). The model picked for each harness is remembered across restarts, except models listed in `do_not_remember` in `~/.config/agentview/model-memory.json` (default `["abliteration-ai"]`; an entry is a provider or an exact model). Those apply to the next new session only. |
 | Harness picker | `↑` / `↓`, `←` / `→`, or `tab` / `shift+tab` | Preview configured launch-capable harnesses with wraparound. |
 | Harness picker | `enter` or `1`–`9` | Select the highlighted or numbered harness and return to the unchanged draft; changing harness resets the model to its default. |
 | Harness picker | `esc` | Return to the unchanged draft without switching harnesses. |
@@ -581,16 +656,16 @@ label.
 | New-task composer | `/hidden` | Open the hidden-session restore picker, the same as `ctrl+g`. |
 | New-task composer | `/setup [HARNESS]` | Open the selected or named harness's isolated install/login terminal. |
 | Writable composer | `ctrl+j` | Insert a newline rather than submit. |
-| Any view | paste | Pasted text is inserted as text, never submitted. Line breaks in the clipboard become newlines in one draft; a paste on the dashboard opens the new-task composer. agentview enables bracketed paste. On terminals without it, keys arriving within milliseconds of each other count as one paste: an Enter with more input right behind it is a pasted line break, pasted characters never act as shortcuts, and only an Enter after a known dashboard command still runs it. Control characters other than tab and newline are dropped; the model picker, filter, rename, and migration-name fields turn line breaks and tabs into spaces. In the new-task composer and a reply, a bracketed paste of three or more lines or over 150 characters shows as `[Pasted ~N lines]`, as in OpenCode, and the full text is sent on submit. Backspace removes the token and its paste; a second paste that would read the same gets a `#2` suffix. |
+| Any view | paste | Pasted text is inserted as text, never submitted. Line breaks in the clipboard become newlines in one draft; a paste on the dashboard opens the new-task composer. betteragentview enables bracketed paste. On terminals without it, keys arriving within milliseconds of each other count as one paste: an Enter with more input right behind it is a pasted line break, pasted characters never act as shortcuts, and only an Enter after a known dashboard command still runs it. Control characters other than tab and newline are dropped; the model picker, filter, rename, and migration-name fields turn line breaks and tabs into spaces. In the new-task composer and a reply, a bracketed paste of three or more lines or over 150 characters shows as `[Pasted ~N lines]`, as in OpenCode, and the full text is sent on submit. Backspace removes the token and its paste; a second paste that would read the same gets a `#2` suffix. |
 | New-task composer or reply | `ctrl+v` | Save the clipboard image under `~/.local/state/agentview/images/` (or `$XDG_STATE_HOME/agentview/images/`) and insert `[Image #N]`. A copied image file is used where it is. On submit, each token becomes the image's absolute path, which the harness reads as an image file. `cmd+v` with only an image on the clipboard does the same. On the dashboard it opens the new-task composer first. Linux needs `wl-paste` or `xclip`; images do not reach harnesses running inside a container. |
 | Writable composer | `backspace` | Remove the last character, or a whole `[Image #N]` token. |
 | Writable composer/model filter | `option+backspace` or `ctrl+w` | Remove the previous word. |
 | Writable composer/model filter | `cmd+backspace` or `ctrl+u` | Remove to the beginning of the current line. |
 | Session row | `ctrl+r` | Open the accented `rename session` composer. The `name ❯` mode label is separate from the editable display name; empty submission clears it and follows the latest provider title again. |
-| Host coding-harness session row | `ctrl+m` (`cmd+m` on macOS) | Open the folder picker and move the selected session there with the same harness and name. session-migrate creates the copy in the new folder; agentview then deletes the original, or hides it when the harness cannot delete it. Working sessions must stop first. Files in either folder are not touched. |
+| Host coding-harness session row | `F6` | Open the folder picker and move the selected session there with the same harness and name. session-migrate creates the copy in the new folder; betteragentview then deletes the original, or hides it when the harness cannot delete it. Working sessions must stop first. Files in either folder are not touched. Legacy `ctrl+m` / `cmd+m` mappings still work when delivered distinctly, but traditional terminals send `ctrl+m` as Enter and macOS normally reserves `cmd+m` for minimize. |
 | New-task composer | `/migrate` | Choose a different supported harness, edit the prefilled local name, and migrate the exact selected session through `session-migrate`. The default is `CURRENT NAME (TARGET HARNESS)`. Escape returns from the name editor to the target picker before closing the workflow. |
 | Idle owned Codex row | `ctrl+a`, then `enter` | Confirm archive. |
-| Session row or Peek | `ctrl+x`, then `ctrl+x` | Stop an exact active owned session; after refresh reports it idle, press again to delete it or remove it reversibly from agentview's view. Idle rows and active rows without stop authority show `ctrl+x again to delete` (or `to hide`) on the first press and act on the second; any other key cancels. |
+| Session row or Peek | `ctrl+x`, then `ctrl+x` | Stop an exact active owned session; after refresh reports it idle, press again to delete it or remove it reversibly from betteragentview's view. Idle rows and active rows without stop authority show `ctrl+x again to delete` (or `to hide`) on the first press and act on the second; any other key cancels. |
 | Completed group | `ctrl+x`, then `ctrl+x` | Delete only when every member grants Delete; otherwise hide the undeletable rows locally. |
 | Any ordinary view | `?` | Open contextual help; `?`, `enter`, or `esc` closes it. |
 | Any overlay/composer | `esc` | Cancel that mode and discard its unsubmitted input. |
@@ -605,10 +680,10 @@ correlated diff, expanded permissions, or unknown request form. See the
 
 ### A dedicated key to return to the dashboard
 
-`Shift+←` / `→` selects text in an OpenCode prompt that has a draft, and `←` only
-returns at an empty prompt, so none of them is a reliable way back. Map any key
-to **F13** and it returns from any provider's native interface at any time. The
-draft, selection and cursor stay where they were. agentview reads F13 in both the
+Press **F7** to return from any provider's native interface at any time. On Mac
+keyboards with media keys, hold **Fn** for F6 (move) or F7 (back). Shift+arrows
+stay available for text selection. You can also map any key to **F13**. The
+draft, selection and cursor stay where they were. betteragentview reads F13 in both the
 legacy form (`CSI 25 ~`) and the kitty keyboard form (`CSI 57376 u`) that some
 terminals switch to while a provider is in front.
 
@@ -620,7 +695,7 @@ app. Add it as a rule in `karabiner.json`, or in a file under
 
 ```json
 {
-  "description": "Ghostty: Cmd+H returns to agentview (F13)",
+  "description": "Ghostty: Cmd+H returns to betteragentview (F13)",
   "manipulators": [
     {
       "type": "basic",
@@ -640,19 +715,19 @@ tool that can send F13 works the same way.
 
 ### Session migration
 
-The `/migrate` workflow supports all 18 coding harnesses in the agentview picker as
+The `/migrate` workflow supports all 18 coding harnesses in the betteragentview picker as
 sources and destinations. It is intentionally limited to host sessions because
 session-migrate reads each harness's local native state. Terminal jobs and
 Docker-observed sessions are not offered as sources, and the source harness is
 removed from the destination menu.
 
-agentview runs `session-migrate transfer` off the input thread, passes the exact
+betteragentview runs `session-migrate transfer` off the input thread, passes the exact
 provider session ID and working directory without a shell, and validates the
 returned JSON and target before indexing the result. A failed transfer leaves
-no agentview migration record; a migration never edits the source session, and a
+no betteragentview migration record; a migration never edits the source session, and a
 move removes it only after the copy has been recorded. Successful
-imports are stored in the private agentview state directory so they remain visible
-without enabling all external provider history. The name selected in agentview is a
+imports are stored in the private betteragentview state directory so they remain visible
+without enabling all external provider history. The name selected in betteragentview is a
 local display alias; it does not claim to rewrite the destination harness's
 native title. OpenCode and Kilo virtual exports reuse the executable selected
 by `--opencode-bin` or `--kilo-bin`.
@@ -676,13 +751,13 @@ switching views or applying a filter, keeping a newly narrowed queue bounded.
 
 After a successful managed launch, the dashboard refreshes immediately and
 uses the exact provider/session hint to select the new row. If the provider
-persists its record after the launch response, agentview retries discovery
+persists its record after the launch response, betteragentview retries discovery
 every 250 ms for up to five seconds. The UI remains interactive during those
 retries and reports a manual `ctrl+l` recovery only if the exact row still has
 not appeared.
 
-Only host Claude background rows recorded in agentview's ownership registry receive
-Interrupt. Immediately before `claude stop`, agentview reruns `claude
+Only host Claude background rows recorded in betteragentview's ownership registry receive
+Interrupt. Immediately before `claude stop`, betteragentview reruns `claude
 agents --json` and requires the exact full UUID to remain a host background
 session in an active state. Interactive, completed, Docker, external, missing,
 or changed rows are refused. Ctrl+X dispatches the stop directly for the exact
@@ -703,7 +778,7 @@ server. They do not yet expose provider permission or structured-input
 requests. External OpenCode history remains inspect/native-open only.
 
 Outside Linux, a new OpenCode task opens OpenCode's interface and pastes the
-task into its editor once it is ready. The session it creates is recorded as agentview's own and listed without
+task into its editor once it is ready. The session it creates is recorded as betteragentview's own and listed without
 `--include-external`; it has Inspect and native open but no inline control.
 
 OpenCode rows that a live `opencode` process runs (a TUI, or a headless
@@ -768,7 +843,7 @@ written in the last ten minutes are matched first, each to the process that
 created it if that one is free, otherwise to the newest free process.
 Live state needs `ps` and, on macOS, `lsof`; on Windows every row is history.
 
-New Pi dashboard tasks open its full native interface first and save into agentview's
+New Pi dashboard tasks open its full native interface first and save into betteragentview's
 managed session directory. Managed Pi RPC rows expose Ctrl+X stop while their exact RPC process is alive,
 including an idle process after a completed turn. Stop closes the selected
 supervisor-owned stdin without waiting on a model response. After refresh
@@ -793,7 +868,7 @@ when `XDG_STATE_HOME` is unset, the current implementation stores:
 | `copilot/` | Exact agentview-created Copilot IDs, workspaces, titles, latest bounded summaries, provider timestamps, and registry lock. No credentials or full transcripts. |
 | `cursor-owned.json` | Exact Cursor chat IDs this dashboard created outside Linux, so their rows are listed without `--include-external`. |
 | `hidden-sessions.json` | Reversible local suppression records; provider history and live processes are not changed. |
-| `pinned-sessions.json` | Local pin records (session ID and pin time) for the dashboard's Pinned group. Pins never change the provider session. |
+| `pinned-sessions.json` | Local pause records (session ID and pause time) for the dashboard's Paused group; the file keeps its older name. Pauses never change the provider session. |
 | `managed-docker/owners.json` | Exact external proof for managed-container lifecycle. |
 
 These files contain authority metadata and should not be shared between users.

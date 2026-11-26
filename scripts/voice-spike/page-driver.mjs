@@ -10,6 +10,18 @@ const browser = await chromium.launch({ headless: true, args: [
   ...(process.env.STRICT_AUTOPLAY ? [] : ["--autoplay-policy=no-user-gesture-required"]), "--mute-audio",
 ] });
 const page = await browser.newPage();
+// The page pins a physical microphone, never the "default" alias. Chromium's fake
+// default shares no group with its fake devices, so say that it is the first one.
+await page.addInitScript(() => {
+  const real = navigator.mediaDevices.enumerateDevices.bind(navigator.mediaDevices);
+  navigator.mediaDevices.enumerateDevices = async () => {
+    const all = await real();
+    const first = all.find((d) => d.kind === "audioinput" && d.deviceId !== "default" && d.deviceId !== "communications");
+    return all.map((d) => d.kind === "audioinput" && d.deviceId === "default" && first
+      ? { deviceId: d.deviceId, kind: d.kind, label: `Default - ${first.label}`, groupId: first.groupId }
+      : d);
+  };
+});
 page.on("pageerror", (e) => console.log("PAGE ERROR", e.message));
 await page.goto(`http://127.0.0.1:${port}/`);
 console.log("PAGE READY");

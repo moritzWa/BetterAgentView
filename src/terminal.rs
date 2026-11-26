@@ -26,7 +26,7 @@ use crate::app::{
     SelectionKey, SESSION_PAGE_SIZE,
 };
 use crate::control::{ControlHub, ControlOutcome, LaunchPresentation, RestorableSession};
-use crate::domain::{AgentSession, Capability, Provider, SessionSnapshot, SessionState};
+use crate::domain::{AgentSession, Capability, Provider, SessionSnapshot};
 use crate::hidden::HiddenSessions;
 use crate::migration::{MigrationClient, MigrationOutcome, MigrationRegistry, MigrationRequest};
 use crate::theme::{ColorScheme, SchemeWatcher, ThemePreference};
@@ -273,6 +273,7 @@ pub fn run_dashboard(
     migrations: MigrationServices,
     theme_preference: ThemePreference,
     color_scheme: ColorScheme,
+    mouse_hover: bool,
 ) -> Result<()> {
     let dashboard_started = Instant::now();
     let mut first_draw_logged = false;
@@ -386,9 +387,17 @@ pub fn run_dashboard(
         control.launch_targets(),
     );
     app.start_loading();
+    if control.provider_io_enabled() && crate::onboarding::take_first_task().unwrap_or(false) {
+        app.start_new_session(None);
+        app.paste_input("Describe this folder without changing any files");
+    }
     app.set_yolo(control.yolo_enabled(), control.yolo_supported_providers());
     app.set_paused(paused_sessions.paused());
     app.set_sort_keys(session_order.sort_keys());
+    if let Err(error) = last_harness.forget_exceptional() {
+        crate::perf_log::event("last_harness_cleanup_failed", format_args!("{error:#}"));
+    }
+    app.do_not_remember = last_harness.policy().clone();
     app.remembered_models = last_harness.models().into_iter().collect();
     app.launch_model = app.remembered_models.get(&app.launch_provider).cloned();
     if let Ok(links) = crate::session_tree::ParentLinks::load_default() {
@@ -413,8 +422,11 @@ pub fn run_dashboard(
             models_tx.clone(),
         );
     }
-    if let Some(view_mode) = last_view.view_mode() {
-        app.set_view_mode(view_mode);
+    app.set_view_mode(last_view.startup_view());
+    if control.provider_io_enabled() {
+        if let Ok(opens) = crate::search_opens::SearchOpens::load_default() {
+            app.set_search_opens(opens);
+        }
     }
     // Until the saved row is found (or the user moves), the cursor is the
     // default first row, which must not overwrite the saved one.
@@ -459,6 +471,7 @@ pub fn run_dashboard(
     let mut usage_minute = 0;
     let mut last_queue_second = 0;
     let mut terminal = TerminalSession::enter()?;
+    terminal.set_mouse(true);
     let initial_size = terminal.terminal.size()?;
     app.set_session_page_size(session_page_size_for_terminal(
         initial_size.height,
@@ -506,8 +519,21 @@ pub fn run_dashboard(
     let _focus_registration = crate::session_focus::register().ok();
     watchdog::spawn();
 
+    let mut dashboard_publisher = crate::dashboard_snapshot::Publisher::new();
     let result = 'dashboard: loop {
         watchdog::set_phase(watchdog::Phase::Updates);
+        let update = crate::update_check::newer_version();
+        if update != app.update_available {
+            app.update_available = update;
+            if let Ok(size) = terminal.terminal.size() {
+                app.set_session_page_size(
+                    session_page_size_for_terminal(size.height, app.usage.len())
+                        .saturating_sub(usize::from(app.update_available.is_some()))
+                        .max(1),
+                );
+            }
+            needs_draw = true;
+        }
         if let Ok(enabled) = work_store.read() {
             if enabled != app.work_only {
                 pending_open = None;
@@ -538,18 +564,14 @@ pub fn run_dashboard(
                             session.provider == pending.provider
                                 && session.provider_session_id == pending.provider_session_id
                         }) {
-                            if launched.state == SessionState::Completed
-                                && !current_request.include_completed
-                            {
+                            if launched.state.is_idle() && !current_request.include_completed {
                                 current_request.include_completed = true;
                                 app.reveal_completed_after_launch();
                             }
                         }
                     }
                     if !current_request.include_completed {
-                        snapshot
-                            .sessions
-                            .retain(|session| session.state != SessionState::Completed);
+                        snapshot.sessions.retain(|session| !session.state.is_idle());
                     }
                     if !current_request.include_interactive {
                         snapshot.sessions.retain(|session| {
@@ -774,7 +796,7 @@ pub fn run_dashboard(
                                         completed_migration_needs_refresh = true;
                                     }
                                     Err(error) => app.set_notice(format!(
-                                        "migration succeeded, but agentview could not index it: {error:#}"
+                                        "migration succeeded, but BetterAgentView could not index it: {error:#}"
                                     )),
                                 }
                             }
@@ -1066,8 +1088,6 @@ pub fn run_dashboard(
                 if status.phase != crate::voice::Phase::Idle {
                     app.voice_hint = false;
                 }
-                terminal
-                    .set_mouse(status.phase == crate::voice::Phase::Live && status.speed.is_some());
                 app.voice = status;
                 needs_draw = true;
             }
@@ -1103,6 +1123,10 @@ pub fn run_dashboard(
             }
         }
 
+        if control.provider_io_enabled() {
+            dashboard_publisher.publish(&app);
+        }
+
         let until_refresh = if refresh_in_flight {
             Duration::from_millis(50)
         } else {
@@ -1130,6 +1154,18 @@ pub fn run_dashboard(
                             BurstInput::Pasted(character) => Event::Paste(character.to_string()),
                         }
                     }
+                    // A click on a row opens it like Enter does, so it takes the
+                    // same path as the key.
+                    Event::Mouse(mouse) => match dashboard_mouse(&mut app, mouse, mouse_hover) {
+                        MouseEffect::Activate => {
+                            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+                        }
+                        MouseEffect::Redraw => {
+                            needs_draw = true;
+                            Event::Mouse(mouse)
+                        }
+                        MouseEffect::None => Event::Mouse(mouse),
+                    },
                     other => other,
                 };
                 match event {
@@ -1158,7 +1194,7 @@ pub fn run_dashboard(
                         if action == AppAction::Quit && migrating_target.is_some() {
                             app.should_quit = false;
                             app.set_notice(
-                                "migration is still running; agentview will be ready to exit when it finishes",
+                                "migration is still running; BetterAgentView will be ready to exit when it finishes",
                             );
                             action = AppAction::None;
                         }
@@ -1564,9 +1600,7 @@ pub fn run_dashboard(
                             app.set_completed_visibility(include_completed);
                             if !include_completed {
                                 let mut snapshot = app.snapshot.clone();
-                                snapshot.sessions.retain(|session| {
-                                    session.state != crate::domain::SessionState::Completed
-                                });
+                                snapshot.sessions.retain(|session| !session.state.is_idle());
                                 app.replace_snapshot(snapshot);
                             }
                         }
@@ -1619,7 +1653,11 @@ pub fn run_dashboard(
                                 &session_aliases,
                                 &session_id,
                                 &alias,
+                                |session, title| control.rename(session, title),
                             ) {
+                                Ok(SessionAliasUpdate::ProviderRenamed) => app.set_notice(format!(
+                                    "renamed to {} in OpenCode", alias.trim()
+                                )),
                                 Ok(SessionAliasUpdate::Set) => app.set_notice(format!(
                                     "renamed locally to {alias}; the provider title was not changed"
                                 )),
@@ -1633,7 +1671,7 @@ pub fn run_dashboard(
                                     "no local name was set; refreshing the latest provider title",
                                 ),
                                 Err(error) => app
-                                    .set_notice(format!("failed to rename session locally: {error:#}")),
+                                    .set_notice(format!("failed to rename session: {error:#}")),
                             }
                             effect.refresh = true;
                         }
@@ -1806,7 +1844,7 @@ fn install_voice_hook(voice: &crate::voice::VoiceService) {
             match toggler.toggle_with(draft.map(|text| crate::voice::Draft { text })) {
                 Toggle::Started | Toggle::Ended => None,
                 Toggle::NeedKey(provider) => Some(format!(
-                    "voice needs a {} key: go back with shift+← and press ctrl+k once",
+                    "voice needs a {} key: go back with F7 and press ctrl+k once",
                     provider.label()
                 )),
                 Toggle::Failed(error) => Some(error),
@@ -1848,6 +1886,49 @@ fn toggle_voice(app: &mut App, voice: &crate::voice::VoiceService) {
         Toggle::Ended => app.set_notice("voice call ended"),
         Toggle::NeedKey(provider) => app.start_voice_key(provider),
         Toggle::Failed(error) => app.set_notice(error),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum MouseEffect {
+    None,
+    Redraw,
+    Activate,
+}
+
+/// Clicks open rows and the wheel moves selection. Hover is opt-in so crossing
+/// the dashboard with the pointer cannot steal keyboard focus.
+fn dashboard_mouse(app: &mut App, mouse: crossterm::event::MouseEvent, hover: bool) -> MouseEffect {
+    const WHEEL_ROWS: isize = 3;
+    let before = app.selection.clone();
+    let moved = |app: &App| {
+        if app.selection != before {
+            MouseEffect::Redraw
+        } else {
+            MouseEffect::None
+        }
+    };
+    match mouse.kind {
+        MouseEventKind::Moved if hover => {
+            app.select_list_row(mouse.row);
+            moved(app)
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            if app.select_list_row(mouse.row) {
+                MouseEffect::Activate
+            } else {
+                MouseEffect::None
+            }
+        }
+        MouseEventKind::ScrollUp => {
+            app.scroll_selection(-WHEEL_ROWS);
+            moved(app)
+        }
+        MouseEventKind::ScrollDown => {
+            app.scroll_selection(WHEEL_ROWS);
+            moved(app)
+        }
+        _ => MouseEffect::None,
     }
 }
 
@@ -2287,6 +2368,7 @@ fn hide_sessions_from_app(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SessionAliasUpdate {
+    ProviderRenamed,
     Set,
     Unchanged,
     Cleared,
@@ -2298,6 +2380,7 @@ fn update_session_alias_from_app(
     session_aliases: &SessionAliases,
     session_id: &str,
     alias: &str,
+    rename_provider: impl FnOnce(&AgentSession, &str) -> Result<()>,
 ) -> Result<SessionAliasUpdate> {
     let session = app
         .snapshot
@@ -2312,6 +2395,20 @@ fn update_session_alias_from_app(
         } else {
             SessionAliasUpdate::NotSet
         });
+    }
+    if session.provider == Provider::OpenCode && session.runtime == crate::domain::Runtime::Host {
+        rename_provider(&session, alias.trim())?;
+        session_aliases.clear(session_id)?;
+        let mut snapshot = app.snapshot.clone();
+        if let Some(row) = snapshot
+            .sessions
+            .iter_mut()
+            .find(|row| row.id == session_id)
+        {
+            row.name = alias.trim().to_owned();
+        }
+        app.replace_snapshot(snapshot);
+        return Ok(SessionAliasUpdate::ProviderRenamed);
     }
     let changed = session_aliases.set_for_session(&session, alias)?;
     let mut snapshot = app.snapshot.clone();
@@ -2741,6 +2838,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> AppAction {
     }
 
     match key.code {
+        KeyCode::F(6) if key.modifiers.is_empty() && app.overlay == Overlay::None => {
+            app.start_move();
+            AppAction::None
+        }
         KeyCode::Esc => app.escape(),
         KeyCode::Char('y')
             if app.overlay == Overlay::Peek
@@ -3130,6 +3231,13 @@ fn dispatch_action<T: DashboardTerminal, C: DashboardControl>(
                 }
             }
         }
+        AppAction::CopyOnboarding => {
+            match crate::clipboard::copy_text(crate::onboarding::PROMPT) {
+                Ok(()) => app.set_notice("Setup prompt copied. Paste it into your coding agent."),
+                Err(error) => app.set_notice(format!("{error:#}")),
+            }
+            ActionEffect::default()
+        }
         AppAction::SetupProvider { provider } => {
             if let Err(error) = terminal.suspend_dashboard() {
                 app.set_notice(format!("failed to suspend dashboard: {error:#}"));
@@ -3298,6 +3406,7 @@ fn handle_action_legacy<T: DashboardTerminal, C: DashboardControl>(
         | AppAction::LoadModels { .. }
         | AppAction::Authenticate { .. }
         | AppAction::SetupProvider { .. }
+        | AppAction::CopyOnboarding
         | AppAction::SetupLaunchOption { .. }
         | AppAction::Migrate { .. }
         | AppAction::Hide { .. }
@@ -4027,6 +4136,44 @@ mod tests {
     }
 
     #[test]
+    fn pointer_motion_preserves_keyboard_selection_unless_hover_is_enabled() {
+        let mut app = app();
+        let original = app.selection.clone();
+        let group = SelectionKey::Group("test-directory".into());
+        app.set_list_view(0, vec![(4, group.clone())]);
+        let mouse = crossterm::event::MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 2,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert_eq!(dashboard_mouse(&mut app, mouse, false), MouseEffect::None);
+        assert_eq!(app.selection, original);
+        assert_eq!(dashboard_mouse(&mut app, mouse, true), MouseEffect::Redraw);
+        assert_eq!(app.selection, Some(group));
+    }
+
+    #[test]
+    fn click_opens_the_clicked_row_without_hover_focus() {
+        let mut app = app();
+        let group = SelectionKey::Group("test-directory".into());
+        app.set_list_view(0, vec![(4, group.clone())]);
+        let click = crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert_eq!(
+            dashboard_mouse(&mut app, click, false),
+            MouseEffect::Activate
+        );
+        assert_eq!(app.selection, Some(group));
+        let outside = crossterm::event::MouseEvent { row: 20, ..click };
+        assert_eq!(dashboard_mouse(&mut app, outside, false), MouseEffect::None);
+    }
+
+    #[test]
     fn printable_j_starts_a_task_instead_of_moving_the_list() {
         let mut app = app();
         assert_eq!(app.selection, Some(SelectionKey::Session("worker".into())));
@@ -4483,8 +4630,9 @@ mod tests {
     }
 
     #[test]
-    fn control_m_and_command_m_open_the_move_picker_without_replacing_enter() {
+    fn f6_and_legacy_move_aliases_open_the_picker_without_replacing_enter() {
         for shortcut in [
+            key(KeyCode::F(6)),
             control_key('m'),
             modified_key(KeyCode::Char('m'), KeyModifiers::SUPER),
         ] {
@@ -4505,6 +4653,25 @@ mod tests {
                 session_id: "worker".into()
             }
         );
+
+        for shortcut in [
+            key(KeyCode::F(6)),
+            modified_key(KeyCode::F(6), KeyModifiers::SHIFT),
+        ] {
+            let mut composer = app();
+            composer.start_new_session(None);
+            let overlay = composer.overlay.clone();
+            handle_key(&mut composer, shortcut);
+            assert_eq!(composer.overlay, overlay);
+            assert!(composer.moving_session.is_none());
+        }
+        let mut dashboard = app();
+        handle_key(
+            &mut dashboard,
+            modified_key(KeyCode::F(6), KeyModifiers::SHIFT),
+        );
+        assert_eq!(dashboard.overlay, Overlay::None);
+        assert!(dashboard.moving_session.is_none());
     }
 
     #[test]
@@ -5654,7 +5821,14 @@ mod tests {
         let mut app = app();
 
         assert_eq!(
-            update_session_alias_from_app(&mut app, &aliases, "worker", "dashboard label").unwrap(),
+            update_session_alias_from_app(
+                &mut app,
+                &aliases,
+                "worker",
+                "dashboard label",
+                |_, _| panic!("local rename must not call provider")
+            )
+            .unwrap(),
             SessionAliasUpdate::Set
         );
         assert_eq!(app.snapshot.sessions[0].name, "dashboard label");
@@ -5663,9 +5837,55 @@ mod tests {
             Some("worker")
         );
         assert_eq!(
-            update_session_alias_from_app(&mut app, &aliases, "worker", "").unwrap(),
+            update_session_alias_from_app(&mut app, &aliases, "worker", "", |_, _| panic!(
+                "clearing must not call provider"
+            ))
+            .unwrap(),
             SessionAliasUpdate::Cleared
         );
+        assert!(aliases.list().is_empty());
+    }
+
+    #[test]
+    fn opencode_rename_updates_provider_and_removes_old_alias_only_on_success() {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+                .unwrap();
+        }
+        let aliases = SessionAliases::load(directory.path().join("aliases.json")).unwrap();
+        let mut app = app();
+        app.snapshot.sessions[0].provider = Provider::OpenCode;
+        let session = app.snapshot.sessions[0].clone();
+        aliases.set_for_session(&session, "old alias").unwrap();
+        assert!(update_session_alias_from_app(
+            &mut app,
+            &aliases,
+            "worker",
+            "new title",
+            |_, _| { anyhow::bail!("server unavailable") }
+        )
+        .is_err());
+        assert_eq!(app.snapshot.sessions[0].name, session.name);
+        assert_eq!(aliases.list()[0].alias, "old alias");
+        assert_eq!(
+            update_session_alias_from_app(
+                &mut app,
+                &aliases,
+                "worker",
+                " new title ",
+                |target, title| {
+                    assert_eq!(target.provider_session_id, session.provider_session_id);
+                    assert_eq!(title, "new title");
+                    Ok(())
+                }
+            )
+            .unwrap(),
+            SessionAliasUpdate::ProviderRenamed
+        );
+        assert_eq!(app.snapshot.sessions[0].name, "new title");
         assert!(aliases.list().is_empty());
     }
 

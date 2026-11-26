@@ -234,7 +234,7 @@ fn http_status(url: &str, key: &str) -> Result<String> {
 
 /// One cheap request: the key must be accepted and see GPT-Live.
 pub fn check_key(key: &str) -> Result<()> {
-    match http_status("https://api.openai.com/v1/models/gpt-live-1", key)?.as_str() {
+    match http_status("https://api.openai.com/v1/models/gpt-live-1.1", key)?.as_str() {
         "200" => Ok(()),
         "401" => bail!("OpenAI rejected that key"),
         "404" => bail!("that key cannot use GPT-Live"),
@@ -258,6 +258,13 @@ pub struct Settings {
     /// How fast Grok talks, 0.7 to 1.5.
     pub speed: f64,
     pub voice: String,
+    /// The GPT-Live model: `gpt-live-1.1`, or `gpt-live-1` for the first one.
+    pub live_model: String,
+    /// Seconds without anyone speaking before GPT-Live pauses itself (standby,
+    /// billed at the lower rate until you speak again). 5 to 60; 0 turns it off.
+    /// Off by default: while paused it does not speak what agentview tells it
+    /// (a watched session finishing) until the next time you speak.
+    pub standby_seconds: u64,
     pub backend_model: String,
     pub reasoning_effort: String,
     /// Minutes of silence, with nothing watched, before the call ends itself.
@@ -287,6 +294,8 @@ impl Default for Settings {
             xai_reasoning: "none".into(),
             speed: 1.0,
             voice: "meridian".into(),
+            live_model: "gpt-live-1.1".into(),
+            standby_seconds: 0,
             backend_model: "gpt-6-luna".into(),
             reasoning_effort: "low".into(),
             idle_minutes: 10,

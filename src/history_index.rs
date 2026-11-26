@@ -678,6 +678,24 @@ impl HistoryIndex {
             "CREATE INDEX IF NOT EXISTS documents_message ON documents(source,message_id,id);
             CREATE INDEX IF NOT EXISTS documents_root ON documents(root);",
         )?;
+        if self.provider.is_none() {
+            let version: Option<i64> = tx
+                .query_row(
+                    "SELECT value FROM meta WHERE key='tool_text_version'",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if version != Some(1) {
+                // Reindex unchanged sessions too. This is only a derived cache;
+                // provider history is never modified and WAL readers keep the old snapshot.
+                tx.execute_batch(
+                    "DELETE FROM documents; DELETE FROM sessions;
+                    DELETE FROM meta WHERE key='refreshed';
+                    INSERT OR REPLACE INTO meta VALUES ('tool_text_version',1);",
+                )?;
+            }
+        }
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
         let last: i64 = tx
             .query_row("SELECT value FROM meta WHERE key='refreshed'", [], |r| {
@@ -819,20 +837,20 @@ impl HistoryIndex {
             // Keep each read snapshot short, so a backfill does not pin the
             // OpenCode WAL for its entire duration. The earlier metadata
             // version is conservative if this session changes during a scan.
-            let query = "SELECT json_extract(p.data,'$.text'),p.message_id,COALESCE(m.time_created,p.time_created),
+            let query = "SELECT p.data,p.message_id,COALESCE(m.time_created,p.time_created),
                 COALESCE(json_extract(m.data,'$.role'),'unknown')
                 FROM part p LEFT JOIN message m ON m.id=p.message_id
-                WHERE p.session_id=?1 AND json_extract(p.data,'$.type')='text'
+                WHERE p.session_id=?1 AND json_extract(p.data,'$.type') IN ('text','tool')
                 AND json_extract(p.data,'$.synthetic') IS NOT 1
-                AND length(json_extract(p.data,'$.text'))>0 ORDER BY COALESCE(m.time_created,p.time_created),p.message_id,p.id";
+                ORDER BY COALESCE(m.time_created,p.time_created),p.message_id,p.id";
             // Older minimal stores may not have message records. Their text is
             // still searchable; mark role unknown rather than inventing metadata.
             let mut q = source.prepare(query).or_else(|_| {
                 source.prepare(
-                    "SELECT json_extract(data,'$.text'),id,time_created,'unknown' FROM part
-                 WHERE session_id=?1 AND json_extract(data,'$.type')='text'
+                    "SELECT data,id,time_created,'unknown' FROM part
+                 WHERE session_id=?1 AND json_extract(data,'$.type') IN ('text','tool')
                  AND json_extract(data,'$.synthetic') IS NOT 1
-                 AND length(json_extract(data,'$.text'))>0 ORDER BY time_created,id",
+                  ORDER BY time_created,id",
                 )
             })?;
             let mut rows = q.query([&id])?;
@@ -840,7 +858,12 @@ impl HistoryIndex {
                 if cancelled.load(Ordering::Relaxed) {
                     bail!("history indexing cancelled");
                 }
-                let text: String = row.get(0)?;
+                let data: String = row.get(0)?;
+                let part: serde_json::Value = serde_json::from_str(&data)?;
+                let text = searchable_part_text(&part);
+                if text.trim().is_empty() {
+                    continue;
+                }
                 let message: Option<String> = row.get(1)?;
                 let created: Option<u64> = row.get(2)?;
                 let role: String = row.get(3)?;
@@ -944,6 +967,57 @@ impl HistoryIndex {
             std::thread::sleep(Duration::from_millis(5));
         }
         Ok(())
+    }
+}
+
+/// Include the actual tool arguments (including Code Mode source) and textual
+/// results, not opaque images, provider metadata, reasoning or injected context.
+fn searchable_part_text(part: &serde_json::Value) -> String {
+    use serde_json::Value;
+    fn input_text(value: &Value, out: &mut Vec<String>) {
+        match value {
+            Value::String(text) => out.push(text.clone()),
+            Value::Array(values) => values.iter().for_each(|v| input_text(v, out)),
+            Value::Object(values) => {
+                for (key, value) in values {
+                    out.push(key.clone());
+                    input_text(value, out);
+                }
+            }
+            Value::Null => {}
+            value => out.push(value.to_string()),
+        }
+    }
+    if part["synthetic"] == true {
+        return String::new();
+    }
+    match part["type"].as_str() {
+        Some("text") => part["text"].as_str().unwrap_or_default().to_owned(),
+        Some("tool") => {
+            let mut texts = Vec::new();
+            if let Some(name) = part["tool"].as_str().or_else(|| part["name"].as_str()) {
+                texts.push(name.to_owned());
+            }
+            let state = &part["state"];
+            input_text(&state["input"], &mut texts);
+            // V1 uses output; V2 uses typed content blocks.
+            for field in ["output", "error"] {
+                if let Some(text) = state[field].as_str() {
+                    texts.push(text.to_owned());
+                }
+            }
+            if let Some(content) = state["content"].as_array() {
+                for block in content {
+                    if block["type"] == "text" {
+                        if let Some(text) = block["text"].as_str() {
+                            texts.push(text.to_owned());
+                        }
+                    }
+                }
+            }
+            texts.join("\n")
+        }
+        _ => String::new(),
     }
 }
 
@@ -1080,6 +1154,92 @@ pub(crate) mod tests {
             .unwrap();
         }
         (dir, index)
+    }
+
+    #[test]
+    fn tool_calls_find_slack_sends_results_and_nested_subagents() {
+        let (_dir, index) = v2_fixture(false, false);
+        let source = Connection::open(&index.source).unwrap();
+        let data = serde_json::json!({"content":[{
+            "type":"tool", "name":"execute", "state":{
+                "status":"completed",
+                "input":{"code":"return await tools.slack.slack_send_message({message:'settings link: https://github.com/organizations/arcainc/settings/installations\\nArca Archie → Configure → Repository access → add science-website alongside arca → Save. No need to enable all repos.'});"},
+                "content":[
+                    {"type":"text","text":"https://arca-technologies.slack.com/archives/C123/p1795462567710839"},
+                    {"type":"image","data":"imagepayloadnoise"}
+                ],
+                "metadata":{"internal":"metadatanoise"}
+            }
+        }]});
+        source
+            .execute(
+                "INSERT INTO session_message VALUES('send','grandchild_v2','assistant',2,30,30,?1)",
+                [data.to_string()],
+            )
+            .unwrap();
+        assert!(refresh(&index));
+        for query in [
+            "Arca Archie",
+            "science-website",
+            "No need to enable all repos",
+            "github.com/organizations/arcainc/settings/installations",
+            "slack_send_message",
+            "p1795462567710839",
+        ] {
+            let found = index.search(query).unwrap();
+            assert!(found.contains_key("opencode:host:ses_v2"), "{query}");
+            assert_eq!(found.len(), 1);
+        }
+        for query in ["imagepayloadnoise", "metadatanoise"] {
+            assert!(index.search(query).unwrap().is_empty(), "{query}");
+        }
+        let found = index
+            .matching_message("opencode:host:ses_v2", &["science-website".into()])
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.source_session_id, "grandchild_v2");
+        assert_eq!(found.matched.id, "send");
+        assert_eq!(found.matched.role, "assistant");
+        assert_eq!(found.matched.created_at_ms, Some(30));
+        assert!(found.matched.text.contains("science-website"));
+
+        // A result arriving later must replace the running tool's indexed text.
+        source.execute("UPDATE session_message SET data=?1,time_updated=31 WHERE id='send'", [r#"{"content":[{"type":"tool","name":"execute","state":{"status":"error","input":{"code":"revised tool arguments"},"error":"permission denied by workspace"}}]}"#]).unwrap();
+        make_due(&index);
+        assert!(refresh(&index));
+        assert!(index.search("science-website").unwrap().is_empty());
+        assert!(index
+            .search("permission denied")
+            .unwrap()
+            .contains_key("opencode:host:ses_v2"));
+    }
+
+    #[test]
+    fn old_conversation_only_cache_reindexes_unchanged_sessions_immediately() {
+        let (_dir, index) = fixture();
+        assert!(refresh(&index));
+        let source = Connection::open(&index.source).unwrap();
+        source.execute("UPDATE part SET data=?1 WHERE id='p2'", [r#"{"type":"tool","tool":"slack_send_message","state":{"input":{"message":"Arca Archie repository access"},"output":"message sent successfully"}}"#]).unwrap();
+        // Model the previous build: same source versions, fresh cache, no tool text.
+        Connection::open(&index.path)
+            .unwrap()
+            .execute("DELETE FROM meta WHERE key='tool_text_version'", [])
+            .unwrap();
+        assert!(refresh(&index), "upgrade bypasses the freshness throttle");
+        for query in [
+            "Arca Archie",
+            "message sent successfully",
+            "slack_send_message",
+        ] {
+            assert!(
+                index
+                    .search(query)
+                    .unwrap()
+                    .contains_key("opencode:host:ses_chat"),
+                "{query}"
+            );
+        }
+        assert!(!refresh(&index), "subsequent refreshes remain incremental");
     }
 
     #[test]
@@ -1272,7 +1432,6 @@ pub(crate) mod tests {
         assert!(found.contains_key("opencode:host:fork_v2"));
         for text in [
             "toolnoise",
-            "tooloutputnoise",
             "reasoningnoise",
             "syntheticnoise",
             "systemnoise",
@@ -1280,6 +1439,10 @@ pub(crate) mod tests {
         ] {
             assert!(index.search(text).unwrap().is_empty(), "{text}");
         }
+        assert!(index
+            .search("tooloutputnoise")
+            .unwrap()
+            .contains_key("opencode:host:ses_v2"));
         let source = Connection::open(&index.source).unwrap();
         let added: i64 = source.query_row("SELECT count(*) FROM sqlite_master WHERE name IN ('documents','messages_fts','meta','sessions','session','part') OR type IN ('trigger','view')", [], |r| r.get(0)).unwrap();
         assert_eq!(added, 0, "compatibility objects must stay connection-local");
@@ -1365,7 +1528,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn indexes_literal_substrings_and_children_but_not_tools_or_synthetic_text() {
+    fn indexes_literal_substrings_and_children_but_not_stray_tool_text_or_synthetic_text() {
         let (_dir, index) = fixture();
         assert!(!index.is_ready());
         assert!(refresh(&index));

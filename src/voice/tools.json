@@ -2,7 +2,7 @@
   {
     "type": "function",
     "name": "list_sessions",
-    "description": "List the developer's coding sessions with state (working, needs_you, done), folder, when they last wrote to it, what it is doing and a preview of what it last said. last_discussed, when present, names the sessions you last sent a message to this call, newest first; it only points at rows and does not repeat them. By default only the sessions they are actively working in. Use scope \"all\" or a query to find an older one.",
+    "description": "List the developer's coding sessions with state (working, needs_you, done, or scheduled for one that waits on a timer), folder, when they last wrote to it, what it is doing and a preview of what it last said. last_discussed, when present, names the sessions you last sent a message to this call, newest first; it only points at rows and does not repeat them. By default only the sessions they are actively working in, which is the dashboard's main view; sessions scheduled to resume later (state scheduled) are left out and only counted. Use scope \"all\" or a query to find an older or a scheduled one.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -178,7 +178,7 @@
   {
     "type": "function",
     "name": "close_session",
-    "description": "Close a session: stop what it is doing and remove it from Agent View, the developer's list of sessions in focus. Its history is kept and search_history can still find it. Use when the developer says close, kill, remove, get rid of, clean up or dismiss a session.",
+    "description": "Close a session: stop what it is doing and remove it from BetterAgentView, the developer's list of sessions in focus. Its history is kept and search_history can still find it. Use when the developer says close, kill, remove, get rid of, clean up or dismiss a session.",
     "parameters": {
       "type": "object",
       "properties": {

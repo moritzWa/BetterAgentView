@@ -74,7 +74,7 @@ printf '%s\n' '#!/bin/sh' 'printf '\''agentview 9.8.7\n'\''' > "$AGENTVIEW_INSTA
             stdout.lines().last(),
             Some(
                 format!(
-                    "Updated agentview from {} to 9.8.7.",
+                    "Updated BetterAgentView from {} to 9.8.7.",
                     env!("CARGO_PKG_VERSION")
                 )
                 .as_str()
@@ -133,10 +133,39 @@ fn update_reports_when_the_installed_version_is_already_current() {
         stdout.lines().last(),
         Some(
             format!(
-                "agentview is already up to date at {}.",
+                "BetterAgentView is already up to date at {}.",
                 env!("CARGO_PKG_VERSION")
             )
             .as_str()
         )
     );
+}
+
+#[test]
+fn current_release_does_not_download_or_run_an_installer() {
+    let directory = tempfile::tempdir().unwrap();
+    let bin = directory.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    make_executable(
+        &bin.join("curl"),
+        &format!(
+            "#!/bin/sh\necho '{{\"tag_name\":\"v{}\"}}'\n",
+            env!("CARGO_PKG_VERSION")
+        ),
+    );
+    make_executable(&bin.join("bash"), "#!/bin/sh\nexit 99\n");
+    let result = Command::new(env!("CARGO_BIN_EXE_agentview"))
+        .arg("update")
+        .env("PATH", &bin)
+        .env("HOME", directory.path())
+        .env_remove("AGENTVIEW_VERSION")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(String::from_utf8_lossy(&result.stdout).contains("already up to date"));
+    assert!(!directory.path().join(".local/bin").exists());
 }

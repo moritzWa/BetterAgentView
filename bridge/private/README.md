@@ -12,7 +12,7 @@ relocation requires neither of the following operator commands.
 ```console
 npm ci
 NEON_PROJECT_ID=<dedicated-project> node private/provision.mjs
-npx wrangler deploy --config wrangler.private.jsonc
+npm run deploy
 ```
 
 Provisioning applies both SQL schemas. It creates a runtime role without schema
@@ -34,8 +34,16 @@ consent precede every new grant. Scopes are `history:read` and `messages:send`.
 Refresh tokens rotate. Replay revokes the token family.
 
 Tools: `list_sessions`, `session_brief`, `search_history`, `read_session`, `read_message`,
-`send_session_message`, `message_status`, `cancel_message`, `list_artifacts`,
+`send_session_message`, `message_status`, `cancel_message`, `hide_session`,
+`unhide_session`, `session_visibility_status`, `list_artifacts`,
 and `preview_artifact`.
+
+Hide and unhide require the write grant and explicit owner approval. Use one
+call with the exact session ID, a new operation ID and `confirmed:true`. Hide
+only fully finished sessions with no pending questions or follow-ups. Never
+hide ongoing workstreams. These tools change only the Mac's hidden-session
+registry, not provider history. Requests can queue while the Mac sleeps and
+expire after 24 hours. Only `applied` means the Mac confirmed the change.
 
 ### Delivery contract
 
@@ -48,8 +56,22 @@ Every `send_session_message`, `message_status` and `cancel_message` result start
 return a JSON body (`error` keeps the old code, plus `sent`, `say_to_owner`, `next_step`).
 `sent: null` means unknown, so check `message_status` before claiming anything.
 `message_status` for an operation that was never sent returns `not_sent`, which is how a
-skipped send is caught. The logic is pure and lives in `delivery.mjs`. No safety check
-changed. Read-tool errors stay bare codes.
+skipped send is caught. If queued, retain the operation ID and check it on the next relevant
+turn, without resending. Send and start need the write grant but no per-action
+approval. Cancellation and visibility changes still require confirmation.
+Stale context still stops delivery. Read-tool errors stay bare codes.
+
+### November 25–26 voice incident
+
+Some voice turns stopped before ChatGPT called BetterAgentView (then named AgentVoice). On November 25,
+ChatGPT fetched session context again instead of submitting the write. The
+November 26 transcript showed reads but no send or start call when ChatGPT said
+it was waiting for approval. Those turns never reached Neon. Two later sends did
+reach the Worker and queue. The Mac lost network access and delivered both on
+reconnect. The first receipts accurately said queued, but ChatGPT did not check
+again. The Worker deduplicates retries by operation ID, the Mac checks the
+session context and hands off to OpenCode, and its durable acknowledgment marks
+native admission, not task completion.
 
 ### Artifact previews
 
@@ -123,20 +145,50 @@ them has not been observed here; do not rely on text alone.
   decision candidates, `data_age`, and `send_params`. A spoken name such as
   "diagram bench" matches "diagram-bench". Several matches return candidates
   without conversation text. It is read-only.
-- **Send.** Only `send_session_message` writes, after the owner has decided, with
-  `session_brief.send_params`. ChatGPT's on-screen approval still applies.
+- **Send.** Call `send_session_message` as soon as the owner gives the instruction.
+  Pass `session_brief.send_params` if already available.
 - **Staleness.** Digest and brief say how old native status and history are, and
   warn when the Mac has not been seen recently.
+- **Session probe.** `session_brief(session_id)` asks the Mac for that one session's
+  status through the poll that is already open (`probe` in the poll response, answer
+  to `/v1/connector/probe`) instead of waiting for a whole-inventory publication.
+  The Mac classifies it with the same pipeline as the snapshot (verified identical on
+  every working and waiting session) in about 0.5 s instead of 1.4 s, while history
+  catches up in parallel. If the Mac does not answer within 2.5 s, or is an older
+  build, the brief falls back to waiting for the next snapshot as before.
+  `timing_ms.probed` says which path ran.
+- **Call log.** Every authenticated MCP call appends `{time, method, tool, duration,
+  phase durations, result size, error code}` to a per-hour bucket in the Durable
+  Object, kept 14 days (at most 1,500 calls per hour). No arguments or results are
+  stored. `GET /v1/timings?hours=24` returns it with a read token;
+  `node test/e2e/latency-log.mjs --since-hours 24` summarises it.
 
 - `read_session` defaults to recent messages. Forward and backward pages preserve
   source order under the response budget. No newer messages means an empty page,
-  never a substituted older reply. Read truncated messages with `read_message`.
-- `search_history` returns a bounded matching passage and its Unicode character
-  offset for `read_message`. Search returns at most 30 matches; it does not yet
-  have a continuation cursor.
+  never a substituted older reply. Messages that do not fit the remaining page
+  budget appear on the next page instead of being cut to fit.
+- The visible overview keeps messages up to 600 Unicode characters whole. If
+  the preview budget runs out, select a directory or use `session_brief`.
+  A cut overview excerpt has `user_truncation` or `agent_truncation`. Cut brief
+  and history messages carry `truncated: true` on the message itself. Call
+  `read_message` with the session ID, `message_id` and `offset` (zero for the
+  full synced message). Pass `next_offset` back as `offset` until it is null.
+- `search_history` returns a short passage around the first matching term (400
+  characters by default, `excerpt_chars` up to 2,000) and its Unicode character
+  offset for `read_message`, newest first. It returns 8 matches by default, at
+  most 30 per call. `next_offset` (null on the last page) continues the search:
+  pass it back as `offset`. Order is deterministic, so pages never repeat a match
+  unless new matching text arrives between calls. To read more of one match, call
+  `read_message(session_id, message_id, offset=excerpt_offset)` rather than
+  widening every excerpt.
 - Pass `list_sessions.next_after` verbatim. A changed list rejects its old cursor
   rather than silently skipping sessions. Start again without `after`.
-- `list_sessions` now gives a Cmd+K-style recent overview by default. For active
+- `list_sessions` rows are compact by default: id, title, folder, status, health,
+  attention and next action, without message text. `detail=true` adds the recent
+  messages described below. `session_brief` is the way to read one session.
+  The compact default exists because three copies of every row's messages cost
+  about 12,000 model tokens for 14 sessions.
+- `list_sessions` gives a Cmd+K-style recent overview by default. For active
   or needing-attention questions, `status="active"` selects working/waiting rows
   and a small recent set whose final replies still need assessment. Whole-set
   counts remove the need to page through completed rows looking for a blocker.
@@ -146,10 +198,10 @@ them has not been observed here; do not rely on text alone.
   titles. The folder label is not a canonical Git repository identifier.
 - `recent_messages` contains the last two nonempty visible messages per role
   (two user messages and two assistant text replies), in original source order.
-  Tool calls, results and reasoning are not conversation context. Latest-message
-  aliases remain for older clients, with full-message IDs for deeper reads.
+  Tool calls, results and reasoning are excluded. Each message appears once,
+  with its ID for deeper reads.
 - Short messages remain complete. Long messages preserve their first 20% and
-  last 20%, capped by the shared 36K-character overview budget including aliases.
+  last 20%, capped by the shared 24K-character overview budget.
   An explicit middle-omitted marker and character counts describe what was cut.
   This preserves opening TLDRs and closing questions without copying huge replies.
   No extra summary-model call or copy of tool output is made. `done` means the
@@ -161,8 +213,9 @@ them has not been observed here; do not rely on text alone.
   runtime freshness are reported separately. New sessions without mirrored
   history still appear in active counts; their context is explicitly unavailable.
 - All authenticated MCP requests already renew mobile activity at the router.
-  Status checks additionally wait for history and native-state refresh, then
-  report freshness. A missing or stale native status cannot confirm completion.
+  Sends return the durable delivery receipt without waiting for history or native
+  status to refresh. A later message status check reports completion and freshness.
+  A missing or stale native status cannot confirm completion.
 - Revocation is rechecked after tool waits and inside queue mutations. Expired,
   never-admitted confirmation requests no longer block later operations forever.
 
@@ -200,8 +253,9 @@ last week only, and only the end of the last reply.
 `session_health` reports running, idle, potentially_stalled, or failed from the Mac's
 OpenCode database. A long tool or shell call stays running. A failed read, a bridge
 restart, or a stale snapshot is unknown, not a stall. Overview rows carry only the
-word. `start_session` queues a new OpenCode session after the same write grant and
-on-screen approval as a send. The session id is returned only after OpenCode creates
+word. `start_session` queues a new OpenCode session with the same write grant
+as a send. Neither needs per-action approval. The session ID is returned only
+after OpenCode creates
 it. A queued start is not a started session. Deployment needs the additive
 `av_starts` table and `GRANT USAGE, SELECT ON SEQUENCE av_starts_sequence_seq`.
 `agentview bridge status` shows `stuck_sessions`,
@@ -225,7 +279,7 @@ node test/e2e/tool-contracts.mjs
 ```
 
 The second command is an operator harness for the prepared Cua macOS VM. It
-requires the disposable `vm_environment.py` service, the test Agent View binary
+requires the disposable `vm_environment.py` service, the test BetterAgentView binary
 and the signed-in browser forwarded on port 19949. It uses synthetic sessions
 and a deterministic local model. No paid model credential is needed.
 The third command tests the deployed cloud tool contracts with a disposable,

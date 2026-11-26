@@ -1,6 +1,6 @@
 # Contributing
 
-agentview welcomes focused pull requests with matching tests and
+betteragentview welcomes focused pull requests with matching tests and
 documentation. Use GitHub issues for reproducible bugs and scoped proposals.
 
 ## Before changing code
@@ -58,8 +58,15 @@ cargo test --locked
 cargo build --release --locked
 ```
 
-CI repeats the locked test/build on Rust 1.75.0 and stable. For TUI changes,
-also follow [the real-TTY validation guide](docs/tui-validation.md): exercise
+CI runs the locked tests and release builds in parallel on Rust 1.75.0 and
+stable. CI runs on pull requests and pushes to main. Portability CI also tests
+and packages for Linux, macOS and Windows. The macOS jobs run the terminal
+suite in two isolated processes without compiling it twice.
+Changes confined to the static site and a few prose files skip Rust CI but still
+run the Node checks. A manual CI run always runs the full suite. Release
+workflows use their own checks.
+
+For TUI changes, also follow [the real-TTY validation guide](docs/tui-validation.md): exercise
 the synthetic all-state fixture in a real PTY at wide, ordinary, and narrow
 sizes, run the relevant fresh-container probe, verify terminal restoration, and
 record what was and was not authenticated. Review actual screenshots for color

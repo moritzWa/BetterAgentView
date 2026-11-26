@@ -231,6 +231,10 @@ pub trait ProviderController: Send + Sync {
     /// place. Best effort: a harness without one does nothing.
     fn pause_speech(&self, _session: &AgentSession) {}
 
+    fn rename(&self, _session: &AgentSession, _title: &str) -> Result<()> {
+        bail!("{} session rename is unavailable", self.provider().label())
+    }
+
     /// Stops a session's running turn even when this dashboard did not start
     /// the session.
     fn force_interrupt(&self, _session: &AgentSession) -> Result<()> {
@@ -255,6 +259,21 @@ pub trait ProviderController: Send + Sync {
         _turns: usize,
     ) -> Result<Vec<crate::adapters::opencode_db::SessionTurn>> {
         bail!("{} history reading is unavailable", self.provider().label())
+    }
+
+    fn completion_context(&self, session: &AgentSession) -> Result<String> {
+        if let Some(messages) = crate::last_message::completion_for(&session.id) {
+            return Ok(messages);
+        }
+        let reply = crate::last_message::get(&session.id)
+            .context("message-only completion evidence is unavailable")?;
+        Ok(crate::completion::evidence(
+            "",
+            &[crate::adapters::opencode_db::SessionTurn {
+                it: reply,
+                ..Default::default()
+            }],
+        ))
     }
 
     /// Stop the running turn, rewind to before the last message sent, and send
@@ -605,7 +624,7 @@ impl ControlHub {
         self.ensure_provider_io()?;
         if provider == &Provider::Terminal {
             return Ok(ControlOutcome {
-                message: "Terminal is built into agentview and needs no setup".into(),
+                message: "Terminal is built into BetterAgentView and needs no setup".into(),
                 provider_session_hint: None,
             });
         }
@@ -647,7 +666,7 @@ impl ControlHub {
             crate::native_session::NativeSessionExit::Exited(status) if status.success() => {
                 Ok(ControlOutcome {
                     message: format!(
-                        "{} setup completed; restart agentview if it was newly installed",
+                        "{} setup completed; restart BetterAgentView if it was newly installed",
                         provider.label()
                     ),
                     provider_session_hint: None,
@@ -814,6 +833,12 @@ impl ControlHub {
             .recent_turns(session, turns)
     }
 
+    pub fn completion_context(&self, session: &AgentSession) -> Result<String> {
+        self.ensure_provider_io()?;
+        self.controller(&session.provider)?
+            .completion_context(session)
+    }
+
     pub fn running_shells(
         &self,
         session: &AgentSession,
@@ -837,6 +862,11 @@ impl ControlHub {
             bail!("archive authority was not granted for this session");
         }
         self.controller(&session.provider)?.archive(session)
+    }
+
+    pub fn rename(&self, session: &AgentSession, title: &str) -> Result<()> {
+        self.ensure_provider_io()?;
+        self.controller(&session.provider)?.rename(session, title)
     }
 
     pub fn resolve_approval(&self, session: &AgentSession, accept: bool) -> Result<ControlOutcome> {

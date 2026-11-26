@@ -1,0 +1,1734 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "RuntimeSnapshot": {
+      "$ref": "#/definitions/RuntimeSnapshot"
+    },
+    "Message": {
+      "$ref": "#/definitions/Message"
+    },
+    "Session": {
+      "$ref": "#/definitions/Session"
+    },
+    "Batch": {
+      "$ref": "#/definitions/Batch"
+    },
+    "ReadContext": {
+      "$ref": "#/definitions/ReadContext"
+    },
+    "CursorPointer": {
+      "$ref": "#/definitions/CursorPointer"
+    },
+    "CursorRequest": {
+      "$ref": "#/definitions/CursorRequest"
+    },
+    "CheckedRequest": {
+      "$ref": "#/definitions/CheckedRequest"
+    },
+    "EmptyRequest": {
+      "$ref": "#/definitions/EmptyRequest"
+    },
+    "ProbeResult": {
+      "$ref": "#/definitions/ProbeResult"
+    },
+    "AckRequest": {
+      "$ref": "#/definitions/AckRequest"
+    },
+    "StartAckRequest": {
+      "$ref": "#/definitions/StartAckRequest"
+    },
+    "VerifyRequest": {
+      "$ref": "#/definitions/VerifyRequest"
+    },
+    "PairStart": {
+      "$ref": "#/definitions/PairStart"
+    },
+    "PairToken": {
+      "$ref": "#/definitions/PairToken"
+    },
+    "ArtifactUpload": {
+      "$ref": "#/definitions/ArtifactUpload"
+    },
+    "OkResponse": {
+      "$ref": "#/definitions/OkResponse"
+    },
+    "PairStartResponse": {
+      "$ref": "#/definitions/PairStartResponse"
+    },
+    "PairTokenResponse": {
+      "$ref": "#/definitions/PairTokenResponse"
+    },
+    "BatchResponse": {
+      "$ref": "#/definitions/BatchResponse"
+    },
+    "CursorsResponse": {
+      "$ref": "#/definitions/CursorsResponse"
+    },
+    "VerifyResponse": {
+      "$ref": "#/definitions/VerifyResponse"
+    },
+    "PollResponse": {
+      "$ref": "#/definitions/PollResponse"
+    },
+    "LeaseResponse": {
+      "$ref": "#/definitions/LeaseResponse"
+    },
+    "MessageLease": {
+      "$ref": "#/definitions/MessageLease"
+    },
+    "VisibilityLease": {
+      "$ref": "#/definitions/VisibilityLease"
+    },
+    "StartLeaseResponse": {
+      "$ref": "#/definitions/StartLeaseResponse"
+    },
+    "ReceiptResponse": {
+      "$ref": "#/definitions/ReceiptResponse"
+    },
+    "StartReceiptResponse": {
+      "$ref": "#/definitions/StartReceiptResponse"
+    },
+    "ArtifactResponse": {
+      "$ref": "#/definitions/ArtifactResponse"
+    }
+  },
+  "required": [
+    "RuntimeSnapshot",
+    "Message",
+    "Session",
+    "Batch",
+    "ReadContext",
+    "CursorPointer",
+    "CursorRequest",
+    "CheckedRequest",
+    "EmptyRequest",
+    "ProbeResult",
+    "AckRequest",
+    "StartAckRequest",
+    "VerifyRequest",
+    "PairStart",
+    "PairToken",
+    "ArtifactUpload",
+    "OkResponse",
+    "PairStartResponse",
+    "PairTokenResponse",
+    "BatchResponse",
+    "CursorsResponse",
+    "VerifyResponse",
+    "PollResponse",
+    "LeaseResponse",
+    "MessageLease",
+    "VisibilityLease",
+    "StartLeaseResponse",
+    "ReceiptResponse",
+    "StartReceiptResponse",
+    "ArtifactResponse"
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "RuntimeSnapshot": {
+      "type": "object",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "truncated": {
+          "default": false,
+          "type": "boolean"
+        },
+        "statuses": {
+          "maxItems": 1000,
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RuntimeStatus"
+          }
+        },
+        "dashboard": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/DashboardSnapshot"
+            }
+          ]
+        },
+        "snapshot_trace": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SnapshotTrace"
+            }
+          ]
+        }
+      },
+      "required": [
+        "available",
+        "partial",
+        "truncated",
+        "statuses"
+      ],
+      "additionalProperties": false
+    },
+    "RuntimeStatus": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "status": {
+          "$ref": "#/definitions/Status"
+        },
+        "completion": {
+          "$ref": "#/definitions/Completion"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Reason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "updated_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "can_message": {
+          "type": "boolean"
+        },
+        "last_user_message_id": {
+          "default": null,
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_user_ms": {
+          "default": 0,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "top_level": {
+          "default": true,
+          "type": "boolean"
+        },
+        "attention_assessed": {
+          "default": false,
+          "type": "boolean"
+        },
+        "directory": {
+          "default": null,
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "health": {
+          "$ref": "#/definitions/Health"
+        },
+        "turn_started_at": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_progress_at": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_progress_kind": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProgressKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "in_flight": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InFlight"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "session_id",
+        "status",
+        "completion",
+        "reason",
+        "updated_at",
+        "can_message",
+        "last_user_message_id",
+        "last_user_ms",
+        "top_level",
+        "attention_assessed",
+        "directory",
+        "health"
+      ],
+      "additionalProperties": false
+    },
+    "Status": {
+      "type": "string",
+      "enum": [
+        "working",
+        "needs_you",
+        "done",
+        "scheduled",
+        "unknown"
+      ]
+    },
+    "Completion": {
+      "default": "unconfirmed",
+      "type": "string",
+      "enum": [
+        "unconfirmed",
+        "task_done",
+        "project_done"
+      ]
+    },
+    "Reason": {
+      "type": "string",
+      "enum": [
+        "question",
+        "approval",
+        "failed",
+        "reply"
+      ]
+    },
+    "Health": {
+      "default": "unknown",
+      "type": "string",
+      "enum": [
+        "running",
+        "idle",
+        "potentially_stalled",
+        "failed",
+        "unknown"
+      ]
+    },
+    "ProgressKind": {
+      "type": "string",
+      "enum": [
+        "tool",
+        "shell",
+        "text"
+      ]
+    },
+    "InFlight": {
+      "type": "string",
+      "enum": [
+        "tool",
+        "shell"
+      ]
+    },
+    "DashboardSnapshot": {
+      "type": "object",
+      "properties": {
+        "dashboard_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "captured_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "terminal_title": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "filter": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "view": {
+          "type": "string",
+          "enum": [
+            "status",
+            "directory"
+          ]
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "sessions": {
+          "maxItems": 1000,
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DashboardSession"
+          }
+        },
+        "groups": {
+          "maxItems": 1000,
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DashboardGroup"
+          }
+        }
+      },
+      "required": [
+        "dashboard_id",
+        "captured_at",
+        "terminal_title",
+        "filter",
+        "view",
+        "partial",
+        "sessions",
+        "groups"
+      ],
+      "additionalProperties": false
+    },
+    "DashboardSession": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "provider": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "directory": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "directory_id": {
+          "type": "string",
+          "maxLength": 4100
+        },
+        "directory_path": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "directory_label": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "category": {
+          "$ref": "#/definitions/DashboardCategory"
+        },
+        "group_key": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "listed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "session_id",
+        "title",
+        "provider",
+        "directory",
+        "directory_id",
+        "directory_path",
+        "directory_label",
+        "category",
+        "group_key",
+        "listed"
+      ],
+      "additionalProperties": false
+    },
+    "DashboardCategory": {
+      "type": "string",
+      "enum": [
+        "needs_input",
+        "working",
+        "task_done",
+        "project_done",
+        "idle",
+        "ready_for_review",
+        "scheduled",
+        "paused",
+        "unknown"
+      ]
+    },
+    "DashboardGroup": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "listed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "total",
+        "listed"
+      ],
+      "additionalProperties": false
+    },
+    "SnapshotTrace": {
+      "type": "object",
+      "properties": {
+        "read_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "read_source": {
+          "type": "string",
+          "enum": [
+            "desktop",
+            "connector"
+          ]
+        },
+        "desktop_generated_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "desktop_session_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "desktop_publish_result": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "no_state_directory",
+            "mkdir_failed",
+            "serialize_failed",
+            "oversized",
+            "write_failed",
+            "rename_failed"
+          ]
+        },
+        "read_result": {
+          "type": "string",
+          "enum": [
+            "accepted",
+            "missing",
+            "expired",
+            "invalid",
+            "oversized",
+            "clock_ahead",
+            "read_error",
+            "refresh_failed"
+          ]
+        },
+        "previous_upload_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "previous_upload_result": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "failed",
+            "legacy_retry"
+          ]
+        }
+      },
+      "required": [
+        "read_at",
+        "read_source",
+        "read_result"
+      ],
+      "additionalProperties": false
+    },
+    "Message": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "role": {
+          "$ref": "#/definitions/Role"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "updated_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "order",
+        "created_at",
+        "updated_at",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "Role": {
+      "type": "string",
+      "enum": [
+        "user",
+        "assistant"
+      ]
+    },
+    "Session": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "archived": {
+          "type": "boolean"
+        },
+        "visible_before": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "deleted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "title",
+        "archived",
+        "visible_before",
+        "deleted"
+      ],
+      "additionalProperties": false
+    },
+    "Batch": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "const": 1
+        },
+        "batch_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "kind": {
+          "$ref": "#/definitions/BatchKind"
+        },
+        "from": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "through": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "upload_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "chunk": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "session": {
+          "$ref": "#/definitions/Session"
+        },
+        "messages": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Message"
+          }
+        },
+        "delete_ids": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
+      "required": [
+        "version",
+        "batch_id",
+        "session_id",
+        "kind",
+        "from",
+        "through",
+        "session",
+        "messages",
+        "delete_ids"
+      ],
+      "additionalProperties": false
+    },
+    "BatchKind": {
+      "type": "string",
+      "enum": [
+        "baseline",
+        "delta",
+        "replace"
+      ]
+    },
+    "ReadContext": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "const": 1
+        },
+        "anchor_order": {
+          "type": "integer",
+          "minimum": -1,
+          "maximum": 9007199254740991
+        },
+        "anchor_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "prefix_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "visible_before": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "anchor_order",
+        "anchor_bytes",
+        "prefix_hash",
+        "visible_before"
+      ],
+      "additionalProperties": false
+    },
+    "CursorPointer": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "cursor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "session_id",
+        "cursor"
+      ],
+      "additionalProperties": false
+    },
+    "CursorRequest": {
+      "type": "object",
+      "properties": {
+        "sessions": {
+          "maxItems": 4000,
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CursorPointer"
+          }
+        }
+      },
+      "required": [
+        "sessions"
+      ],
+      "additionalProperties": false
+    },
+    "CheckedRequest": {
+      "type": "object",
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "behind": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "behind_since": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "EmptyRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "ProbeResult": {
+      "type": "object",
+      "properties": {
+        "probe_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RuntimeStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "probe_id",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "AckRequest": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "message_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "status": {
+          "$ref": "#/definitions/AckStatus"
+        }
+      },
+      "required": [
+        "operation_id",
+        "message_id",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "AckStatus": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "needs_confirmation",
+        "failed"
+      ]
+    },
+    "StartAckRequest": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "status": {
+          "$ref": "#/definitions/StartAckStatus"
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-z_]{1,40}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "operation_id",
+        "status",
+        "session_id",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "StartAckStatus": {
+      "type": "string",
+      "enum": [
+        "started",
+        "created_not_started",
+        "failed",
+        "uncertain"
+      ]
+    },
+    "VerifyRequest": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        },
+        "cursor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "session_id",
+        "hash"
+      ],
+      "additionalProperties": false
+    },
+    "PairStart": {
+      "type": "object",
+      "properties": {
+        "device_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,100}$"
+        },
+        "database_epoch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,100}$"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 100
+        }
+      },
+      "required": [
+        "device_id",
+        "database_epoch",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "PairToken": {
+      "type": "object",
+      "properties": {
+        "device_code": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "device_code"
+      ],
+      "additionalProperties": false
+    },
+    "ArtifactUpload": {
+      "type": "object",
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[^/\\\\\\x00-\\x1f\\x7f]+$"
+        },
+        "mime_type": {
+          "$ref": "#/definitions/MimeType"
+        },
+        "blob": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 682668,
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        },
+        "confirmed": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "artifact_id",
+        "session_id",
+        "title",
+        "name",
+        "mime_type",
+        "blob",
+        "confirmed"
+      ],
+      "additionalProperties": false
+    },
+    "MimeType": {
+      "type": "string",
+      "enum": [
+        "text/html",
+        "text/plain",
+        "image/png",
+        "image/jpeg",
+        "application/pdf",
+        "application/zip"
+      ]
+    },
+    "OkResponse": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": false
+    },
+    "PairStartResponse": {
+      "type": "object",
+      "properties": {
+        "device_code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verification_uri": {
+          "type": "string",
+          "format": "uri"
+        },
+        "expires_in": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "interval": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "device_code",
+        "verification_uri",
+        "expires_in",
+        "interval"
+      ],
+      "additionalProperties": false
+    },
+    "PairTokenResponse": {
+      "type": "object",
+      "properties": {
+        "access_token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "token_type": {
+          "type": "string",
+          "const": "Bearer"
+        },
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "device_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "database_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "access_token",
+        "token_type",
+        "expires_at",
+        "owner_id",
+        "device_id",
+        "database_epoch"
+      ],
+      "additionalProperties": false
+    },
+    "BatchResponse": {
+      "type": "object",
+      "properties": {
+        "batch_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "through": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "next_chunk": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "batch_id",
+        "session_id",
+        "committed",
+        "through",
+        "next_chunk"
+      ],
+      "additionalProperties": false
+    },
+    "CursorsResponse": {
+      "type": "object",
+      "properties": {
+        "mismatch": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
+      "required": [
+        "mismatch"
+      ],
+      "additionalProperties": false
+    },
+    "VerifyResponse": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "match": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "missing",
+            "match",
+            "differs"
+          ]
+        },
+        "cloud_cursor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "cloud_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "session_id",
+        "match",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "PollResponse": {
+      "type": "object",
+      "properties": {
+        "pending": {
+          "type": "boolean"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "active_until": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "runtime_alert": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RuntimeAlert"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "probe": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "probe_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "session_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "required": [
+                "probe_id",
+                "session_id"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "pending",
+        "generation",
+        "active_until"
+      ],
+      "additionalProperties": false
+    },
+    "RuntimeAlert": {
+      "type": "object",
+      "properties": {
+        "incident": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "stale_for_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "incident",
+        "stale_for_ms"
+      ],
+      "additionalProperties": false
+    },
+    "LeaseResponse": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/MessageLease"
+                },
+                {
+                  "$ref": "#/definitions/ConfirmationLease"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "visibility": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/VisibilityLease"
+            }
+          ]
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "MessageLease": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "message_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50000
+        },
+        "base_cursor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "context": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReadContext"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "operation_id",
+        "session_id",
+        "message_id",
+        "text",
+        "base_cursor",
+        "expires_at"
+      ],
+      "additionalProperties": false
+    },
+    "ConfirmationLease": {
+      "type": "object",
+      "properties": {
+        "needs_confirmation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "needs_confirmation"
+      ],
+      "additionalProperties": false
+    },
+    "VisibilityLease": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "message_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "action": {
+          "$ref": "#/definitions/VisibilityAction"
+        },
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "operation_id",
+        "session_id",
+        "message_id",
+        "action",
+        "expires_at"
+      ],
+      "additionalProperties": false
+    },
+    "VisibilityAction": {
+      "type": "string",
+      "enum": [
+        "hide",
+        "unhide"
+      ]
+    },
+    "StartLeaseResponse": {
+      "type": "object",
+      "properties": {
+        "start": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StartLease"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "start"
+      ],
+      "additionalProperties": false
+    },
+    "StartLease": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "directory": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "operation_id",
+        "directory",
+        "text",
+        "expires_at"
+      ],
+      "additionalProperties": false
+    },
+    "ReceiptResponse": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "status": {
+          "$ref": "#/definitions/DeliveryStatus"
+        },
+        "message_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "delivery_confirmed": {
+          "type": "boolean"
+        },
+        "next_action": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "operation_id",
+        "session_id",
+        "status",
+        "message_id",
+        "expires_at",
+        "delivery_confirmed",
+        "next_action"
+      ],
+      "additionalProperties": false
+    },
+    "DeliveryStatus": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "leased",
+        "accepted",
+        "needs_confirmation",
+        "failed",
+        "expired",
+        "uncertain",
+        "cancelled"
+      ]
+    },
+    "StartReceiptResponse": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "status": {
+          "$ref": "#/definitions/StartStatus"
+        },
+        "directory": {
+          "type": "string"
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "started": {
+          "type": "boolean"
+        },
+        "prompt_accepted": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "next_action": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "operation_id",
+        "status",
+        "directory",
+        "session_id",
+        "started",
+        "prompt_accepted",
+        "reason",
+        "expires_at",
+        "next_action"
+      ],
+      "additionalProperties": false
+    },
+    "StartStatus": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "leased",
+        "started",
+        "created_not_started",
+        "failed",
+        "expired",
+        "uncertain",
+        "cancelled"
+      ]
+    },
+    "ArtifactResponse": {
+      "type": "object",
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "artifact_id",
+        "sha256",
+        "bytes"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "title": "BridgeContracts"
+}

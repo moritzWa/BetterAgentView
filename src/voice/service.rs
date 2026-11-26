@@ -1089,7 +1089,7 @@ impl Inner {
                             let _ =
                                 outgoing.send(json!({"type": "send", "event": event}).to_string());
                         };
-                        let mut registered_watches_only = true;
+                        let mut nothing_to_say = true;
                         for call_ in &calls {
                             let args: Value =
                                 serde_json::from_str(&call_.arguments).unwrap_or(Value::Null);
@@ -1109,13 +1109,12 @@ impl Inner {
                                     "result": result.to_string(),
                                 }),
                             );
-                            registered_watches_only &=
-                                call::is_registered_watch(&call_.name, &result);
+                            nothing_to_say &= call::needs_no_reply(&call_.name, &result);
                             send(call::function_output(&call_.call_id, &result));
                         }
                         // Grok fills a turn it has nothing to say in with a
                         // placeholder like "(no response)", and says it aloud.
-                        if !(provider == Provider::Xai && registered_watches_only) {
+                        if !(provider == Provider::Xai && nothing_to_say) {
                             send(call::continue_response());
                         }
                         if calls.iter().any(|call| call.name == "end_call") {
@@ -1309,11 +1308,12 @@ impl PageSink for Sink {
 /// How long the page may wait for the microphone before the person is told why.
 const MIC_PROMPT_WAIT: Duration = Duration::from_secs(6);
 const MIC_WAIT_NOTICE: &str = "Waiting for the microphone: macOS asks once. Allow it for your terminal (or the browser) in the dialog or in System Settings, Privacy & Security, Microphone.";
-const MIC_NOTICE: &str = "Allow the microphone in the Agent View voice tab.";
+const MIC_NOTICE: &str = "Allow the microphone in the BetterAgentView voice tab.";
 /// A microphone that is exactly silent this long, with nothing heard yet, is not on.
 const DEAD_MIC_SECONDS: f64 = 20.0;
 const DEAD_MIC_NOTICE: &str = "No sound from the microphone. On a Mac, allow your terminal or the browser under System Settings, Privacy & Security, Microphone.";
-const CLICK_NOTICE: &str = "Click the Agent View voice tab once so the browser lets it play sound.";
+const CLICK_NOTICE: &str =
+    "Click the BetterAgentView voice tab once so the browser lets it play sound.";
 
 fn sentence(reason: &str) -> String {
     let mut chars = reason.chars();
@@ -1801,6 +1801,46 @@ mod tests {
     }
 
     #[test]
+    fn a_grok_turn_that_only_keeps_listening_gets_no_reply_request() {
+        let rig = rig(grok(), Some("xai-test"));
+        let (id, inbox) = page(&rig);
+        say(
+            &rig,
+            id,
+            json!({"type": "hello", "ready": true, "hidden": true}),
+        );
+        rig.service.toggle();
+        say(&rig, id, json!({"type": "offer", "provider": "xai"}));
+        for event in [
+            json!({"type": "session.updated"}),
+            json!({"type": "response.created"}),
+            json!({"type": "response.function_call_arguments.done", "call_id": "c1", "name": "keep_listening", "arguments": "{}"}),
+            json!({"type": "response.done"}),
+        ] {
+            say(&rig, id, json!({"type": "event", "event": event}));
+        }
+        let mut seen = Vec::new();
+        until(|| {
+            seen.extend(
+                inbox
+                    .try_iter()
+                    .filter_map(|m| serde_json::from_str::<Value>(&m).ok()),
+            );
+            seen.iter().any(|m| m["event"]["item"]["call_id"] == "c1")
+        });
+        thread::sleep(Duration::from_millis(400));
+        seen.extend(
+            inbox
+                .try_iter()
+                .filter_map(|m| serde_json::from_str::<Value>(&m).ok()),
+        );
+        assert!(
+            !seen.iter().any(|m| m["event"]["type"] == "response.create"),
+            "Grok would say the silence aloud"
+        );
+    }
+
+    #[test]
     fn changing_the_speed_in_a_grok_call_tells_grok_and_openai_has_no_speed() {
         let call = rig(grok(), Some("xai-test"));
         let (id, inbox) = page(&call);
@@ -2023,6 +2063,21 @@ mod tests {
         );
         call.service.toggle();
         say(&call, id, json!({"type": "offer", "sdp": "x"}));
+        // A real page cannot report session.started before receiving the SDP
+        // answer. Otherwise the first request's worker can still be pending
+        // when the test pauses and starts its second request, reversing them.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let message: Value = serde_json::from_str(
+                &inbox
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    .expect("the first call's SDP answer"),
+            )
+            .unwrap();
+            if message["type"] == "answer" {
+                break;
+            }
+        }
         say(
             &call,
             id,
@@ -2140,7 +2195,7 @@ mod tests {
         }
         {
             let mut infos = rig.host.infos.lock().unwrap();
-            infos[1].state = SessionState::Completed;
+            infos[1].state = SessionState::TaskDone;
             infos[1].tail = "Merged.".into();
         }
         let spoken = (0..40).find_map(|_| {
@@ -2338,7 +2393,7 @@ mod tests {
             .status()
             .notice
             .unwrap()
-            .contains("Click the Agent View voice tab"));
+            .contains("Click the BetterAgentView voice tab"));
         say(&rig, id, json!({"type": "audio", "on": true}));
         assert_eq!(rig.service.status().notice, None);
     }

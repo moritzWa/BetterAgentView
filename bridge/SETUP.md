@@ -46,6 +46,67 @@ This updates the same Worker, not a new service. Keep `name`, `ISSUER`, the
 Durable Object binding/class and migration history unchanged. Do not delete or
 recreate the Worker or replace its secrets. No push or PR automatically deploys.
 
+Wire types, validation, MCP inputs, routes and limits share one [contract](contracts/README.md).
+Edit its TypeScript source and run `npm run contracts:generate`. Tests and builds
+reject generated drift and type errors before deployment.
+
+`npm run deploy` now runs the installed-connector live gate after deployment.
+Do not deploy directly with Wrangler: that bypasses the gate. A failed gate means
+the rollout is not healthy, even if Cloudflare accepted the upload.
+
+The gate requires the paired Mac, its running installed bridge, native OpenCode V2,
+and the existing operator `neonctl` login. It creates one disposable session and a
+bounded sleep process. Fresh MCP reads must show idle, working, idle, then removal.
+It never calls a model or changes another session. Temporary read credentials are
+removed on success and failure. Cleanup failure also fails the gate.
+
+Run `npm run verify:live` to repeat it without deploying. Your Mac's
+`~/.claude/scripts/install-latest.sh agentview` runs this same gate after replacing
+the binary and restarting only the bridge. It reports installation success only
+after the gate passes. A receipt in `~/.local/state/agentview/bridge/release-check.json`
+records the running binary hash and cloud observation timestamps, not secrets.
+The receipt proves that rollout, not perpetual health. Failed checks remove it.
+
+After rollout, each authenticated connector poll checks runtime publication age
+independently of heartbeats. A continuously online Mac alerts after two minutes
+without a usable runtime snapshot while the phone is active, or 20 minutes while
+idle (normal idle sync is 15 minutes). Time spent idle does not count toward the
+active deadline. Partial snapshots do not erase the last usable time. The incident
+log records snapshot age, active-window age, poll gap, and snapshot availability.
+Startup/wake gets a two-minute grace period;
+offline gaps reset continuity. The cloud logs one incident and includes it in poll
+responses. The installed Mac bridge shows a notification once per incident, with
+durable deduplication across restarts, and logs recovery. No chat text, tokens or
+session titles are included. A Mac that is asleep or wholly offline cannot show
+this local notification; presence remains offline/unknown in that case.
+
+This is an operator gate for the private bridge. Public GitHub release jobs do not
+have the owner's Mac or account credentials; their synthetic tests are not a live
+private-bridge pass.
+
+## Required ChatGPT client check
+
+Do this after every BetterAgentView MCP deployment. The installed-connector gate and
+raw MCP tests do not exercise ChatGPT's tools or approval UI.
+
+1. Create a disposable native OpenCode session in an empty test directory and
+   wait for it to appear in the dashboard and history mirror. Open a fresh,
+   authenticated ChatGPT web or desktop chat with the deployed BetterAgentView app.
+   Refresh the app's tools if ChatGPT is using an old schema, then start another
+   fresh chat.
+2. Ask ChatGPT to call `list_visible_sessions` for that directory and send a
+   unique, harmless instruction to the test session. Check that it passed the
+   exact row `id` to `send_session_message` without stripping the prefix. Send and start should not ask for per-action
+   approval after the owner gives the instruction. Both still require the write grant.
+3. Record the operation and message IDs, verify native admission, then check the
+   target OpenCode history for exactly one user message with that ID and text.
+   A queued receipt or a ChatGPT success claim is not proof. If verifying task
+   completion, require a new reply tied to that input.
+4. Repeat with a different marker in voice if the client offers BetterAgentView in
+   voice mode. Check that no on-screen approval is required. If blocked, record the client,
+   what was tried, and what prevented verification. Record the deployed Worker
+   version and the text and voice results separately. Remove only your fixture.
+
 ## Provisioning is not migration
 
 `private/provision.mjs` is an operator tool for initial setup or explicit schema

@@ -8,8 +8,25 @@ and released versions are intended to follow Semantic Versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- The session list scrolls as a pane instead of jumping a page at a time, with
+  "↑/↓ N more sessions" lines where it is cut off. The mouse works on the
+  dashboard: hover selects a row, a click opens it, the wheel scrolls. Hold
+  Shift to select text.
+- `Ctrl+G` with nothing typed ranks sessions by how often you opened them from
+  the picker, weighted by recent activity, instead of by last update alone.
+- The `Ctrl+G` popup grays out the dashboard behind it.
+
 ### Fixed
 
+- A model that should be used once is no longer remembered. Choosing an
+  Abliteration model (or any entry in `do_not_remember` in
+  `~/.config/agentview/model-memory.json`, by provider such as `groq` or by
+  exact model) applies to the next new session only; cancelling the composer
+  drops it, and later sessions keep the last normal model or the harness
+  default. A saved choice of that kind from an older version reads as the
+  default and is removed from `last-harness.json`.
 - Reminder rows share the same name, status and preview columns as other rows.
   Scheduled sits directly below Paused in both views. Automated shell-exit
   notifications no longer clear defers as though the person sent a new message.

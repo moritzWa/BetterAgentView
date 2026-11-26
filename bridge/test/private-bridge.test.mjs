@@ -11,7 +11,7 @@ import { readContext } from '../private/context.mjs';
 import { SyncStore } from '../sync/store.mjs';
 import { digest } from '../sync/projection.mjs';
 
-let db,auth,gate,env,namespace;
+let db,auth,gate,env,namespace,gateStorage;
 const writerToken='s'.repeat(43),readerToken='r'.repeat(43);
 const state={title:'Synthetic penguin project',archived:false,deleted:false,visible_before:null};
 function storage() {
@@ -23,7 +23,8 @@ before(async()=>{
   db=new PGlite();
   await db.exec(await readFile(new URL('../sync/schema.sql',import.meta.url),'utf8'));
   await db.exec(await readFile(new URL('../private/schema.sql',import.meta.url),'utf8'));
-  const object=new WakeGate({storage:storage()});
+  gateStorage=storage();
+  const object=new WakeGate({storage:gateStorage});
   namespace={idFromName:x=>x,get:()=>({fetch:(url,init)=>object.fetch(new Request(url,init))})};
   gate=gateClient(namespace,OWNER);
   env={ISSUER:'https://bridge.invalid',GOOGLE_CLIENT_ID:'test-google-client',GOOGLE_CLIENT_SECRET:'synthetic-secret',GATE:namespace,DATABASE_URL:'synthetic'};
@@ -84,21 +85,45 @@ test('pairing requires Google owner consent and is consumed once',async()=>{
 });
 test('MCP exposes real read/search tools but rejects ungranted sends and bypass attempts',async()=>{
   const app=application({database:async()=>({query:(...args)=>db.query(...args),transaction:fn=>db.transaction(fn),close:async()=>{}})});
-  const rpc=async(method,params={})=>{
+  const readOnly='x'.repeat(43);
+  await db.query('INSERT INTO av_credentials (token_hash,owner_id,device_id,database_epoch,audience,expires_at,scopes) VALUES ($1,$2,$3,$4,$5,$6,$7)',[await digest(readOnly),OWNER,'device123','epoch123','read',Date.now()+3600_000,'history:read']);
+  const rpc=async(method,params={},token=readerToken)=>{
     await gate.checked(await digest(writerToken));
-    const response=await app.fetch(req('/mcp',{method:'POST',headers:{authorization:`Bearer ${readerToken}`,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})}),env);
+    const response=await app.fetch(req('/mcp',{method:'POST',headers:{authorization:`Bearer ${token}`,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})}),env);
     assert.equal(response.status,200);return response.json();
   };
   const tools=(await rpc('tools/list')).result.tools;
-  assert.equal(tools.find(t=>t.name==='send_session_message').annotations.readOnlyHint,false);
+  const sharedInputs=JSON.parse(await readFile(new URL('../contracts/mcp-inputs.schema.json',import.meta.url),'utf8'));
+  assert.deepEqual(tools.map(t=>t.name).sort(),Object.keys(sharedInputs).sort());
+  for(const tool of tools) {
+    const expected=sharedInputs[tool.name];
+    assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(),Object.keys(expected.properties).sort(),tool.name);
+    assert.deepEqual([...(tool.inputSchema.required??[])].sort(),[...(expected.required??[])].sort(),tool.name);
+  }
+  for(const name of ['send_session_message','start_session']) {
+    const tool=tools.find(t=>t.name===name);
+    assert.deepEqual(tool.annotations,{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false});
+    assert(!('confirmed' in tool.inputSchema.properties));
+  }
+  for(const name of ['cancel_message','cancel_start','hide_session','unhide_session']) {
+    assert(tools.find(t=>t.name===name).inputSchema.required.includes('confirmed'));
+  }
+  const sendId=tools.find(t=>t.name==='send_session_message').inputSchema.properties.session_id;
+  for(const name of ['hide_session','unhide_session'])assert.deepEqual(tools.find(t=>t.name===name).inputSchema.properties.session_id,sendId);
   await gate.poll(await digest(writerToken));
   await gate.setRuntime(await digest(writerToken),{available:true,partial:false,statuses:[{session_id:'ses_fixture',status:'needs_you',reason:'question',updated_at:123,can_message:false}]});
   const waiting=JSON.parse((await rpc('tools/call',{name:'list_sessions',arguments:{status:'needs_you'}})).result.content[0].text);
   assert.equal(waiting.sessions.length,1);assert.equal(waiting.sessions[0].reason,'question');assert.equal(waiting.status_fresh,true);
   const search=await rpc('tools/call',{name:'search_history',arguments:{query:'penguin'}});
   assert.match(search.result.content[0].text,/canary visible/);
-  const forbidden=await rpc('tools/call',{name:'send_session_message',arguments:{operation_id:'op-short',session_id:'ses_fixture',text:'Do not run',base_cursor:10,confirmed:false}});
-  assert(forbidden.error || forbidden.result?.isError);
+  for(const [name,args] of [
+    ['send_session_message',{session_id:'ses_fixture',base_cursor:10}],
+    ['start_session',{directory:'/Users/m/project'}],
+  ]) {
+    const forbidden=await rpc('tools/call',{name,arguments:{...args,operation_id:'ungranted_operation',text:'Do not run'}},readOnly);
+    assert.equal(forbidden.result.isError,true);
+    assert.equal(JSON.parse(forbidden.result.content[0].text).error,'write_permission_required');
+  }
   assert.equal((await app.fetch(req('/mcp'),env)).status,401);
   const store=new SyncStore(db),writer=await store.authenticate(writerToken,'sync');
   const pages=Array.from({length:30},(_,i)=>({id:`page_${i}`,role:i===0?'user':'assistant',order:(i+1)*100,created_at:i,updated_at:i,text:`Visible message ${i}`}));
@@ -133,6 +158,44 @@ test('MCP exposes real read/search tools but rejects ungranted sends and bypass 
   await gate.setRuntime(await digest(writerToken),{available:true,partial:false,statuses:[{...native,last_user_message_id:sent.message_id}]});
   const completed=await receiptCall();assert.equal(completed.reply_available,true);assert.equal(completed.completion_confirmed,true);assert.equal(completed.reply_after,3);
 });
+test('visibility tools require confirmation and a write grant, then report queued until native ACK',async()=>{
+  await gateStorage.put('last_seen:device123|epoch123',Date.now()-120_000);
+  const app=application({database:async()=>({query:(...args)=>db.query(...args),transaction:fn=>db.transaction(fn),close:async()=>{}})});
+  const readOnly='v'.repeat(43);
+  await db.query('INSERT INTO av_credentials (token_hash,owner_id,device_id,database_epoch,audience,expires_at,scopes) VALUES ($1,$2,$3,$4,$5,$6,$7)',[await digest(readOnly),OWNER,'device123','epoch123','read',Date.now()+3600_000,'history:read']);
+  const post=async(path,token,payload)=>(await app.fetch(req(path,{method:'POST',headers:{authorization:'Bearer '+token,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify(payload)}),env)).json();
+  const call=(name,args,token=readerToken)=>post('/mcp',token,{jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}});
+  const view=rpc=>JSON.parse(rpc.result.content[0].text);
+  const hide={operation_id:'visibility_hide',session_id:'codex:local:fixture',confirmed:true};
+  const unhide={...hide,operation_id:'visibility_unhide'};
+  assert.equal((await call('hide_session',{...hide,session_id:'ses_bad\u0000id'})).result.content[0].text,'invalid_visibility_request');
+  for(const [name,args] of [['hide_session',hide],['unhide_session',unhide]]) {
+    const missing=await call(name,{...args,confirmed:undefined});
+    assert(missing.error||missing.result?.isError);
+    const denied=await call(name,args,readOnly);
+    assert(denied.result.isError);assert.equal(denied.result.content[0].text,'write_permission_required');
+  }
+  assert.equal((await db.query("SELECT 1 FROM av_outbox WHERE operation_id LIKE 'visibility_%'")).rows.length,0);
+  const status=async operation_id=>view(await call('session_visibility_status',{operation_id}));
+  const hideResult=view(await call('hide_session',hide));
+  assert.equal(hideResult.status,'queued');assert.match(hideResult.say_to_owner,/not confirmed/);
+  assert.deepEqual(view(await call('hide_session',hide)),hideResult);
+  assert.equal((await call('unhide_session',hide)).result.content[0].text,'operation_id_conflict');
+  assert.equal(view(await call('unhide_session',unhide)).status,'queued');
+  const lease='/v1/connector/lease',capable=lease+'?session_visibility=1';
+  assert.deepEqual(await post(lease,writerToken,{}),{message:null});
+  const first=await post(capable,writerToken,{});
+  assert.equal(first.message,null);assert.equal(first.visibility.action,'hide');
+  assert.equal(first.visibility.session_id,hide.session_id);assert.equal(first.visibility.text,undefined);
+  assert.deepEqual(await post(capable,writerToken,{}),{message:null});
+  assert.equal((await status(hide.operation_id)).status,'queued');
+  const ack=({operation_id,message_id})=>post('/v1/connector/ack',writerToken,{operation_id,message_id,status:'accepted'});
+  await ack(first.visibility);
+  assert.equal((await status(hide.operation_id)).status,'applied');
+  const second=(await post(capable,writerToken,{})).visibility;
+  assert.equal(second.action,'unhide');await ack(second);
+  assert.equal((await status(unhide.operation_id)).status,'applied');
+});
 test('outbox is idempotent, source-scoped, ordered and checks stale context',async()=>{
   const store=new SyncStore(db),reader=await store.authenticate(readerToken,'read'),writer=await store.authenticate(writerToken,'sync'),outbox=new Outbox(db,gate);
   const input={operation_id:'operation123',session_id:'ses_fixture',text:'Synthetic no-op instruction',base_cursor:10};
@@ -146,6 +209,15 @@ test('outbox is idempotent, source-scoped, ordered and checks stale context',asy
   await outbox.ack(writer,{operation_id:leased.operation_id,message_id:leased.message_id,status:'accepted'});
   assert.equal((await outbox.lease(writer)).operation_id,'operation456');
   assert.equal((await outbox.status(reader,'operation123')).status,'accepted');
+});
+test('a send without base_cursor takes the current session state in one call and stays idempotent',async()=>{
+  const store=new SyncStore(db),reader=await store.authenticate(readerToken,'read'),outbox=new Outbox(db,gate);
+  const input={operation_id:'nocursor123',session_id:'ses_fixture',text:'Voice instruction without a prior session_brief'};
+  const first=await outbox.send(reader,input);
+  assert.deepEqual(await outbox.send(reader,input),first);
+  assert.equal(Number((await db.query("SELECT base_cursor FROM av_outbox WHERE operation_id='nocursor123'")).rows[0].base_cursor),10);
+  await assert.rejects(outbox.send(reader,{...input,text:'changed'}),/operation_id_conflict/);
+  await outbox.cancel(reader,'nocursor123');
 });
 
 test('a queued offline message survives later appended turns but not edits or reverts',async()=>{
@@ -177,6 +249,9 @@ test('runtime snapshot is scoped, rejects chat payloads, and does not query Neon
   assert.equal((await post({...snapshot,statuses:[{...snapshot.statuses[0],directory:'/projects/example'}]})).status,200);
   assert.equal((await gate.runtime('runtime-device|runtime-epoch')).statuses[0].directory,'/projects/example');
   assert.deepEqual((await gate.runtime('device123|epoch123')).statuses,previous);
+  const native=JSON.parse(await readFile(new URL('./fixtures/runtime-status.json',import.meta.url),'utf8'));
+  assert.equal((await post({...snapshot,statuses:[native]})).status,200);
+  assert.equal((await gate.runtime('runtime-device|runtime-epoch')).statuses[0].completion,'unconfirmed');
   assert.equal((await post({...snapshot,statuses:[{...snapshot.statuses[0],tool_output:'PRIVATE'}]})).status,400);
 });
 

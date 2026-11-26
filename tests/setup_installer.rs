@@ -6,6 +6,19 @@ use std::path::Path;
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, MutexGuard};
+
+fn serialize_setup_test() -> MutexGuard<'static, ()> {
+    // These tests spawn commands and a real-PTY login helper. If a fork overlaps
+    // a sibling test writing an executable fixture, it temporarily holds
+    // its writable fd even after the writer closes it. Linux then rejects
+    // executing that fixture with ETXTBSY until the unrelated child execs.
+    // Keep fixture writes and process handoffs out of each other's fork window.
+    static SERIAL: Mutex<()> = Mutex::new(());
+    SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 #[derive(Clone, Copy)]
 enum InstallerKind {
@@ -140,6 +153,7 @@ fn configure(command: &mut Command, root: &Path, bin: &Path, executable: &Path) 
 
 #[test]
 fn every_missing_harness_requires_consent_then_runs_only_its_official_installer() {
+    let _serial = serialize_setup_test();
     for case in SETUP_CASES {
         let directory = tempfile::tempdir().expect("create isolated setup home");
         let bin = directory.path().join("bin");
@@ -251,6 +265,7 @@ printf '%s\n' 'npm install progress 100%'
 
 #[test]
 fn failed_downloads_and_installers_never_report_success_or_start_login() {
+    let _serial = serialize_setup_test();
     for case in SETUP_CASES {
         for phase in ["download", "install"] {
             let directory = tempfile::tempdir().unwrap();
@@ -294,6 +309,7 @@ fn failed_downloads_and_installers_never_report_success_or_start_login() {
 #[cfg(target_os = "linux")]
 #[test]
 fn every_installed_harness_hands_the_exact_native_login_command_to_a_real_pty() {
+    let _serial = serialize_setup_test();
     for case in SETUP_CASES {
         let directory = tempfile::tempdir().expect("create isolated setup home");
         let bin = directory.path().join("bin");

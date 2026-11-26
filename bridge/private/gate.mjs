@@ -1,5 +1,7 @@
+import {runtimeWatch} from './runtime-watch.mjs';
 /** Durable wake metadata only, never chat text. Idle polls do not connect to Neon. */
 function runtimeBucket(id){let hash=0;for(let i=0;i<id.length;i++)hash=(hash*31+id.charCodeAt(i))>>>0;return hash%64;}
+const CALL_LOG_DAYS=14,CALL_LOG_HOUR_MAX=1500;
 export class WakeGate {
   constructor(state) { this.state=state;this.waiters=new Set(); }
   async fetch(request) {
@@ -21,7 +23,12 @@ export class WakeGate {
       return Response.json({allowed});
     }
     if(path==='/activity') {
-      const now=Date.now();await s.put(`active_until:${p.source}`,now+5*60_000);
+      const now=Date.now(),untilKey='active_until:'+p.source,sinceKey='active_since:'+p.source;
+      await s.transaction(async tx=>{
+        const until=await tx.get(untilKey)??0;
+        const since=until>now?(await tx.get(sinceKey)??now):now;
+        await tx.put({[untilKey]:Math.max(until,now+5*60_000),[sinceKey]:since});
+      });
       for(const wake of this.waiters)wake();
       const seen=await s.get(`last_seen:${p.source}`)??0;
       const historyAge=p.history_ms??5000,runtimeAge=p.runtime_ms??20_000,checks=p.kind==='both'?[['checked',historyAge],['runtime_checked',runtimeAge]]:[[p.kind==='runtime'?'runtime_checked':'checked',p.kind==='runtime'?runtimeAge:historyAge]];
@@ -87,6 +94,49 @@ export class WakeGate {
       const meta=await s.get(`runtime_meta:${p.source}`)??{available:false,partial:false,checked_at:null};
       return Response.json({...meta,statuses:keys.flatMap(k=>JSON.parse(stored.get(k)??'[]'))});
     }
+    if(path==='/call-log') {
+      // Durations and counts only. One key per UTC hour keeps each value far below
+      // the 128 KiB limit; hours older than the retention window are dropped as the
+      // index rolls. The owner reads it with GET /v1/timings.
+      const hour=new Date(p.record.t).toISOString().slice(0,13),key=`calls:${hour}`;
+      const index=await s.get('calls_index')??[],keep=Date.now()-CALL_LOG_DAYS*86400_000;
+      const live=index.filter(h=>Date.parse(h+':00:00Z')>=keep);
+      const bucket=await s.get(key)??[];
+      bucket.push(p.record);
+      const puts={[key]:bucket.slice(-CALL_LOG_HOUR_MAX)};
+      if(!live.includes(hour)){live.push(hour);live.sort();}
+      puts.calls_index=live;
+      await s.put(puts);
+      for(const h of index)if(!live.includes(h))await s.delete(`calls:${h}`);
+      return Response.json({ok:true});
+    }
+    if(path==='/call-log-read') {
+      const since=Date.now()-(p.hours??24)*3600_000,index=(await s.get('calls_index')??[]).filter(h=>Date.parse(h+':59:59Z')>=since);
+      const calls=[];
+      for(let i=0;i<index.length;i+=100) {
+        const keys=index.slice(i,i+100).map(h=>`calls:${h}`),stored=await s.get(keys);
+        for(const k of keys)calls.push(...(stored.get(k)??[]));
+      }
+      return Response.json({calls:calls.filter(c=>c.t>=since),retention_days:CALL_LOG_DAYS});
+    }
+    if(path==='/probe') {
+      // Ask the Mac about ONE session and wait for its answer. The poll that is
+      // already open wakes at once, so this costs one status read on the Mac
+      // instead of waiting for a whole-inventory publication.
+      const now=Date.now(),seen=await s.get(`last_seen:${p.source}`)??0;
+      if(seen<=now-60_000)return Response.json({answered:false,reason:'mac_not_seen'});
+      const probe_id=crypto.randomUUID();
+      await s.put({[`probe:${p.source}`]:{probe_id,session_id:p.session_id,taken:false,expires_at:now+10_000},[`probe_result:${p.source}`]:null});
+      for(const wake of this.waiters)wake();
+      const deadline=now+Math.min(8000,p.max_wait??3000);
+      const read=async()=>{const r=await s.get(`probe_result:${p.source}`);return r&&r.probe_id===probe_id?r:null;};
+      let result=await read();
+      while(!result&&Date.now()<deadline) {
+        await new Promise(resolve=>{let timer;const wake=()=>{clearTimeout(timer);this.waiters.delete(wake);resolve();};this.waiters.add(wake);timer=setTimeout(wake,Math.max(1,deadline-Date.now()));});
+        result=await read();
+      }
+      return Response.json(result?{answered:true,status:result.status,observed_at:result.at,waited_ms:Date.now()-now}:{answered:false,reason:'timeout',waited_ms:Date.now()-now});
+    }
     if(path==='/receipt-signal') {
       const key=`receipts:${p.source}`,recent=await s.get(key)??[];
       await s.put(key,[...recent.filter(r=>r!==p.operation_id),p.operation_id].slice(-32));
@@ -105,13 +155,27 @@ export class WakeGate {
     if(path==='/runtime-write') {
       const {statuses,...meta}=p.snapshot,now=Date.now(),buckets=Array.from({length:64},()=>[]);
       for(const status of statuses)buckets[runtimeBucket(status.session_id)].push(status);
-      const keys=buckets.map((_,i)=>`runtime:${source}:${i}`),old=await s.get(keys);
-      const changed={[`runtime_meta:${source}`]:{...meta,checked_at:now},[`runtime_checked:${source}`]:now,[`last_seen:${source}`]:now};
+      const metaKey=`runtime_meta:${source}`,keys=buckets.map((_,i)=>`runtime:${source}:${i}`);
+      const usable=meta.available&&!meta.partial;
+      const old=await s.get(meta.dashboard&&usable?keys:[...keys,metaKey]);
+      // Native status keeps publishing when the desktop list is not being drawn.
+      // Keep the prior list without renewing its capture time or claiming it is live.
+      const retained=meta.dashboard?null:old.get(metaKey)?.dashboard;
+      const storedAt=meta.dashboard?now:old.get(metaKey)?.dashboard_stored_at;
+      const changed={[metaKey]:{...meta,...(retained?{dashboard:retained,dashboard_retained:true}:{}),...(storedAt?{dashboard_stored_at:storedAt}:{}),checked_at:now},[`runtime_checked:${source}`]:now,[`last_seen:${source}`]:now};
+      // Partial writes are still visible to readers, but neither reset nor
+      // erase the last usable publication for the watchdog. Save the old
+      // stamp only on the transition, not on every successful heartbeat.
+      const previous=old.get(metaKey);
+      if(!usable&&previous?.available&&!previous.partial)
+        changed['runtime_usable:'+source]=previous.checked_at;
       for(let i=0;i<buckets.length;i++) {
         const value=JSON.stringify(buckets[i].sort((a,b)=>a.session_id.localeCompare(b.session_id)));
         if(value!==(old.get(keys[i])??'[]'))changed[keys[i]]=value;
       }
-      await s.put(changed);
+      const event={received_at:now,captured_at:meta.dashboard?.captured_at??null,session_count:meta.dashboard?.sessions.length??null,retained:Boolean(retained)};
+      try{await s.put(changed);}catch(error){console.error('bridge_dashboard_store_failed',event);throw error;}
+      console.info('bridge_dashboard_runtime_stored',{...event,stored_at:Date.now()});
       for(const wake of this.waiters)wake();
       return Response.json({ok:true});
     }
@@ -125,9 +189,22 @@ export class WakeGate {
       await s.put(put);for(const wake of this.waiters)wake();
       return Response.json({ok:true,complete});
     }
+    let probe=null;
     if(path==='/poll') {
-      await s.put(`last_seen:${source}`,Date.now());
-      if(!(await s.get(`pending:${source}`))) {
+      const meta=await s.get(`runtime_meta:${source}`);
+      const old=await s.get('runtime_watch:'+source);
+      const now=Date.now(),watch=runtimeWatch(now,{
+        last_seen:await s.get('last_seen:'+source)??null,
+        runtime_checked:meta?.available&&!meta.partial?(await s.get('runtime_checked:'+source)??null):(await s.get('runtime_usable:'+source)??null),
+        active_until:await s.get('active_until:'+source)??0,
+        active_since:await s.get('active_since:'+source)??null,
+      },old??{});
+      const diagnostic={snapshot_age_ms:watch.stale_for_ms,active_age_ms:watch.active_age_ms,poll_gap_ms:old?now-old.last_poll:null,available:meta?.available??false,partial:meta?.partial??false};
+      if(watch.incident&&watch.incident!==old?.incident)console.error('bridge_runtime_publication_stale',diagnostic);
+      if(!watch.incident&&old?.incident)console.info('bridge_runtime_publication_recovered',diagnostic);
+      await s.put({[`last_seen:${source}`]:now,[`runtime_watch:${source}`]:watch});
+      const probeWaiting=async()=>{const q=await s.get(`probe:${source}`);return Boolean(q&&!q.taken&&q.expires_at>Date.now());};
+      if(!(await s.get(`pending:${source}`))&&!await probeWaiting()) {
         await new Promise(resolve=>{
           let timer;
           const wake=()=>{clearTimeout(timer);this.waiters.delete(wake);resolve();};
@@ -135,8 +212,23 @@ export class WakeGate {
         });
       }
       if(!(await s.get(`token:${p.token_hash}`)))return Response.json({error:'unauthorized'},{status:401});
+      // Hand a waiting probe to exactly one poll.
+      const q=await s.get(`probe:${source}`);
+      if(q&&!q.taken&&q.expires_at>Date.now()) {
+        await s.put(`probe:${source}`,{...q,taken:true});
+        probe={probe_id:q.probe_id,session_id:q.session_id};
+      }
     }
-    return Response.json({principal:credential,pending:await s.get(`pending:${source}`)??false,generation:await s.get(`generation:${source}`)??0,last_seen:await s.get(`last_seen:${source}`)??null,active_until:await s.get(`active_until:${source}`)??0});
+    if(path==='/probe-write') {
+      const q=await s.get(`probe:${source}`);
+      if(q&&q.probe_id===p.result.probe_id) {
+        await s.put(`probe_result:${source}`,{probe_id:q.probe_id,status:p.result.status,at:Date.now()});
+        for(const wake of this.waiters)wake();
+      }
+      return Response.json({ok:true});
+    }
+    const watch=await s.get(`runtime_watch:${source}`);
+    return Response.json({probe,principal:credential,pending:await s.get(`pending:${source}`)??false,generation:await s.get(`generation:${source}`)??0,last_seen:await s.get(`last_seen:${source}`)??null,active_until:await s.get(`active_until:${source}`)??0,runtime_alert:watch?.incident?{incident:watch.incident,stale_for_ms:watch.stale_for_ms}:null});
   }
 }
 
@@ -152,5 +244,6 @@ export function gateClient(namespace,key) {
     presence:source=>call('/presence-read',{source}),changes:source=>call('/changes',{source}),
     activity:(source,wait=false,kind='history',opts={})=>call('/activity',{source,wait,kind,...opts}),
     runtime:source=>call('/runtime-read',{source}),setRuntime:(token_hash,snapshot)=>call('/runtime-write',{token_hash,snapshot}),
-    signalReceipt:(source,operation_id)=>call('/receipt-signal',{source,operation_id}),waitReceipt:(source,operation_id)=>call('/receipt-wait',{source,operation_id}),rate:key=>call('/rate',{key})};
+    signalReceipt:(source,operation_id)=>call('/receipt-signal',{source,operation_id}),waitReceipt:(source,operation_id)=>call('/receipt-wait',{source,operation_id}),rate:key=>call('/rate',{key}),logCall:record=>call('/call-log',{record}),callLog:(hours=24)=>call('/call-log-read',{hours}),
+    probe:(source,session_id,{max_wait=3000}={})=>call('/probe',{source,session_id,max_wait}),probeWrite:(token_hash,result)=>call('/probe-write',{token_hash,result})};
 }

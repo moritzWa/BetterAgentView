@@ -37,10 +37,13 @@ test('every receipt status maps to one state, one honest line and a claim ceilin
 });
 
 test('queued and accepted lines never claim delivery or completion',()=>{
-  const queued=deliveryView({status:'queued'},{mac_seen_recently:false}).say_to_owner;
-  assert(/not delivered/i.test(queued));assert(!/\b(delivered to|sent to|done|finished)\b/i.test(queued.replace(/not delivered/i,'')));
-  const accepted=deliveryView({status:'accepted'},{}).say_to_owner;
-  assert(/not finished/i.test(accepted));
+  for(const mac_seen_recently of [true,false]) {
+    const queued=deliveryView({status:'queued'},{mac_seen_recently}).say_to_owner;
+    assert.match(queued,/^Message saved[.].*automatically/);
+    assert.doesNotMatch(queued,/not delivered|couldn.t deliver|undelivered|failed|the session has it|finished/i);
+    if(!mac_seen_recently)assert.match(queued,/reconnects/);
+  }
+  assert.equal(deliveryView({status:'accepted'}).say_to_owner,'The session has your message.');
   assert.equal(deliveryView({status:'accepted'},{}).claim_ceiling,'accepted');
   assert(ORDER[deliveryView({status:'queued'},{}).claim_ceiling]<ORDER[deliveryView({status:'accepted'},{}).claim_ceiling]);
 });
@@ -82,19 +85,20 @@ before(async()=>{
   await store.apply(writer,{version:1,batch_id:'seed',session_id:'ses_delivery',kind:'baseline',from:0,through:100,upload_id:'seed',chunk:0,complete:true,session:{title:'Delivery',archived:false,deleted:false,visible_before:null},messages:[{id:'msg_1',role:'user',order:1,created_at:1,updated_at:1,text:'hello'}],delete_ids:[]});
 });
 after(async()=>db?.close());
-async function rpcRaw(name,args){
-  const response=await privateMcp(new Request('https://test.invalid/mcp',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}})}),{db,store,principal:reader,outbox,gate});
+async function rpcRaw(name,args,rpcGate=gate){
+  const response=await privateMcp(new Request('https://test.invalid/mcp',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}})}),{db,store,principal:reader,outbox,gate:rpcGate});
   return response.json();
 }
 const body=raw=>JSON.parse(raw.result.content[0].text);
-const input=id=>({operation_id:id,session_id:'ses_delivery',text:'Synthetic approved text',base_cursor:100,confirmed:true});
+const input=id=>({operation_id:id,session_id:'ses_delivery',text:'Synthetic approved text',base_cursor:100});
 
-test('send with the Mac offline reports queued, not delivered, and claims at most queued',async()=>{
+test('send with the Mac offline reports saved for automatic pickup and claims at most queued',async()=>{
   macSeen=false;
   const raw=await rpcRaw('send_session_message',input('delivery_offline_1'));
   assert(!raw.result.isError);const out=body(raw);
   assert.equal(out.delivery_state,'queued_mac_offline');assert.equal(out.claim_ceiling,'queued');assert.equal(out.status,'queued');
-  assert(/not delivered/i.test(out.say_to_owner));
+  assert.equal(out.say_to_owner,'Message saved. Your Mac will pick it up automatically when it reconnects.');
+  assert.equal(body(await rpcRaw('message_status',{operation_id:out.operation_id})).say_to_owner,out.say_to_owner);
   macSeen=true;
 });
 
@@ -108,6 +112,39 @@ test('after the Mac accepts it, status says the session has it but is not finish
   assert.equal(out.delivery_state,'accepted_by_session');assert.equal(out.claim_ceiling,'accepted');assert.equal(out.completion_confirmed,false);
 });
 
+test('send returns the durable admission receipt without waiting for history or runtime',async()=>{
+  const args=input('delivery_fast_receipt_1'),calls=[];
+  const receiptGate={...gate,
+    activity:async(_source,wait)=>{assert(!wait,'send must not wait for freshness');calls.push('presence');return {mac_seen_recently:true};},
+    waitReceipt:async(_source,operation_id)=>{
+      calls.push('receipt');
+      const lease=await outbox.lease(writer);
+      assert.equal(lease.operation_id,operation_id);
+      await outbox.ack(writer,{operation_id,message_id:lease.message_id,status:'accepted'});
+    },
+    runtime:async()=>assert.fail('send must not fetch runtime'),
+  };
+  for(const expected of [['presence','receipt'],[]]){
+    calls.length=0;
+    const raw=await rpcRaw('send_session_message',args,receiptGate);
+    assert(!raw.result.isError,raw.result.content[0].text);const out=body(raw);
+    assert.equal(out.delivery_state,'accepted_by_session');assert.equal(out.delivery_confirmed,true);
+    assert.equal(out.claim_ceiling,'accepted');assert.equal(out.next_action,null);
+    assert(!('completion_confirmed' in out));assert.deepEqual(calls,expected);
+  }
+});
+
+test('a failed receipt wait preserves the queued result and later status confirms delivery',async()=>{
+  const args=input('delivery_wait_unavailable_1');
+  const raw=await rpcRaw('send_session_message',args,{...gate,waitReceipt:async()=>{throw new Error('unavailable');}});
+  assert(!raw.result.isError);
+  assert.equal(body(raw).delivery_state,'queued_waiting_for_mac');
+  const leased=await outbox.lease(writer);
+  assert.equal(leased.operation_id,args.operation_id);
+  await outbox.ack(writer,{operation_id:leased.operation_id,message_id:leased.message_id,status:'accepted'});
+  assert.equal(body(await rpcRaw('message_status',{operation_id:args.operation_id})).delivery_state,'accepted_by_session');
+});
+
 test('a stale cursor is still rejected, now with a structured body that says nothing was sent',async()=>{
   const before=(await db.query('SELECT count(*)::int AS n FROM av_outbox')).rows[0].n;
   const raw=await rpcRaw('send_session_message',{...input('delivery_stale_1'),base_cursor:99});
@@ -117,10 +154,7 @@ test('a stale cursor is still rejected, now with a structured body that says not
   assert.equal((await db.query('SELECT count(*)::int AS n FROM av_outbox')).rows[0].n,before,'a rejected send must not create a row');
 });
 
-test('safety checks are unchanged: confirmed must be literal true, same id with other text conflicts, unknown sessions fail',async()=>{
-  const noConfirm=await rpcRaw('send_session_message',{...input('delivery_noconfirm_1'),confirmed:false});
-  assert(noConfirm.error||noConfirm.result?.isError);
-  assert.equal((await db.query("SELECT count(*)::int AS n FROM av_outbox WHERE operation_id='delivery_noconfirm_1'")).rows[0].n,0);
+test('same id with other text conflicts, and unknown sessions fail',async()=>{
   const conflict=await rpcRaw('send_session_message',{...input('delivery_accepted_1'),text:'Different text'});
   assert(conflict.result.isError);assert.equal(body(conflict).error,'operation_id_conflict');assert.equal(body(conflict).delivery_state,'not_sent');
   const missing=await rpcRaw('send_session_message',{...input('delivery_missing_1'),session_id:'ses_nope'});

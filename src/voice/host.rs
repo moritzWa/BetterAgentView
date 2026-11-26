@@ -125,7 +125,7 @@ impl DashboardHost {
     }
 
     /// The session to act on. One that is only in the history is brought back
-    /// under Agent View's control first, as restoring it from the picker does.
+    /// under BetterAgentView's control first, as restoring it from the picker does.
     fn controllable(&self, id: &str) -> Result<AgentSession> {
         let in_dashboard = self
             .sessions
@@ -145,7 +145,7 @@ impl DashboardHost {
         self.session(id)
     }
 
-    /// The session to send words to. Agent View writes only to OpenCode
+    /// The session to send words to. BetterAgentView writes only to OpenCode
     /// sessions it owns, and a row it lists without owning has no `Reply`.
     /// The developer asking the voice to message that one session is the
     /// consent, so it is adopted here, when asked, and not up front: every
@@ -210,14 +210,7 @@ impl DashboardHost {
 
     fn messageable(&self, id: &str) -> Result<AgentSession> {
         let mut session = self.controllable(id)?;
-        if session.capabilities.contains(&Capability::Reply)
-            || session.provider != Provider::OpenCode
-            || session.runtime != Runtime::Host
-            || matches!(
-                session.raw_state.as_deref(),
-                Some("question asked" | "permission requested")
-            )
-        {
+        if !needs_adoption(&session) {
             return Ok(session);
         }
         self.control.adopt(&RestorableSession {
@@ -235,6 +228,52 @@ impl DashboardHost {
     }
 }
 
+/// A listed OpenCode row without `Reply` that `messageable` adopts before a send.
+fn needs_adoption(session: &AgentSession) -> bool {
+    !session.capabilities.contains(&Capability::Reply)
+        && session.provider == Provider::OpenCode
+        && session.runtime == Runtime::Host
+        && !matches!(
+            session.raw_state.as_deref(),
+            Some("question asked" | "permission requested")
+        )
+}
+
+/// Whether `send_message` to this row goes through: it has `Reply`, or
+/// `messageable` adopts it first. A row not owned by Agent View lacks `Reply`
+/// until then, so the capability alone would flag it as unmessageable.
+fn can_message(session: &AgentSession) -> bool {
+    session.capabilities.contains(&Capability::Reply) || needs_adoption(session)
+}
+
+/// Whether the dashboard puts this row in its Scheduled section: scheduled,
+/// and no descendant needs the person or is running.
+fn scheduled_only(
+    session: &AgentSession,
+    sessions: &[AgentSession],
+    parents: &HashMap<String, String>,
+) -> bool {
+    if !session.is_scheduled() {
+        return false;
+    }
+    !sessions.iter().any(|child| {
+        if child.state != SessionState::NeedsInput && child.state != SessionState::Working {
+            return false;
+        }
+        let mut raw = &child.provider_session_id;
+        for _ in 0..64 {
+            let Some(parent) = parents.get(raw) else {
+                return false;
+            };
+            if *parent == session.provider_session_id {
+                return true;
+            }
+            raw = parent;
+        }
+        false
+    })
+}
+
 /// The provider's reason, in words the voice can say.
 fn needs_you_because(session: &AgentSession) -> Option<String> {
     if session.state != SessionState::NeedsInput {
@@ -242,6 +281,9 @@ fn needs_you_because(session: &AgentSession) -> Option<String> {
     }
     Some(
         match session.raw_state.as_deref() {
+            Some(crate::turn_classifier::UNFINISHED_TURN) => {
+                "its turn stopped without a completed result; review it or send a message to resume"
+            }
             Some("turn failed") => {
                 "its last turn failed; send it a message such as \"continue\" to retry it"
             }
@@ -249,7 +291,7 @@ fn needs_you_because(session: &AgentSession) -> Option<String> {
                 "it asked a question in OpenCode and waits for the answer there"
             }
             Some("permission requested") => "it waits for a permission to be approved in OpenCode",
-            _ => "its last message ends on a question for the developer",
+            _ => "its last reply needs the developer's answer, approval or action",
         }
         .to_owned(),
     )
@@ -319,8 +361,9 @@ impl VoiceHost for DashboardHost {
                     }),
                     subagents,
                     paused: paused.contains_key(&session.id),
+                    scheduled: scheduled_only(session, &sessions, &parents),
                     top_level: !parents.contains_key(&session.provider_session_id),
-                    can_message: session.capabilities.contains(&Capability::Reply),
+                    can_message: can_message(session),
                     why: needs_you_because(session),
                 }
             })
@@ -504,7 +547,7 @@ impl VoiceHost for DashboardHost {
                 done.push("it was between turns, so there was nothing to stop")
             }
             Err(error) if working => bail!(
-                "it is still working and could not be stopped, so it was left in Agent View: {error:#}"
+                "it is still working and could not be stopped, so it was left in BetterAgentView: {error:#}"
             ),
             Err(_) => {}
         }
@@ -514,7 +557,7 @@ impl VoiceHost for DashboardHost {
         }
         self.refresh();
         done.push(
-            "removed it from Agent View (its history is kept and search_history still finds it)",
+            "removed it from BetterAgentView (its history is kept and search_history still finds it)",
         );
         Ok(done.join(" and "))
     }
@@ -712,6 +755,26 @@ mod tests {
     }
 
     #[test]
+    fn a_scheduled_session_is_put_away_unless_a_descendant_needs_attention() {
+        let parent = external_row("ses_parent", SessionState::Scheduled, None);
+        let child = external_row("ses_child", SessionState::Scheduled, None);
+        let mut grandchild = external_row("ses_grand", SessionState::Completed, None);
+        let links = HashMap::from([
+            ("ses_child".to_owned(), "ses_parent".to_owned()),
+            ("ses_grand".to_owned(), "ses_child".to_owned()),
+        ]);
+        let mut rows = vec![parent.clone(), child.clone(), grandchild.clone()];
+        assert!(scheduled_only(&parent, &rows, &links));
+        assert!(!scheduled_only(&grandchild, &rows, &links));
+        for state in [SessionState::Working, SessionState::NeedsInput] {
+            grandchild.state = state;
+            rows[2] = grandchild.clone();
+            assert!(!scheduled_only(&parent, &rows, &links), "{state:?}");
+            assert!(!scheduled_only(&child, &rows, &links), "{state:?}");
+        }
+    }
+
+    #[test]
     fn sending_to_a_listed_session_agent_view_does_not_own_adopts_it_first() {
         for state in [SessionState::NeedsInput, SessionState::Working] {
             let fake = controller(false);
@@ -750,6 +813,27 @@ mod tests {
         let error = host.send("opencode:host:ses_a", "yes").unwrap_err();
         assert!(format!("{error:#}").contains("reply authority was not granted"));
         assert!(fake.adopted.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn rows_that_a_send_would_adopt_are_not_flagged_unmessageable() {
+        for state in [
+            SessionState::NeedsInput,
+            SessionState::Working,
+            SessionState::Completed,
+        ] {
+            let host = host_with(controller(false), &[external_row("ses_a", state, None)]);
+            assert!(host.infos()[0].can_message, "{state:?}");
+        }
+        let blocked = host_with(
+            controller(false),
+            &[external_row(
+                "ses_a",
+                SessionState::NeedsInput,
+                Some("question asked"),
+            )],
+        );
+        assert!(!blocked.infos()[0].can_message);
     }
 
     #[test]

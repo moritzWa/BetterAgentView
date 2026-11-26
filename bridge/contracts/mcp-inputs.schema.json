@@ -1,0 +1,459 @@
+{
+  "list_visible_sessions": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "directory": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4100
+      },
+      "include_scheduled_and_paused": {
+        "default": false,
+        "type": "boolean"
+      }
+    }
+  },
+  "list_artifacts": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    },
+    "required": [
+      "session_id"
+    ]
+  },
+  "preview_artifact": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "artifact_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    },
+    "required": [
+      "artifact_id"
+    ]
+  },
+  "mac_presence": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {}
+  },
+  "snapshot_diagnostics": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {}
+  },
+  "new_since_last_check": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {}
+  },
+  "list_sessions": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "status": {
+        "default": "all",
+        "type": "string",
+        "enum": [
+          "all",
+          "active",
+          "working",
+          "needs_you",
+          "done",
+          "scheduled",
+          "unknown"
+        ]
+      },
+      "view": {
+        "default": "recent",
+        "type": "string",
+        "enum": [
+          "recent",
+          "all"
+        ]
+      },
+      "query": {
+        "default": "",
+        "type": "string",
+        "maxLength": 100
+      },
+      "after": {
+        "default": "",
+        "type": "string",
+        "maxLength": 200
+      },
+      "limit": {
+        "default": 14,
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 50
+      },
+      "detail": {
+        "default": false,
+        "type": "boolean"
+      }
+    }
+  },
+  "session_health": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    },
+    "required": [
+      "session_id"
+    ]
+  },
+  "session_brief": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "query": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100
+      }
+    }
+  },
+  "search_history": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "limit": {
+        "default": 8,
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 30
+      },
+      "excerpt_chars": {
+        "default": 400,
+        "type": "integer",
+        "minimum": 100,
+        "maximum": 2000
+      },
+      "offset": {
+        "default": 0,
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 500
+      }
+    },
+    "required": [
+      "query"
+    ]
+  },
+  "read_session": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "after": {
+        "type": "integer",
+        "minimum": -1,
+        "maximum": 9007199254740991
+      },
+      "before": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "limit": {
+        "default": 10,
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 20
+      }
+    },
+    "required": [
+      "session_id"
+    ]
+  },
+  "read_message": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "session_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "message_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "offset": {
+        "default": 0,
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1000000
+      }
+    },
+    "required": [
+      "session_id",
+      "message_id"
+    ]
+  },
+  "send_session_message": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{8,160}$"
+      },
+      "session_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "text": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 50000
+      },
+      "base_cursor": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "context": {
+        "allOf": [
+          {
+            "$ref": "#/definitions/ReadContext"
+          }
+        ]
+      }
+    },
+    "required": [
+      "operation_id",
+      "session_id",
+      "text"
+    ],
+    "definitions": {
+      "ReadContext": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "number",
+            "const": 1
+          },
+          "anchor_order": {
+            "type": "integer",
+            "minimum": -1,
+            "maximum": 9007199254740991
+          },
+          "anchor_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "prefix_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "visible_before": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "version",
+          "anchor_order",
+          "anchor_bytes",
+          "prefix_hash",
+          "visible_before"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "message_status": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    },
+    "required": [
+      "operation_id"
+    ]
+  },
+  "cancel_message": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "confirmed": {
+        "type": "boolean",
+        "const": true
+      }
+    },
+    "required": [
+      "operation_id",
+      "confirmed"
+    ]
+  },
+  "hide_session": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{8,160}$"
+      },
+      "session_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "confirmed": {
+        "type": "boolean",
+        "const": true
+      }
+    },
+    "required": [
+      "operation_id",
+      "session_id",
+      "confirmed"
+    ]
+  },
+  "unhide_session": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{8,160}$"
+      },
+      "session_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "confirmed": {
+        "type": "boolean",
+        "const": true
+      }
+    },
+    "required": [
+      "operation_id",
+      "session_id",
+      "confirmed"
+    ]
+  },
+  "session_visibility_status": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{8,160}$"
+      }
+    },
+    "required": [
+      "operation_id"
+    ]
+  },
+  "start_session": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{8,160}$"
+      },
+      "directory": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 1024
+      },
+      "text": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 50000
+      }
+    },
+    "required": [
+      "operation_id",
+      "directory",
+      "text"
+    ]
+  },
+  "start_status": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    },
+    "required": [
+      "operation_id"
+    ]
+  },
+  "cancel_start": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "operation_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "confirmed": {
+        "type": "boolean",
+        "const": true
+      }
+    },
+    "required": [
+      "operation_id",
+      "confirmed"
+    ]
+  }
+}

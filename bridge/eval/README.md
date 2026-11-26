@@ -5,7 +5,7 @@ It is passive and read-only. Heuristic: every flagged line needs a human read.
 
 1. Export (reads the signed-in ChatGPT tab over CDP with GET requests only; use a Linux Space, never host Chrome):
    `CDP_PORT=19222 python3 eval/export-chatgpt-conversations.py --days 7 --out DIR`
-   Only conversations that used AgentVoice tools are saved. They hold private chat text: delete DIR afterwards.
+   Only conversations that used BetterAgentView tools are saved. They hold private chat text: delete DIR afterwards.
 2. Grade: `node eval/send-claims.mjs DIR` (add `--json` for the full records).
 
 Rules: a claim is a short (140 characters or less) first-person statement such as "Okay, sending that.".

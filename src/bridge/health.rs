@@ -99,10 +99,9 @@ fn merge(parts: &[Facts]) -> Facts {
     for facts in parts {
         out.turn_started_at = max_ms(out.turn_started_at, facts.turn_started_at);
         out.last_progress_at = max_ms(out.last_progress_at, facts.last_progress_at);
-        if facts.in_flight == Some("tool") || out.in_flight.is_none() {
-            if facts.in_flight.is_some() {
-                out.in_flight = facts.in_flight;
-            }
+        if (facts.in_flight == Some("tool") || out.in_flight.is_none()) && facts.in_flight.is_some()
+        {
+            out.in_flight = facts.in_flight;
         }
     }
     out
@@ -123,22 +122,29 @@ fn ms(value: Option<i64>) -> Option<u64> {
 }
 
 fn facts_for(db: &Connection, id: &str) -> Result<Facts> {
-    let turn_started_at = ms(db
+    let turn: Option<(i64, Option<i64>)> = db
         .query_row(
-            "SELECT time_created FROM session_message WHERE session_id=?1 AND type='user' AND COALESCE(json_extract(data,'$.synthetic'),0)=0 ORDER BY seq DESC LIMIT 1",
+            "SELECT seq,time_created FROM session_message WHERE session_id=?1 AND type='user' AND COALESCE(json_extract(data,'$.synthetic'),0)=0 ORDER BY seq DESC LIMIT 1",
             [id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .optional()?);
+        .optional()?;
+    let turn_started_at = ms(turn.and_then(|(_, created)| created));
+    // Progress is the latest activity, so the newest messages answer it. Taking
+    // the maximum over a whole long session read every message and cost about
+    // 35 ms per working session.
     let last_progress_at = ms(db.query_row(
-        "SELECT MAX(time_updated) FROM session_message WHERE session_id=?1 AND type IN ('assistant','shell','compaction')",
+        "SELECT MAX(time_updated) FROM (SELECT time_updated FROM session_message WHERE session_id=?1 AND type IN ('assistant','shell','compaction') ORDER BY seq DESC LIMIT 50)",
         [id],
         |row| row.get::<_, Option<i64>>(0),
     )?);
+    // An open tool belongs to the current turn, and in practice to its last few
+    // messages. Scanning every message's tool list in a long session cost about
+    // half a second per snapshot.
     let tool_open: Option<i64> = db
         .query_row(
-            "SELECT 1 FROM session_message m, json_each(m.data, '$.content') c WHERE m.session_id=?1 AND m.type='assistant' AND json_extract(c.value,'$.type')='tool' AND COALESCE(json_extract(c.value,'$.name'),'') NOT IN ('question','') AND (json_extract(c.value,'$.state.status') IN ('pending','running') OR (json_extract(c.value,'$.state.status') IS NULL AND json_extract(m.data,'$.time.completed') IS NULL)) LIMIT 1",
-            [id],
+            "SELECT 1 FROM session_message m, json_each(m.data, '$.content') c WHERE m.session_id=?1 AND m.seq>=MAX(?2,(SELECT MAX(seq)-30 FROM session_message WHERE session_id=?1)) AND m.type='assistant' AND json_extract(c.value,'$.type')='tool' AND COALESCE(json_extract(c.value,'$.name'),'') NOT IN ('question','') AND (json_extract(c.value,'$.state.status') IN ('pending','running') OR (json_extract(c.value,'$.state.status') IS NULL AND json_extract(m.data,'$.time.completed') IS NULL)) LIMIT 1",
+            rusqlite::params![id, turn.map_or(0, |(seq, _)| seq)],
             |row| row.get(0),
         )
         .optional()?;

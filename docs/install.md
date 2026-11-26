@@ -1,9 +1,20 @@
 # Installation
 
-agentview installs one canonical executable named `agentview`. It
-also creates `av` as its short command. The normal installation downloads a verified
+BetterAgentView provides the `bav` shorthand and the `betteragentview` command.
+The old `agentview` command and `AGENTVIEW_*` environment variables still work.
+Settings and state stay in their existing `agentview` directories, so upgrading
+does not reset session visibility, models, voice settings or history.
+Release archive names retain the `agentview-` prefix so older installers can update.
+The normal installation downloads a verified
 prebuilt binary: Rust and Cargo are not user prerequisites. An unrelated
 existing command at the alias path is never overwritten.
+
+## Guided setup
+
+After installing, run `bav`. The first launch guides harness installation/login,
+optional voice, and your first task. Reopen it with `bav setup`.
+For agent-assisted setup, `bav onboarding --copy` or `/onboarding` copies a prompt.
+See [Getting started](onboarding.md).
 
 ## Supported platforms
 
@@ -16,7 +27,7 @@ Releases cover:
 - Windows x64
 
 The PowerShell installer selects the `x86_64-pc-windows-msvc` archive,
-verifies SHA-256, installs `agentview.exe` and `av.exe` without administrator privileges, and adds
+verifies SHA-256, installs `betteragentview.exe`, `bav.exe` and legacy `av.exe` without administrator privileges, and adds
 the user-local directory to `PATH`.
 
 Apple-silicon installation is exercised natively. The Intel archive is built
@@ -30,34 +41,34 @@ intend to supervise.
 
 ## Install a missing coding-agent harness
 
-agentview can stage a provider's official user-local installer, show its
+betteragentview can stage a provider's official user-local installer, show its
 native download/install progress, and run it only after confirmation:
 
 ```console
-agentview setup claude
-agentview setup codex
-agentview setup pi
-agentview setup opencode
-agentview setup cursor
-agentview setup copilot
-agentview setup antigravity
-agentview setup mistral-vibe
-agentview setup muse
-agentview setup qwen
-agentview setup kimi
-agentview setup omp
-agentview setup grok
-agentview setup kilo
-agentview setup openhands
+betteragentview setup claude
+betteragentview setup codex
+betteragentview setup pi
+betteragentview setup opencode
+betteragentview setup cursor
+betteragentview setup copilot
+betteragentview setup antigravity
+betteragentview setup mistral-vibe
+betteragentview setup muse
+betteragentview setup qwen
+betteragentview setup kimi
+betteragentview setup omp
+betteragentview setup grok
+betteragentview setup kilo
+betteragentview setup openhands
 ```
 
 For a non-interactive script, review the named source first and add `--yes`.
 Official shell installers are downloaded to a private temporary file and then
-executed; agentview does not pipe a network response directly into a shell. Codex and
+executed; betteragentview does not pipe a network response directly into a shell. Codex and
 Pi use their official npm packages. A failed download/install leaves the
-existing agentview binary and provider state alone. Oh My Pi, Grok, and OpenHands use
+existing betteragentview binary and provider state alone. Oh My Pi, Grok, and OpenHands use
 their official shell installers; Kilo Code uses `@kilocode/cli` from npm.
-Restart `agentview` after a
+Restart `betteragentview` after a
 new harness is installed, select it with Tab, and use Shift+Tab for models.
 When authentication is required, Enter in the model picker hands the terminal
 to the provider's native login and reloads the account catalog afterward. From
@@ -72,13 +83,13 @@ Install the latest published release on macOS or Linux:
 
 ```console
 curl -fsSL \
-  https://raw.githubusercontent.com/moritzWa/agentview/main/install.sh | bash
+  https://raw.githubusercontent.com/moritzWa/betteragentview/main/install.sh | bash
 ```
 
 On Windows, run this in PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/moritzWa/agentview/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/moritzWa/betteragentview/main/install.ps1 | iex
 ```
 
 Native Windows opens provider CLIs in the foreground and returns to the
@@ -88,7 +99,7 @@ ConPTY background/resume is not claimed yet. Session discovery, filtering,
 renaming, model selection, provider login handoff, foreground launch, JSON
 output, and the built-in PowerShell/Command Prompt terminal picker run natively.
 
-The Unix installer writes `~/.local/bin/agentview`, creates an `av`
+The Unix installer writes `~/.local/bin/agentview`, creates a `bav` (and legacy `av`)
 symlink. The Windows installer writes the equivalent two executable names to
 `%LOCALAPPDATA%\Programs\agentview\bin` and adds that directory to the user
 `PATH`. It never requires administrator privileges or edits a PowerShell
@@ -98,7 +109,7 @@ Install a specific version or location with script arguments:
 
 ```console
 curl -fsSL \
-  https://raw.githubusercontent.com/moritzWa/agentview/main/install.sh |
+  https://raw.githubusercontent.com/moritzWa/betteragentview/main/install.sh |
   bash -s -- --version MAJOR.MINOR.PATCH --install-dir /absolute/bin
 ```
 
@@ -112,10 +123,10 @@ only built-in archive and checksum commands.
 Start with checks that do not contact an agent provider:
 
 ```console
-agentview --version
-av --version
-agentview --help
-agentview --json --no-host-providers
+betteragentview --version
+bav --version
+betteragentview --help
+betteragentview --json --no-host-providers
 ```
 
 The JSON command should report empty `sessions` and `warnings` arrays. It does
@@ -124,8 +135,8 @@ not start the TUI, a provider, Docker, or the durable Codex supervisor.
 Then inspect the providers installed on this machine:
 
 ```console
-agentview doctor
-agentview
+betteragentview doctor
+betteragentview
 ```
 
 Missing optional providers are warnings. See [troubleshooting](troubleshooting.md)
@@ -137,19 +148,19 @@ interactive test.
 Use the installed shorthand:
 
 ```console
-av update
-# or: av upgrade
+bav update
+# or: bav upgrade
 ```
 
 The updater downloads this repository's installer, which resolves the latest
 published release, verifies its SHA-256 checksum, and stages the new binary
-before replacement. Existing provider sessions and agentview state are
+before replacement. Existing provider sessions and betteragentview state are
 not removed. Its final line reports the verified old-to-new version transition,
 or says that the installed version is already current. Re-running the
 installation command above is equivalent.
 
 Release builds check for a newer release once a day and show it in the dashboard
-header, such as `v0.3.4 available, run av update`. Set
+header, such as `Update v0.3.4 available · run bav update, then restart bav`. Set
 `AGENTVIEW_NO_UPDATE_CHECK=1` to turn the check off.
 
 Pin `--version` in automation; the default `latest` channel can change whenever
@@ -157,7 +168,7 @@ a new stable release is published.
 
 ## Uninstall
 
-Remove the executable installed at `~/.local/bin/agentview`, its `av`
+Remove the executable installed at `~/.local/bin/agentview`, its `bav` and `av`
 symlink, or their equivalents
 under the custom path passed to `--install-dir`.
 

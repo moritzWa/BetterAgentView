@@ -156,10 +156,105 @@ test('server instructions put mode rules in the first 512 characters, and the ne
  const init=await method('initialize',{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'test',version:'1'}});
  const head=init.result.instructions.slice(0,512);
  assert.equal(init.result.instructions,SERVER_INSTRUCTIONS);
- for(const word of ['list_sessions','digest.say','session_brief','send_session_message','brief'])assert(head.includes(word),word);
+ for(const word of ['list_visible_sessions','Needs Input','Task Done','Project Done','session_brief','send_session_message','brief'])assert(head.includes(word),word);
  const tools=(await method('tools/list')).result.tools,byName=Object.fromEntries(tools.map(t=>[t.name,t]));
  assert(byName.session_brief.annotations.readOnlyHint);assert.equal(byName.send_session_message.annotations.readOnlyHint,false);
+ assert(byName.list_visible_sessions.annotations.readOnlyHint);
  assert(byName.list_sessions.description.includes('digest.say'));assert(byName.read_session.description.includes('session_brief'));
+});
+
+test('actual MCP tool returns the UI render fixture, not the historical inventory',async()=>{
+ const old=runtime;
+ try {
+  const dashboard=JSON.parse(await readFile(new URL('./fixtures/dashboard.json',import.meta.url)));
+  dashboard.captured_at=Date.now();
+  runtime={available:true,partial:false,checked_at:Date.now(),dashboard,statuses:Array.from({length:381},(_,i)=>status(`historical-${i}`))};
+  const result=await rpc('list_visible_sessions',{});
+  assert.equal(result.counts.total,5);
+  assert.deepEqual(result.directories.flatMap(d=>[...d.sessions,...d.working]).map(s=>s.id).sort(),dashboard.sessions.map(s=>s.id).sort());
+  assert(!('dashboard' in result));assert(!('review_ids' in result));
+  for(const directory of ['cwd:/work','/work']) {
+   const selected=await rpc('list_visible_sessions',{directory});
+   assert.equal(selected.directories.length,1);
+   assert.equal(selected.directories[0].path,'/work');
+   assert.equal(selected.counts.total,4);
+   assert.deepEqual(selected.directories[0].sessions.map(s=>s.status),['needs_input','task_done','idle']);
+  }
+ } finally { runtime=old; }
+});
+
+test('the 317-character quote survives a crowded overview, brief and history page',async()=>{
+ const old=runtime;
+ try {
+  const opening="Yes, we reviewed it before, but it isn't cited in the outline. ";
+  const quote='Best quote: “Digital records change who can see the work, not just how it is stored.” 🧪 ';
+  const detail='Use the quote in the section on evidence, not in the introduction. ';
+  const closing='We can cite it directly once the reference is in the bibliography.';
+  const reply=opening+quote+detail.padEnd(317-[...(opening+quote+closing)].length)+closing;
+  assert.equal([...reply].length,317);
+  const id='quote-regression';
+  await seed(id,'Digitalization paper',[turn(1,'user','Did we review it before?'),turn(2,'assistant',reply)]);
+  const fixture=JSON.parse(await readFile(new URL('./fixtures/dashboard.json',import.meta.url)));
+  const row={...fixture.sessions[0],id:'opencode:host:'+id,session_id:id,category:'needs_input'};
+  const crowded=Array.from({length:59},(_,i)=>({...row,id:'opencode:host:extra-'+i,session_id:'extra-'+i,category:'idle'}));
+  runtime={available:true,partial:false,checked_at:Date.now(),dashboard:{...fixture,captured_at:Date.now(),sessions:[row,...crowded]},statuses:[status(id,{status:'needs_you'})]};
+  const overview=await rpc('list_visible_sessions',{});
+  const visible=overview.directories.flatMap(d=>d.sessions).find(s=>s.id===row.id);
+  assert.equal(visible.agent,reply);
+  assert.equal(visible.agent_truncation,undefined);
+  assert.match(overview.warning,/Some previews did not fit/);
+  const brief=await rpc('session_brief',{session_id:id});
+  assert.equal(brief.transcript.at(-1).text,reply);
+  assert.equal(brief.transcript.at(-1).truncated,false);
+  const page=await rpc('read_session',{session_id:id});
+  assert.equal(page.messages.at(-1).text,reply);
+  assert.equal(page.messages.at(-1).truncated,false);
+ } finally {runtime=old;}
+});
+
+test('visible MCP includes one latest user and agent excerpt, without debug clutter or progress-message crowding',async()=>{
+ const old=runtime,activity=gate.activity;
+ try {
+  await seed('context-tail','Context test',Array.from({length:12},(_,i)=>turn(i+1,i%2===0?'user':'assistant',`start${i+1}. `+'Detail 🧪. '.repeat(1000)+` end${i+1}.`)));
+  const fixture=JSON.parse(await readFile(new URL('./fixtures/dashboard.json',import.meta.url)));
+  const row={...fixture.sessions[0],id:'opencode:host:context-tail',session_id:'context-tail'};
+  runtime={available:true,partial:false,checked_at:Date.now(),dashboard:{...fixture,captured_at:Date.now(),sessions:[row]},statuses:[status('context-tail',{status:'needs_you',last_user_message_id:'msg_11'})]};
+  gate.activity=async()=>({mac_seen_recently:true,history_fresh:true,source_checked_at:Date.now()});
+  const result=await rpc('list_visible_sessions',{}),s=result.directories[0].sessions[0];
+  assert.equal(result.warning,undefined);
+  assert.deepEqual(Object.keys(s),['id','title','status','user','agent','user_truncation','agent_truncation']);
+  assert.deepEqual(s.user_truncation,{truncated:true,message_id:'msg_11',offset:0});
+  assert.deepEqual(s.agent_truncation,{truncated:true,message_id:'msg_12',offset:0});
+  const fullReply=await rpc('read_message',{session_id:s.id,message_id:s.agent_truncation.message_id,offset:s.agent_truncation.offset});
+  assert.equal(fullReply.text,'start12. '+'Detail 🧪. '.repeat(1000)+' end12.');
+  assert.equal(fullReply.next_offset,null);
+  assert(s.user.startsWith('start11.'));assert(s.agent.startsWith('start12.'));
+  assert(s.user.endsWith('end11.'));assert(s.agent.endsWith('end12.'));
+  assert([s.user,s.agent].every(text=>[...text].length<=600&&!text.includes('middle omitted')));
+  const full=await rpc('session_brief',{session_id:s.id});assert.equal(full.found,true);
+  const briefExcerpt=full.transcript.at(-1);
+  assert.equal(briefExcerpt.truncated,true);
+  assert.equal(briefExcerpt.offset,0);
+  assert.equal(briefExcerpt.message_id,fullReply.message_id);
+  assert.equal((await rpc('read_message',{session_id:full.session.session_id,message_id:briefExcerpt.message_id,offset:briefExcerpt.offset})).text,fullReply.text);
+  await db.query("UPDATE av_messages SET role='assistant' WHERE session_id=$1 AND message_order=11",['context-tail']);
+  runtime.statuses[0].last_user_message_id='msg_9';
+  const assistantTail=await rpc('list_visible_sessions',{});
+  assert(assistantTail.directories[0].sessions[0].user.startsWith('start9.'));
+  assert(assistantTail.directories[0].sessions[0].agent.startsWith('start12.'));
+  assert.equal(assistantTail.warning,undefined);
+  await db.query("UPDATE av_messages SET role='user' WHERE session_id=$1 AND message_order=11",['context-tail']);
+  runtime.statuses[0].last_user_message_id='msg_11';
+  await db.query("UPDATE av_sessions SET state=jsonb_set(state,'{visible_before}','9'::jsonb) WHERE session_id=$1",['context-tail']);
+  const reverted=await rpc('list_visible_sessions',{}),r=reverted.directories[0].sessions[0];
+  assert(r.user.startsWith('start7.'));assert(r.agent.startsWith('start8.'));
+  assert.match(reverted.warning,/may lag/);
+  await db.query("UPDATE av_sessions SET state=jsonb_set(state,'{archived}','true'::jsonb) WHERE session_id=$1",['context-tail']);
+  const archived=await rpc('list_visible_sessions',{});
+  assert.equal(archived.directories[0].sessions[0].user,null);
+  assert.equal(archived.directories[0].sessions[0].agent,null);
+  assert.equal(archived.counts.total,1);
+ } finally {runtime=old;gate.activity=activity;}
 });
 
 test('a finished turn with a stated next step is a follow-up, and a closed one is not',()=>{
@@ -221,6 +316,37 @@ test('a done session from this week appears in the overview follow-ups',async()=
   const blocked=await rpc('list_sessions',{status:'needs_you'});
   assert.equal(blocked.sessions.find(s=>s.session_id==='life-science'),undefined);
   assert.equal(blocked.sessions.find(s=>s.session_id==='mobile-sync').attention,'needs_you');
+});
+
+test('a reply with no question reads as clean sentences, not a markdown fragment',()=>{
+  const reply='Done.\n\nKarabiner confirmed **reloading** it. **Try left Cmd+U now.** Right Cmd is unchanged. '+'More detail follows here. '.repeat(20);
+  const d=buildDigest({now:Date.now(),counts:{},statusFresh:true,freshness:{mac_seen_recently:true},
+    rows:[{session_id:'k',title:'raycast clipboard',status:'needs_you',reason:'reply',updated_at:Date.now()}],tails:new Map([['k',{text:reply,assistant_last:true}]])});
+  assert(d.say.includes('raycast clipboard: Karabiner confirmed reloading it. Try left Cmd+U now.'),d.say);
+  assert(!d.say.includes('*')&&!d.say.includes('..'),d.say);
+  assert(!d.top[0].decision.includes('*'));assert(!('_source' in d.top[0]));
+  const two=buildDigest({now:Date.now(),counts:{},statusFresh:true,freshness:{mac_seen_recently:true},
+    rows:[{session_id:'a',title:'A',status:'needs_you',reason:'approval',updated_at:Date.now()},{session_id:'b',title:'B',status:'needs_you',reason:'question',updated_at:Date.now()-1e6}],tails:new Map()});
+  assert.equal(two.say,'2 sessions need you. A: approve a permission. B: answer a question.');
+});
+
+test('plain wording like "still has a CI failure to fix" is a next step, ordinary text is not',()=>{
+  const f=followUp('Deployed. Sales still has a real CI failure to fix. No server restart or global model change.');
+  assert.equal(f.signal,'next_step');assert.match(f.reason,/CI failure to fix/);
+  for(const text of ['It still works as before and needs no restart.','Everything is merged. The old tests still pass.','Sales still has a real CI failure to fix. All done.'])
+    assert.equal(followUp(text),null,text);
+});
+
+test('only a recent unreviewed finished turn is labeled for review; a week-old one is not',async()=>{
+  await seed('recent-unreviewed','Recent unreviewed',[turn(1,'user','Go'),turn(2,'assistant','Finished the pass.')]);
+  await seed('old-unreviewed','Old unreviewed',[turn(1,'user','Go'),turn(2,'assistant','Finished the pass.')]);
+  const old=Date.now()-9*86400_000;
+  runtime={available:true,partial:false,checked_at:Date.now(),statuses:[
+    status('recent-unreviewed',{status:'done',attention_assessed:false}),
+    status('old-unreviewed',{status:'done',attention_assessed:false,updated_at:old,last_user_ms:old})]};
+  const done=await rpc('list_sessions',{status:'done',view:'all'});
+  assert.equal(done.sessions.find(s=>s.session_id==='recent-unreviewed').attention,'review_last_reply');
+  assert.equal(done.sessions.find(s=>s.session_id==='old-unreviewed').attention,'not_waiting');
 });
 
 test('finalAsk, matchesQuery and ageText',()=>{

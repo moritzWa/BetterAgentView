@@ -1,4 +1,5 @@
 import { SyncError } from './projection.mjs';
+import {routes} from '../contracts/contract.mjs';
 
 const MAX_BYTES = 1_000_000;
 const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
@@ -31,7 +32,7 @@ async function readJson(request) {
 export function privateHandler(store) {
   return async request => {
     const url = new URL(request.url);
-    const write = url.pathname === '/v1/sync/batches' && request.method === 'POST';
+    const write = url.pathname === routes.batches && request.method === 'POST';
     const match = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/messages$/);
     const read = !!match && request.method === 'GET';
     if (!write && !read) return reply({ error: 'not_found' }, 404);

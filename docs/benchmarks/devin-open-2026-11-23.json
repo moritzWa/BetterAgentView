@@ -1,0 +1,53 @@
+{
+  "status": "measured",
+  "note": "Separate Linux environment; not directly comparable to macOS results",
+  "version": "devin 3000.14.30821 (a09cd7f323ee)",
+  "samples_ms": [
+    676.612,
+    527.166,
+    657.904,
+    549.499,
+    762.896,
+    685.173,
+    614.184,
+    672.516,
+    812.02,
+    785.446,
+    709.7,
+    705.995,
+    660.113,
+    738.462,
+    1081.11,
+    659.899,
+    820.027,
+    716.693,
+    649.402,
+    746.427,
+    666.612,
+    563.287,
+    709.601,
+    720.795,
+    620.89,
+    608.472,
+    583.265,
+    639.617,
+    604.424,
+    787.897
+  ],
+  "median_ms": 674.564,
+  "path": [
+    "devin",
+    "--respect-workspace-trust",
+    "false",
+    "--resume",
+    "<session-id>"
+  ],
+  "date": "2026-11-23",
+  "platform": "Linux-4.19.0-gvisor-aarch64-with-glibc2.39",
+  "environment": "Linux aarch64 Cua Space, 4 vCPUs, 6144 MiB, hosted on Apple M5 Pro",
+  "messages_per_chat": 40,
+  "terminal": {
+    "columns": 140,
+    "rows": 40
+  }
+}

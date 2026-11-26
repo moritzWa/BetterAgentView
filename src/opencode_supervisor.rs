@@ -732,6 +732,20 @@ impl OpenCodeSupervisor {
             .context("OpenCode returned a session without a title")
     }
 
+    pub fn rename_session(&self, session_id: &str, cwd: &Path, title: &str) -> Result<()> {
+        let title = title.trim();
+        anyhow::ensure!(!title.is_empty(), "session title must not be empty");
+        let record = self.required_live_record()?;
+        let path = with_directory_query(&format!("/session/{}", url_path_segment(session_id)), cwd);
+        self.request_empty(&record, "PATCH", &path, Some(&json!({"title": title})))?;
+        let session = self.request_json(&record, "GET", &path, None)?;
+        anyhow::ensure!(
+            session["title"].as_str() == Some(title),
+            "OpenCode did not confirm the new session title"
+        );
+        Ok(())
+    }
+
     /// Every `provider/model` the live server can run, from the catalog it
     /// already holds in memory. `None` when no server is up, so the caller can
     /// fall back to `opencode models`, which boots a whole new process.
@@ -3940,7 +3954,19 @@ fn process_state(_: u32) -> Result<Option<String>> {
 fn is_missing_process(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<std::io::Error>()
-        .map(|error| error.kind() == std::io::ErrorKind::NotFound)
+        .map(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                return true;
+            }
+            // procfs can report ESRCH instead of ENOENT when a process is
+            // reaped between identity reads. Both mean the recorded owner is
+            // gone, not that verification itself failed.
+            #[cfg(unix)]
+            if error.raw_os_error() == Some(libc::ESRCH) {
+                return true;
+            }
+            false
+        })
         .unwrap_or(false)
 }
 
@@ -5117,6 +5143,20 @@ mod tests {
         let mut truncated = 3_i32.to_ne_bytes().to_vec();
         truncated.extend_from_slice(b"/bin/opencode\0opencode\0serve\0");
         assert!(parse_procargs2(&truncated).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_process_reaped_between_identity_reads_is_missing_not_a_verification_error() {
+        for errno in [libc::ENOENT, libc::ESRCH] {
+            let error = anyhow::Error::new(std::io::Error::from_raw_os_error(errno))
+                .context("reading the recorded process identity");
+            assert!(is_missing_process(&error), "{error:#}");
+        }
+        for errno in [libc::EACCES, libc::EPERM, libc::EIO] {
+            let error = anyhow::Error::new(std::io::Error::from_raw_os_error(errno));
+            assert!(!is_missing_process(&error), "{error:#}");
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

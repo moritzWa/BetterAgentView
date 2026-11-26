@@ -152,17 +152,21 @@ pub enum SessionState {
     Working,
     Scheduled,
     Completed,
+    TaskDone,
+    ProjectDone,
     Unknown,
 }
 
 impl SessionState {
-    pub const DISPLAY_ORDER: [Self; 6] = [
+    pub const DISPLAY_ORDER: [Self; 8] = [
         Self::ReadyForReview,
         Self::NeedsInput,
         Self::Working,
-        Self::Completed,
+        Self::TaskDone,
         Self::Unknown,
+        Self::Completed,
         Self::Scheduled,
+        Self::ProjectDone,
     ];
 
     pub fn heading(self) -> &'static str {
@@ -171,9 +175,20 @@ impl SessionState {
             Self::NeedsInput => "Needs input",
             Self::Working => "Working",
             Self::Scheduled => "Scheduled",
-            Self::Completed => "Completed",
+            Self::Completed => "Idle",
+            Self::TaskDone => "Task done",
+            Self::ProjectDone => "Project done",
             Self::Unknown => "Unknown",
         }
+    }
+
+    /// No running turn. Completion still needs a separate message judgment.
+    pub fn is_idle(self) -> bool {
+        matches!(self, Self::Completed | Self::TaskDone | Self::ProjectDone)
+    }
+
+    pub fn task_finished(self) -> bool {
+        matches!(self, Self::TaskDone | Self::ProjectDone)
     }
 }
 

@@ -7,7 +7,7 @@ again to end. Inside a session's own view, `Ctrl+K` (OpenCode), `Cmd+K` and
 `Ctrl+\`. Saying "that's all, bye" ends the call too.
 
 A terminal sends nothing for `Cmd+K` unless it is told to. In Ghostty add
-`keybind = super+k=text:\x0b`: it sends the `Ctrl+K` byte, which agentview reads in
+`keybind = super+k=text:\x0b`: it sends the `Ctrl+K` byte, which betteragentview reads in
 the dashboard and inside a session's view alike (and which also stops Ghostty
 from clearing the screen behind a TUI).
 
@@ -53,7 +53,7 @@ of 8.
   carry out what a session proposed: that session does the work once it hears
   "go".
 - "Close the naming session." It stops the session if it is running and removes
-  it from Agent View, your list of sessions in focus. The history is kept, and
+  it from BetterAgentView, your list of sessions in focus. The history is kept, and
   Ctrl+G restores it.
 - "Stop that one." Same as pressing Escape in OpenCode.
 - "Tell it to continue." A session whose last turn failed takes a message to
@@ -86,9 +86,9 @@ plugin reported, or running sub-agents.
 
 Two voices can run a call: OpenAI's GPT-Live and xAI's Grok Voice. Switch with
 `/voice grok` or `/voice openai` in the dashboard's composer (or
-`agentview voice --provider grok`). The choice is saved, applies from the next
+`betteragentview voice --provider grok`). The choice is saved, applies from the next
 call, and the first call with a provider asks for its key. With no choice
-saved, agentview uses OpenAI, or Grok when only an xAI key exists.
+saved, betteragentview uses OpenAI, or Grok when only an xAI key exists.
 
 | | OpenAI GPT-Live | Grok (`grok-voice-latest`) |
 | --- | --- | --- |
@@ -102,9 +102,9 @@ saved, agentview uses OpenAI, or Grok when only an xAI key exists.
 does the badge in an OpenCode session's footer (`● voice 2:13  −  1.2x  +`).
 Click the `−` or `+` to change it in steps of 0.1x, like the controls of the
 read-aloud plugin. It changes while the voice is talking and is remembered.
-`/voice speed 1.2` sets it by typing. The dashboard only asks your terminal for
-clicks while such a call is live, so selecting text works as usual otherwise
-(Shift-drag still selects while it is). OpenAI has no speed setting, so its
+`/voice speed 1.2` sets it by typing. The dashboard captures mouse clicks for
+session navigation too; use your terminal's selection override (usually
+Shift-drag) to select text. OpenAI has no speed setting, so its
 badge has no buttons.
 
 ## Reading sessions and searching
@@ -157,7 +157,7 @@ for 30 minutes (`resume_minutes`). The next `Cmd+K` continues it: Grok replays
 the conversation itself (spoken turns only), OpenAI is told the end of it, and
 either way the voice has the same session in mind and tells you what changed
 while you were away. Nothing is billed while it is paused, because the
-connection is closed. A paused call shows no indicator, in Agent View or inside
+connection is closed. A paused call shows no indicator, in BetterAgentView or inside
 OpenCode; only a live call shows its badge. `Cmd+K` still continues it. `/voice
 new` makes the next call start fresh.
 
@@ -166,13 +166,13 @@ answers) pauses a live call, and the key still goes through to OpenCode, so the
 plugin starts reading the latest answer. The call is paused, not ended: press
 `Cmd+K` when you want to talk again. Outside a call it does only what it did.
 
-The read-aloud plugin also notifies Agent View from its central playback-start
+The read-aloud plugin also notifies BetterAgentView from its central playback-start
 path. Double-click, Option+click, playback controls and media-key starts pause a
 call too, without depending on a keyboard shortcut. The notification travels
 over the existing native terminal connection and needs no account or server.
 
 The reverse also holds: starting a call (`Cmd+K`) pauses the read-aloud plugin in
-the session on screen, so the two voices never overlap. Agent View sends the
+the session on screen, so the two voices never overlap. BetterAgentView sends the
 plugin's own `speech.pause` command through the OpenCode server, the same one it
 sends when you leave a session's view; the plugin keeps its place.
 
@@ -180,7 +180,7 @@ sends when you leave a session's view; the plugin keeps its place.
 input box and the voice knows that text and which session it belongs to. Say
 "help me think this through", talk for a while, then "sounds good": it sends the
 whole message (your draft plus what you agreed) with `send_draft` and empties the
-box. agentview reads the box off the screen, so it sees what is visible, and it
+box. betteragentview reads the box off the screen, so it sees what is visible, and it
 clears it with OpenCode's own clear key (`ctrl+c`, the default).
 
 ## Starting and stopping fast
@@ -203,24 +203,24 @@ measures it.
 you ── mic/speaker ── voice page (a pinned browser tab, 127.0.0.1:47617)
                          │  WebRTC audio + events         │ local WebSocket
                          ▼                                ▼
-                  OpenAI GPT-Live  ◀── curl, once ──  agentview ── your sessions
+                  OpenAI GPT-Live  ◀── curl, once ──  betteragentview ── your sessions
                   talker + backend model                 runs the tools
 ```
 
 A browser holds the microphone and speaker, because it brings echo
-cancellation and noise suppression with it. agentview starts the OpenAI session
+cancellation and noise suppression with it. betteragentview starts the OpenAI session
 with `curl`, so the key never reaches the page. For Grok the page opens a
-websocket to xAI with a token agentview fetched with your key (good for five
-minutes); the key stays in agentview. The page only relays events; the
-tools run in agentview, against the same sessions the dashboard shows.
+websocket to xAI with a token betteragentview fetched with your key (good for five
+minutes); the key stays in betteragentview. The page only relays events; the
+tools run in betteragentview, against the same sessions the dashboard shows.
 
-By default agentview runs that browser itself, **hidden**: a Chromium-based
+By default betteragentview runs that browser itself, **hidden**: a Chromium-based
 browser (Chrome, Chromium, Edge or Brave) in headless mode, with its own
 profile, started when a call starts and stopped when it ends. No tab or window
 appears and nothing needs pinning. It costs a browser's worth of memory (about
 350 MB) only while a call is open. The first call, macOS asks once to let your
 terminal (or the browser) use the microphone. If no such browser is found,
-agentview falls back to opening a tab. The page listens on `127.0.0.1` only and
+betteragentview falls back to opening a tab. The page listens on `127.0.0.1` only and
 accepts a WebSocket only from its own origin.
 
 The `browser` setting changes this: `"tab"` opens a tab in your default browser
@@ -234,12 +234,16 @@ points at a particular browser.
   The first `Ctrl+K` asks for the one the chosen provider needs (masked), checks
   it, and saves it owner-only under `~/.local/state/agentview/voice/`.
   `OPENAI_API_KEY` or `XAI_API_KEY` (or the `AGENTVIEW_` versions) in the
-  environment win. `agentview voice --set-key` reads a key from stdin, so
-  `op read ... | agentview voice --set-key --provider grok` works.
-- GPT-Live bills about 5 cents a minute while a call is open, silence included,
-  plus the backend model's tokens (pennies). Starting a call bills 15 seconds up
-  front, credited against the running time. A call ends itself after 10
-  minutes of silence with nothing watched, and after 60 minutes in all.
+  environment win. `betteragentview voice --set-key` reads a key from stdin, so
+  `op read ... | betteragentview voice --set-key --provider grok` works.
+- GPT-Live (`gpt-live-1.1`) bills about 5 cents a minute while it is listening
+  and speaking, plus the backend model's tokens (pennies). With `standby_seconds`
+  set (off by default, see Settings) it goes on **standby** after that many quiet
+  seconds: the call stays open, and billing drops to about 2 cents a minute until
+  you speak again. Starting a call
+  bills 15 seconds up front, credited against the running time. A call ends
+  itself after 10 minutes of silence with nothing watched, and after 60 minutes
+  in all.
 - Nothing is stored at OpenAI: the session is created with `store: false`.
   OpenAI keeps abuse-monitoring logs for 30 days unless the organisation has
   Zero Data Retention. Organisation admins can see usage and cost per project
@@ -259,6 +263,8 @@ points at a particular browser.
   "xai_reasoning": "none",
   "speed": 1.0,
   "voice": "meridian",
+  "live_model": "gpt-live-1.1",
+  "standby_seconds": 0,
   "backend_model": "gpt-6-luna",
   "reasoning_effort": "low",
   "service_tier": "priority",
@@ -275,7 +281,12 @@ points at a particular browser.
 Grok voice (`rex`, `leo`, `sal`, `orion` and `atlas` are male; `GET
 https://api.x.ai/v1/tts/voices` lists them all); `xai_reasoning` is `none` or
 `high`; `speed` is Grok's 0.7 to 1.5. `voice` is any GPT-Live voice name (`meridian` is a male, North American
-voice). On the backend, picking a tool takes about a second on every model
+voice). `live_model` is `gpt-live-1.1` or `gpt-live-1`. `standby_seconds` (5 to
+60, 0 for never, the default) is how long GPT-Live waits without a word, spoken
+or heard, before it pauses itself. Speaking wakes it with no words lost. The
+catch: a paused GPT-Live does not speak what agentview tells it, such as "it
+finished" for a watched session. That is kept and said the next time you speak,
+so leave it off if you rely on being told. On the backend, picking a tool takes about a second on every model
 tried, so a bigger model buys quality, not speed.
 
 ## When something goes wrong
@@ -295,7 +306,7 @@ Starting and ending a call write nothing else; only something to act on (no
 key, a failure, a microphone that is not allowed) shows as a line on the
 bottom row.
 
-Set `AGENTVIEW_VOICE_LOG=/some/file` before starting agentview: every transcript
+Set `AGENTVIEW_VOICE_LOG=/some/file` before starting betteragentview: every transcript
 line, tool call (with its time and result) and event goes into that file as
 JSON lines. `scripts/voice-spike/summarize.py FILE` prints it as a conversation.
 A microphone that stays exactly silent for 20 seconds shows "No sound from the
@@ -306,7 +317,7 @@ your terminal or browser.
 
 `scripts/voice-spike/` holds the manual checks, which use real OpenAI calls and
 cost a few cents. `spike.mjs` runs the page against a stand-in server.
-`e2e.py` runs the real dashboard in a pseudo-terminal, lets agentview start its
+`e2e.py` runs the real dashboard in a pseudo-terminal, lets betteragentview start its
 hidden browser with a synthesized, muted microphone, and prints what the call
 did; `scenario.sh` wraps it with the log summary. `native_view.py` presses the
 voice key inside a session's own view. `onboarding.py` covers the first run. `cargo test --test voice_edit_real -- --ignored` checks the correction

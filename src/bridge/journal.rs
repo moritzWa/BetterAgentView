@@ -1,3 +1,4 @@
+use super::contract;
 use super::source::{Capture, Message};
 use super::{hash, random_id};
 use anyhow::{bail, Result};
@@ -26,7 +27,7 @@ impl Journal {
             |r| r.get(0),
         )?;
         if (count > 0 || app != 0) && app != 0x41564252 {
-            bail!("not an Agent View bridge journal");
+            bail!("not a BetterAgentView bridge journal");
         }
         #[cfg(unix)]
         {
@@ -68,6 +69,17 @@ impl Journal {
         let rows = q
             .query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<rusqlite::Result<BTreeMap<_, _>>>()?;
+        Ok(rows)
+    }
+    /// Every checkpoint's observed watermark and format in one read, for the
+    /// bulk "has anything changed" comparison.
+    pub fn observed_marks(&self) -> Result<Vec<(String, i64, bool)>> {
+        let mut q = self
+            .db
+            .prepare("SELECT session_id, observed, native FROM checkpoint")?;
+        let rows = q
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
     pub fn known(&self) -> Result<Vec<String>> {
@@ -132,7 +144,8 @@ impl Journal {
                 bail!("single message exceeds upload byte limit");
             }
             if !chunks.last().unwrap().0.is_empty()
-                && (bytes + size > 850_000 || chunks.last().unwrap().0.len() >= 400)
+                && (bytes + size > 850_000
+                    || chunks.last().unwrap().0.len() >= contract::BATCH_CHUNK)
             {
                 chunks.push((Vec::new(), Vec::new()));
                 bytes = 0;
@@ -141,7 +154,7 @@ impl Journal {
             chunks.last_mut().unwrap().0.push(message);
         }
         for removed in deletes {
-            if chunks.last().unwrap().1.len() >= 400 {
+            if chunks.last().unwrap().1.len() >= contract::BATCH_CHUNK {
                 chunks.push((Vec::new(), Vec::new()));
             }
             chunks.last_mut().unwrap().1.push(removed);
@@ -149,8 +162,24 @@ impl Journal {
         let total = chunks.len();
         let tx = self.db.transaction()?;
         for (chunk, (messages, delete_ids)) in chunks.into_iter().enumerate() {
-            let body = json!({"version":1,"batch_id":random_id()?,"session_id":id,"kind":if baseline{"baseline"}else{"delta"},"from":from,"through":capture.through,
-                "upload_id":upload,"chunk":chunk,"complete":chunk+1==total,"session":capture.state,"messages":messages,"delete_ids":delete_ids});
+            let body = serde_json::to_value(contract::Batch {
+                version: 1,
+                batch_id: random_id()?,
+                session_id: id.to_owned(),
+                kind: if baseline {
+                    contract::BatchKind::Baseline
+                } else {
+                    contract::BatchKind::Delta
+                },
+                from,
+                through: capture.through,
+                upload_id: Some(upload.clone()),
+                chunk: Some(chunk as i64),
+                complete: Some(chunk + 1 == total),
+                session: serde_json::from_value(capture.state.clone())?,
+                messages: wire_messages(messages)?,
+                delete_ids,
+            })?;
             tx.execute(
                 "INSERT INTO pending(body,native) VALUES (?1,?2)",
                 rusqlite::params![body.to_string(), native],
@@ -178,7 +207,7 @@ impl Journal {
                 bail!("single message exceeds upload byte limit");
             }
             if !chunks.last().unwrap().is_empty()
-                && (bytes + size > 850_000 || chunks.last().unwrap().len() >= 400)
+                && (bytes + size > 850_000 || chunks.last().unwrap().len() >= contract::BATCH_CHUNK)
             {
                 chunks.push(Vec::new());
                 bytes = 0;
@@ -192,8 +221,20 @@ impl Journal {
         // cannot leave the cache claiming messages the new copy does not have.
         tx.execute("DELETE FROM cache WHERE session_id=?1", [id])?;
         for (chunk, messages) in chunks.into_iter().enumerate() {
-            let body = json!({"version":1,"batch_id":random_id()?,"session_id":id,"kind":"replace","from":0,"through":capture.through,
-                "upload_id":upload,"chunk":chunk,"complete":chunk+1==total,"session":capture.state,"messages":messages,"delete_ids":[]});
+            let body = serde_json::to_value(contract::Batch {
+                version: 1,
+                batch_id: random_id()?,
+                session_id: id.to_owned(),
+                kind: contract::BatchKind::Replace,
+                from: 0,
+                through: capture.through,
+                upload_id: Some(upload.clone()),
+                chunk: Some(chunk as i64),
+                complete: Some(chunk + 1 == total),
+                session: serde_json::from_value(capture.state.clone())?,
+                messages: wire_messages(messages)?,
+                delete_ids: Vec::new(),
+            })?;
             tx.execute(
                 "INSERT INTO pending(body,native) VALUES (?1,?2)",
                 rusqlite::params![body.to_string(), native],
@@ -358,7 +399,20 @@ impl Journal {
         let mut state = old.state;
         state["deleted"] = json!(true);
         let through = old.observed.max(old.cursor) + 1;
-        let body = json!({"version":1,"batch_id":random_id()?,"session_id":id,"kind":"delta","from":old.cursor,"through":through,"session":state,"messages":[],"delete_ids":[]});
+        let body = serde_json::to_value(contract::Batch {
+            version: 1,
+            batch_id: random_id()?,
+            session_id: id.to_owned(),
+            kind: contract::BatchKind::Delta,
+            from: old.cursor,
+            through,
+            session: serde_json::from_value(state)?,
+            messages: Vec::new(),
+            delete_ids: Vec::new(),
+            upload_id: None,
+            chunk: None,
+            complete: None,
+        })?;
         self.db.execute(
             "INSERT INTO pending(body,native) VALUES (?1,?2)",
             rusqlite::params![body.to_string(), old.native],
@@ -376,6 +430,22 @@ impl Journal {
             .collect::<Result<BTreeMap<_, _>>>()?;
         Ok(current == self.cached(id)? && checkpoint.state == capture.state)
     }
+}
+
+fn wire_messages(messages: Vec<Message>) -> Result<Vec<contract::Message>> {
+    messages
+        .into_iter()
+        .map(|message| {
+            Ok(contract::Message {
+                id: message.id,
+                role: message.role.parse()?,
+                order: message.order,
+                created_at: message.created_at,
+                updated_at: message.updated_at,
+                text: message.text,
+            })
+        })
+        .collect()
 }
 
 fn message_hash(value: &Value) -> String {

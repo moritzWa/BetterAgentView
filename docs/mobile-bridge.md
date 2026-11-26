@@ -4,6 +4,10 @@ The opt-in bridge copies visible conversation text to a private MCP server.
 ChatGPT can search the copy while the Mac is offline. An explicit send enters a
 separate queue. OpenCode receives it when the connector reconnects.
 
+For a new installation, follow [self-hosting](../bridge/SELF-HOSTING.md) with your
+own Neon database, Cloudflare Worker and Google OAuth client. The private endpoint
+below belongs to the original operator and is not a public service.
+
 The cloud implementation lives in [bridge](../bridge/README.md). Operators can
 [deploy it and configure owner login](../bridge/SETUP.md) before pairing. Existing
 paired installations need no changes after the repository move.
@@ -15,7 +19,7 @@ OAuth. The existing deployment is
 `https://agentvoice-private.moritzw.workers.dev/mcp`. Sign in with the configured
 Google owner and approve the requested read/send scopes. ChatGPT must allow
 custom MCP apps for your account. Connect on the web if the mobile app does not
-offer setup, then use the connected **AgentVoice** app in ChatGPT on your phone.
+offer setup, then use the connected **BetterAgentView** app in ChatGPT on your phone.
 
 ChatGPT mobile Live voice can search history and send approved instructions to
 existing sessions. It cannot create sessions, stop agents, or answer native
@@ -23,17 +27,17 @@ permission/question prompts through this bridge. Check `message_status` for
 delivery and completion; a queued receipt is not proof of execution.
 
 This is **separate from [built-in Voice Mode](voice.md)**, which runs OpenAI/Grok
-audio in Agent View. ChatGPT mobile voice uses ChatGPT's audio and MCP connection.
-It needs neither Agent View's voice API keys nor an open dashboard.
+audio in BetterAgentView. ChatGPT mobile voice uses ChatGPT's audio and MCP connection.
+It needs neither BetterAgentView's voice API keys nor an open dashboard.
 
 ## Pair the Mac
 
 ```console
-agentview --opencode-bin ~/.local/bin/opencode-dev bridge pair
-agentview bridge sync-once
-agentview bridge install
-agentview bridge status
-agentview bridge stop
+betteragentview --opencode-bin ~/.local/bin/opencode-dev bridge pair
+betteragentview bridge sync-once
+betteragentview bridge install
+betteragentview bridge status
+betteragentview bridge stop
 ```
 
 `pair` prints a Google approval URL. It does not open a browser or upload history.
@@ -76,6 +80,18 @@ internet, not a claimed outage, because sleep looks the same.
 including questions and approvals. It excludes hidden and paused rows. Status
 snapshots contain IDs and typed states, not tool output or conversation text.
 Offline results are last-known, not proof that a session is still working.
+
+If the desktop list is stale or missing, call `snapshot_diagnostics`. It shows
+when Agent View generated the list, what the Mac connector read, and when the
+backend last stored it. These records contain counts and timestamps, not
+session names or messages. A failed upload stays in the Mac log until the
+connector can reach the backend again.
+
+Open the updated Agent View dashboard once to save its discovery settings.
+After that, the connector can rebuild the list without a terminal when the
+on-screen list stops updating or closes. It uses the saved settings and the
+same discovery and grouping code, not the historical inventory in Neon. It
+cannot refresh while the Mac sleeps or is offline.
 The default list is a small human-recent overview, not a page of old completed
 sessions. `status="active"` returns working/waiting sessions and recent replies
 whose need for input has not been assessed. Rows include the last two visible
@@ -120,7 +136,7 @@ The Mac must be awake and logged in to execute work. This bridge does not wake
 it. Revoke retired devices through `/revoke` with the connector token. Revocation
 does not delete cloud history. Encrypted database backups are a separate project.
 
-The backend's end-to-end harness runs real OpenCode and Agent View in the Cua
+The backend's end-to-end harness runs real OpenCode and BetterAgentView in the Cua
 macOS VM. It uses a deterministic local model and actual tool-output canaries.
 It checks Google/PKCE login, search, sends, duplicate admission, revert/unrevert,
 forks, dashboard-independent delivery and OAuth revocation.

@@ -1,0 +1,32 @@
+{
+  "date": "2026-11-23",
+  "platform": "macOS 26.6.2 arm64, Apple M5 Pro",
+  "note": "Single warmed-profile diagnostic runs with instrumentation, not benchmark medians. Unrelated log entries, temporary paths, and account metadata omitted.",
+  "codex": {
+    "version": "0.163.0",
+    "first_byte_from_process_launch_ms": 13.852,
+    "last_reply_from_process_launch_ms": 669.253,
+    "source": "Native logs_2.sqlite, codex_tui::app::startup",
+    "native_startup_event": "tui startup initial frame scheduled duration_ms=502 bootstrap_ms=231 thread_and_widget_ms=252 initial_session_ms=17 event_stream_ms=0",
+    "other_observed_phases": ["app-server initialization", "session reconstruction", "shell snapshot creation", "MCP setup"]
+  },
+  "cursor": {
+    "version": "2026.09.28-64d2043",
+    "first_byte_from_process_launch_ms": 798.883,
+    "last_reply_from_process_launch_ms": 862.890,
+    "source": "native-startup-probe.cjs and headless PTY",
+    "node_events_ms_from_preload": [
+      {"event": "main-module-start", "ms": 1.678},
+      {"event": "main-module-loaded", "ms": 133.753},
+      {"event": "http2-connect", "hostname": "api2.cursor.sh", "ms": 295.103},
+      {"event": "http2-ready", "hostname": "api2.cursor.sh", "ms": 296.515},
+      {"event": "http2-connect", "hostname": "api2.cursor.sh", "ms": 297.596},
+      {"event": "http2-ready", "hostname": "api2.cursor.sh", "ms": 297.828},
+      {"event": "http2-connect", "hostname": "api3.cursor.sh", "ms": 622.135},
+      {"event": "http2-ready", "hostname": "api3.cursor.sh", "ms": 665.395},
+      {"event": "first-stdout", "ms": 740.423},
+      {"event": "reply-written", "ms": 803.992}
+    ],
+    "caveat": "Connection readiness alone does not identify a blocking network request. Nested dependency loads and child-process preload events omitted."
+  }
+}

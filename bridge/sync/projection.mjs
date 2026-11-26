@@ -1,36 +1,9 @@
-import { z } from 'zod';
+import {Message,Batch} from '../contracts/contract.mjs';
+export {Message,Batch} from '../contracts/contract.mjs';
 
 export class SyncError extends Error {
   constructor(code, status = 409) { super(code); this.code = code; this.status = status; }
 }
-const id = z.string().min(1).max(200);
-const counter = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
-export const Message = z.object({
-  id, role: z.enum(['user', 'assistant']), order: counter,
-  created_at: counter, updated_at: counter, text: z.string().max(1_000_000),
-}).strict();
-const Session = z.object({
-  title: z.string().max(1000), archived: z.boolean(),
-  // Exclusive message-order boundary, resolved from OpenCode's revert message ID locally.
-  visible_before: counter.nullable(), deleted: z.boolean(),
-}).strict();
-export const Batch = z.object({
-  version: z.literal(1), batch_id: id, session_id: id,
-  kind: z.enum(['baseline', 'delta', 'replace']), from: counter, through: counter,
-  upload_id: id.optional(), chunk: counter.optional(), complete: z.boolean().optional(),
-  session: Session, messages: z.array(Message).max(500), delete_ids: z.array(id).max(500),
-}).strict().superRefine((b, ctx) => {
-  const fail = () => ctx.addIssue({ code: 'custom', message: 'invalid_batch' });
-  if (b.kind === 'baseline' || b.kind === 'replace') {
-    if (!b.upload_id || b.chunk === undefined || b.complete === undefined || b.from !== 0 || b.delete_ids.length) fail();
-  } else {
-    if (b.through <= b.from) fail();
-    if ([b.upload_id,b.chunk,b.complete].some(v=>v!==undefined) && (!b.upload_id || b.chunk===undefined || b.complete===undefined)) fail();
-  }
-  const ids = b.messages.map(m => m.id);
-  if (new Set(ids).size !== ids.length || new Set(b.delete_ids).size !== b.delete_ids.length || ids.some(i => b.delete_ids.includes(i))) fail();
-  if (b.session.deleted && (b.messages.length || b.delete_ids.length)) fail();
-});
 
 /** Explicit source adapter for inline-content V2 rows. Never forward raw JSON. */
 export function projectMessage(row) {
@@ -73,9 +46,9 @@ export function parseBatch(value) {
 }
 
 /** Same bytes on the Mac and in the Worker. A verify mismatch means the copies differ. */
-export function projectionText(cursor, state, messages) {
+export function projectionText(state, messages) {
+  // No cursor: it moves on events that change no visible text. The Mac compares pointers itself.
   const head = [
-    `cursor=${cursor}`,
     `archived=${Boolean(state?.archived)}`,
     `deleted=${Boolean(state?.deleted)}`,
     `title=${state?.title ?? ''}`,

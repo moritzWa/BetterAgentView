@@ -1,0 +1,30 @@
+{
+  "commit": "15c171ab69d5b98d8709b695f5179bc8757f12d6",
+  "sha256": "e4ac0dbdf3c2811ea8231f8cb5c8d41662e46586389cbd2e0fa614237721fd4d",
+  "files": {
+    "bridge/contracts/contract.mjs": "e4ac0dbdf3c2811ea8231f8cb5c8d41662e46586389cbd2e0fa614237721fd4d",
+    "bridge/private/artifacts.mjs": "3db9286eae01f20c31d0332e3529899c8790d2d4b9043f6a96edc6b6f7c088ed",
+    "bridge/private/attention.mjs": "571c31b5dfcb479ce66b41a6bcdbf82d83778620fe8e30ef742cf110820d739a",
+    "bridge/private/auth.mjs": "5fc2e2fbe3f10fc6ebcd889c1ca9b5b473ce04125d3c3b193266cd3a426171de",
+    "bridge/private/brief.mjs": "8a8661c956ef47e8d247f0046baa23a7cd6c136a1b20440e1442480880ee6e95",
+    "bridge/private/context.mjs": "a7fb1d20f95896f5838a45874aa6b7f636eaee6eef416b989cce1dcebbf5d581",
+    "bridge/private/database.mjs": "92d6ff45e9984ace67cf92001fe52d3f878966c0dd13064ae97326146058bba6",
+    "bridge/private/delivery.mjs": "1877b6cf342690d1532e1c17be5caa94db893472d0f45bb02fc90313a96ac81f",
+    "bridge/private/excerpt.mjs": "e77e6f7970651f2a58cf6c724005b3ccfcd2e5e4e6163212b1ee4e9f38cdc3a8",
+    "bridge/private/gate.mjs": "6b53522e0bdbc810b3b8d6db65a6abb92bb90a3070ff8b7435ae9817f4b9608b",
+    "bridge/private/grant.mjs": "27af8eae1494ac4250cbcef1d7f12656389dc317c7a103fe406cada5466e1aea",
+    "bridge/private/health.mjs": "fc6917584f7dea73df48c62803347b98bf13cc672672c91e85fd97303ce16051",
+    "bridge/private/mcp.mjs": "63abda2e18890da7fe404e57efcd262a06dc5596632de59fd14df4578d11359d",
+    "bridge/private/outbox.mjs": "01a34e8cd9068973b0bbfc6903311a9bb9af101119e3b1e3a9f44365e5ab76d4",
+    "bridge/private/presence.mjs": "1880c0b58e3c10bf7f6f3ac60559431ea1e02ba59ff9662d4033962625732256",
+    "bridge/private/runtime.mjs": "1bbb1c5465dd730cec10a6925ecbf36cd2866805e95eb485adfeca374bcf084e",
+    "bridge/private/sessions.mjs": "ebe2b6ef5d0a95ca4da2e0477177f055f0f79642896daf23190228da9ed93ecd",
+    "bridge/private/starts.mjs": "e9f44e2a39957b66e77dcc56810ee74ef30b6ca19bde639239f86a7574e0e155",
+    "bridge/private/worker.mjs": "00ce5fb4bc3a2abfe5d53bae73a96ca531d07778f512e9b3f38530658f5b276c",
+    "bridge/sync/client.mjs": "d9218e5d7131342db351134e0de9d49f6eab227fceb2a57e66745225bf04d8e1",
+    "bridge/sync/http.mjs": "1c2691283dc8b777ce225dd61667ddb52b0de962eac948579deb94e066f87ab4",
+    "bridge/sync/journal.mjs": "e371c1932dda63c979202f3256068c56441daf7e7f4a7b003f35f218dbd5f8f3",
+    "bridge/sync/projection.mjs": "be5f6cf8d72009fdb6b45ed99cb07bd1f150de8cb48259873e3c6139751aac3c",
+    "bridge/sync/store.mjs": "ffb51a17d47c1d34d83492a79eb2ee9187c956875f8e9e931293e86d62f38277"
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "date": "2026-11-23",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "cpu": "Apple M5 Pro",
+  "messages_per_chat": 40,
+  "terminal": { "rows": 40, "columns": 140 },
+  "operation": "First visit to another chat, server warm; final reply rendered",
+  "includes": "TUI launch or targeted switch plus transcript render; no model request",
+  "excludes": "Dashboard dispatch/preview, server startup, and revisits to retained TUIs",
+  "versions": {
+    "stock": "opencode v2.4.0",
+    "fork": "opencode v2.0.32-local.efafe6107c"
+  },
+  "targeted_switch": { "stock": false, "fork": true },
+  "batches": [
+    {
+      "order": ["stock", "fork"],
+      "runs_per_build": 10,
+      "stock_ms": [
+        154.314, 226.192, 158.006, 163.539, 178.949,
+        282.254, 174.463, 160.076, 176.641, 278.795
+      ],
+      "fork_ms": [
+        98.337, 63.330, 238.245, 57.664, 59.905,
+        58.131, 62.386, 69.424, 54.939, 58.928
+      ]
+    },
+    {
+      "order": ["fork", "stock"],
+      "runs_per_build": 30,
+      "stock_ms": [
+        222.599, 168.083, 204.234, 198.717, 241.731,
+        242.656, 245.978, 171.276, 195.794, 158.829,
+        262.245, 290.707, 174.756, 189.926, 179.744,
+        255.118, 231.373, 257.046, 333.662, 223.425,
+        252.825, 202.972, 179.746, 186.620, 205.507,
+        267.539, 223.568, 196.215, 181.160, 225.753
+      ],
+      "fork_ms": [
+        69.733, 53.227, 49.548, 49.438, 192.181,
+        59.681, 51.300, 52.531, 71.135, 56.538,
+        50.288, 46.696, 51.079, 45.322, 56.727,
+        52.409, 65.288, 52.269, 49.424, 47.870,
+        47.461, 45.291, 46.917, 48.008, 48.736,
+        50.146, 52.031, 52.892, 48.128, 46.758
+      ]
+    }
+  ],
+  "combined": {
+    "runs_per_build": 40,
+    "stock_median_ms": 203.603,
+    "fork_median_ms": 52.470,
+    "median_ratio": 3.8803697350867163
+  }
+}

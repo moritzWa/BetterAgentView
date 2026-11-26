@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
 use rusqlite::types::ValueRef;
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 use crate::perf;
 use crate::process::{CommandOutput, CommandRequest, CommandRunner};
@@ -350,9 +350,17 @@ pub(crate) fn recent_turns(
 ) -> Result<Vec<SessionTurn>> {
     let (db, _) = open_read_only(executable)?;
     db.busy_timeout(Duration::from_secs(2))?;
+    recent_turns_from_db(&db, session_id, turns)
+}
+
+fn recent_turns_from_db(
+    db: &Connection,
+    session_id: &str,
+    turns: usize,
+) -> Result<Vec<SessionTurn>> {
     let mut limit = 240_i64;
     loop {
-        let (rows, raw) = text_rows(&db, session_id, limit)?;
+        let (rows, raw) = text_rows(db, session_id, limit)?;
         let found = turns_from_rows(&rows);
         let exhausted = raw < limit || limit >= 4_000;
         // One more than asked for: the oldest may have lost its question.
@@ -369,6 +377,52 @@ struct TextRow {
     text: String,
 }
 
+/// Scope plus the latest exchanges, never reasoning, tool output or compaction.
+pub(crate) fn completion_context(executable: &str, session_id: &str) -> Result<String> {
+    let (db, _) = open_read_only(executable)?;
+    completion_context_from_db(&db, session_id)
+}
+
+fn completion_context_from_db(db: &Connection, session_id: &str) -> Result<String> {
+    let v2 = has_table(db, "session_v2")?
+        && db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM main.session_v2 WHERE id = ?1)",
+            [session_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+    let scope: Option<String> = if v2 {
+        db.query_row(
+            "SELECT json_extract(data, '$.text') FROM main.session_message
+             WHERE session_id = ?1 AND type = 'user' ORDER BY seq LIMIT 1",
+            [session_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten()
+    } else {
+        db.query_row(
+            "SELECT group_concat(json_extract(p.data, '$.text'), char(10)) FROM main.part p
+             WHERE p.message_id = (SELECT id FROM main.message WHERE session_id = ?1
+                AND json_extract(data, '$.role') = 'user' ORDER BY time_created, id LIMIT 1)
+             AND json_extract(p.data, '$.type') = 'text'
+             AND COALESCE(json_extract(p.data, '$.synthetic'), 0) = 0",
+            [session_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten()
+    };
+    let turns = recent_turns_from_db(db, session_id, 2)?;
+    // Do not classify a stale reply when the newest user has not been answered.
+    if !turns.last().is_some_and(|turn| !turn.it.is_empty()) {
+        return Err(crate::completion::MissingFinalReply.into());
+    }
+    Ok(crate::completion::evidence(
+        scope.as_deref().unwrap_or_default(),
+        &turns,
+    ))
+}
+
 /// Text of the newest `limit` messages, one row per message, oldest first,
 /// and how many messages that was. Reads the tables themselves: the
 /// compatibility views are too slow to plan for a lookup in one session.
@@ -381,16 +435,30 @@ fn text_rows(db: &Connection, session_id: &str, limit: i64) -> Result<(Vec<TextR
         )?;
     let mut rows: Vec<TextRow> = Vec::new();
     if in_v2 {
-        let mut statement = db.prepare(
+        // Older imported V2 stores predate revert metadata.
+        let has_revert = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('session_v2') WHERE name = 'revert')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )?;
+        let visible = if has_revert {
+            "AND seq < COALESCE((SELECT r.seq FROM main.session_message r JOIN main.session_v2 s ON s.id = r.session_id WHERE s.id = ?1 AND r.id = json_extract(s.revert, '$.messageID')), 9007199254740991)"
+        } else {
+            ""
+        };
+        let mut statement = db.prepare(&format!(
             "SELECT type,
                     CASE type WHEN 'user' THEN json_extract(data, '$.text')
                     ELSE (SELECT group_concat(json_extract(c.value, '$.text'), char(10))
                           FROM json_each(data, '$.content') c
-                          WHERE json_extract(c.value, '$.type') = 'text') END
+                           WHERE json_extract(c.value, '$.type') = 'text'
+                             AND COALESCE(json_extract(c.value, '$.synthetic'), 0) = 0
+                             AND COALESCE(json_extract(c.value, '$.state.phase'), '') != 'commentary') END
              FROM main.session_message
-             WHERE session_id = ?1 AND type IN ('user', 'assistant')
-             ORDER BY seq DESC LIMIT ?2",
-        )?;
+              WHERE session_id = ?1 AND type IN ('user', 'assistant')
+                {visible}
+              ORDER BY seq DESC LIMIT ?2"
+        ))?;
         let mut query = statement.query(rusqlite::params![session_id, limit])?;
         while let Some(row) = query.next()? {
             rows.push(TextRow {
@@ -1446,6 +1514,49 @@ mod tests {
                 it: "result".into(),
                 replies: vec!["result".into()],
             }]
+        );
+    }
+
+    #[test]
+    fn completion_evidence_reads_only_real_messages_and_respects_reverts() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(r#"
+            CREATE TABLE session_v2(id TEXT PRIMARY KEY, revert TEXT);
+            CREATE TABLE session_message(id TEXT, session_id TEXT, type TEXT, seq INTEGER, data TEXT);
+            INSERT INTO session_v2 VALUES ('s', NULL);
+            INSERT INTO session_message VALUES
+              ('u1','s','user',1,'{"text":"Finish the workstream"}'),
+              ('a1','s','assistant',2,'{"content":[{"type":"reasoning","text":"PRIVATE THINKING"},{"type":"tool","text":"SECRET TOOL LOG"},{"type":"text","text":"NARRATION","state":{"phase":"commentary"}}]}'),
+              ('a2','s','assistant',3,'{"content":[{"type":"text","text":"The task is finished"}]}'),
+              ('sy','s','synthetic',4,'{"text":"SYSTEM INJECTION"}'),
+              ('u2','s','user',5,'{"text":"What remains?"}'),
+              ('a3','s','assistant',6,'{"content":[{"type":"text","text":"The entire project is finished","state":{"phase":"final_answer"}},{"type":"text","text":"SYNTHETIC TEXT","synthetic":true}]}');
+        "#).unwrap();
+        let evidence = completion_context_from_db(&db, "s").unwrap();
+        assert!(evidence.contains("Finish the workstream"));
+        assert!(evidence.contains("entire project is finished"));
+        for noise in [
+            "PRIVATE THINKING",
+            "SECRET TOOL LOG",
+            "NARRATION",
+            "SYSTEM INJECTION",
+            "SYNTHETIC TEXT",
+        ] {
+            assert!(!evidence.contains(noise), "leaked {noise}");
+        }
+        db.execute_batch(r#"UPDATE session_v2 SET revert = '{"messageID":"u2"}'"#)
+            .unwrap();
+        let evidence = completion_context_from_db(&db, "s").unwrap();
+        assert!(!evidence.contains("entire project"));
+        assert!(!evidence.contains("What remains"));
+        db.execute_batch(
+            r#"UPDATE session_v2 SET revert = NULL;
+            INSERT INTO session_message VALUES ('u3','s','user',7,'{"text":"New task"}');"#,
+        )
+        .unwrap();
+        assert!(
+            completion_context_from_db(&db, "s").is_err(),
+            "must not reuse a stale final reply"
         );
     }
 

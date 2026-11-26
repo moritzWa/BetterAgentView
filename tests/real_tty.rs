@@ -19,20 +19,147 @@ const ENTER: &[u8] = b"\r";
 const UP: &[u8] = b"\x1b[A";
 const DOWN: &[u8] = b"\x1b[B";
 const LEFT: &[u8] = b"\x1b[D";
-const SHIFT_LEFT: &[u8] = b"\x1b[1;2D";
+const DASHBOARD_BACK: &[u8] = b"\x1b[18~";
 const SHIFT_TAB: &[u8] = b"\x1b[Z";
 const CTRL_A: &[u8] = b"\x01";
 const CTRL_C: &[u8] = b"\x03";
 const CTRL_F: &[u8] = b"\x06";
 const CTRL_J: &[u8] = b"\x0a";
-// Kitty keyboard enhancement encoding for Ctrl+M. A legacy terminal sends CR
-// for both Ctrl+M and Enter, so this exact sequence verifies disambiguation.
-const CTRL_M_ENHANCED: &[u8] = b"\x1b[109;5u";
+const MOVE_SESSION: &[u8] = b"\x1b[17~";
 const CTRL_R: &[u8] = b"\x12";
 const CTRL_S: &[u8] = b"\x13";
 const CTRL_X: &[u8] = b"\x18";
 
 static PTY_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+#[test]
+fn a_fresh_launch_guides_setup_before_showing_an_empty_dashboard() {
+    let _serial = serialize_real_tty_test();
+    let mut app = PtyApp::spawn_configured(120, 35, |command, home| {
+        fs::remove_file(home.path().join("state/agentview/last-view.json")).unwrap();
+        let bin = home.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        fs::write(bin.join("security"), "#!/bin/sh\nexit 44\n").unwrap();
+        fs::set_permissions(bin.join("security"), fs::Permissions::from_mode(0o700)).unwrap();
+        command
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("XDG_CONFIG_HOME", home.path().join("config"))
+            .env_remove("AGENTVIEW_OPENCODE_SERVICE_FILE")
+            .env_remove("AGENTVIEW_OPENCODE_URL")
+            .args(["--refresh-ms", "60000"]);
+    });
+    let screen = app.wait_for("automatic getting started", |s| {
+        s.contains("Choose a harness [1]")
+    });
+    assert!(screen.contains("OpenCode (recommended)"));
+    assert!(screen.contains("bav setup"));
+    assert!(!screen.contains("Describe a task"));
+    app.send(b"s\r");
+    app.wait_for("skipped setup reaches dashboard", |s| {
+        s.contains("BetterAgentView v")
+    });
+    assert!(app
+        .home_path()
+        .join("state/agentview/onboarding.json")
+        .is_file());
+    app.exit_cleanly();
+}
+
+#[test]
+fn guided_setup_uses_native_login_and_keeps_voice_optional_without_calling_a_model() {
+    let _serial = serialize_real_tty_test();
+    let mut app = PtyApp::spawn_configured(120, 45, |command, home| {
+        let bin = home.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        let opencode = bin.join("opencode");
+        fs::write(&opencode, "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$HOME/native-login.args\"\necho 'Native login completed (test)'\n").unwrap();
+        fs::set_permissions(&opencode, fs::Permissions::from_mode(0o700)).unwrap();
+        command
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .args(["--opencode-bin", opencode.to_str().unwrap(), "setup"]);
+    });
+    app.wait_for("choose installed harness", |s| {
+        s.contains("Choose a harness [1]")
+    });
+    app.send(ENTER);
+    let screen = app.wait_for("native login handoff", |s| {
+        s.contains("interactive login now?")
+    });
+    assert!(screen.contains("moritzWa/opencode/tree/v2-parity"));
+    app.send(ENTER);
+    app.wait_for("voice choice", |s| {
+        s.contains("Voice provider: openai, grok, or skip")
+    });
+    app.send(b"grok\r");
+    let screen = app.wait_for("ready to finish", |s| {
+        s.contains("Press Enter to finish setup")
+    });
+    assert!(screen.contains("https://console.x.ai/"));
+    assert!(screen.contains("No microphone or paid voice call starts"));
+    assert!(screen.contains("F7 returns"));
+    app.send(ENTER);
+    assert_eq!(
+        fs::read_to_string(app.home_path().join("native-login.args"))
+            .unwrap()
+            .trim(),
+        "auth login"
+    );
+    assert!(!app
+        .home_path()
+        .join("state/agentview/voice/key.json")
+        .exists());
+    let prefs = agentview::last_harness::LastHarness::at(
+        app.home_path().join("state/agentview/last-harness.json"),
+    );
+    assert_eq!(
+        prefs.provider(),
+        Some(agentview::domain::Provider::OpenCode)
+    );
+    let deadline = Instant::now() + Duration::from_secs(4);
+    loop {
+        app.drain();
+        if let Some(status) = app.child.try_wait().unwrap() {
+            assert!(status.success());
+            break;
+        }
+        assert!(Instant::now() < deadline, "guided setup did not finish");
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn fresh_dashboard_starts_by_directory_and_ctrl_s_toggles_grouping() {
+    let _serial = serialize_real_tty_test();
+    let mut app = PtyApp::spawn_configured(120, 40, |command, home| {
+        fs::remove_file(home.path().join("state/agentview/last-view.json")).unwrap();
+        command.args([
+            "--fixture",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/populated-sessions.json"
+            ),
+            "--all",
+            "--refresh-ms",
+            "60000",
+        ]);
+    });
+    app.wait_for("fresh directory-grouped dashboard", |s| {
+        s.contains("/workspace/alpha") && s.contains("release-reviewer")
+    });
+    app.send(CTRL_S);
+    app.wait_for("status grouping", |s| {
+        s.lines().any(|line| line.trim() == "Needs input")
+    });
+    app.send(CTRL_S);
+    app.wait_for("directory grouping restored", |s| {
+        s.contains("/workspace/alpha") && !s.lines().any(|line| line.trim() == "Needs input")
+    });
+    assert_eq!(
+        agentview::last_view::LastView::at(app.home_path().join("state/agentview/last-view.json"))
+            .view_mode(),
+        Some(agentview::app::ViewMode::Directory)
+    );
+}
 
 #[test]
 fn work_view_global_command_hides_personal_rows_and_restores_the_draft() {
@@ -209,7 +336,7 @@ fn sqlite_harnesses_launch_foreground_detach_rename_and_resume_together() {
             command.arg(format!("--{provider}-bin")).arg(path);
         }
     });
-    app.wait_for("SQLite dashboard", |s| s.contains("agentview"));
+    app.wait_for("SQLite dashboard", |s| s.contains("BetterAgentView"));
     for (provider, label) in [
         ("hermes", "Hermes Agent"),
         ("mastracode", "MastraCode"),
@@ -223,9 +350,9 @@ fn sqlite_harnesses_launch_foreground_detach_rename_and_resume_together() {
         app.wait_for("native foreground reply", |s| {
             s.contains(&format!("NATIVE {provider} reply: hello from fixture"))
         });
-        app.send(SHIFT_LEFT);
+        app.send(DASHBOARD_BACK);
         app.wait_for("owned dashboard row", |s| {
-            s.contains("agentview") && s.contains("hello from fixture") && s.contains(label)
+            s.contains("BetterAgentView") && s.contains("hello from fixture") && s.contains(label)
         });
         app.send(CTRL_R);
         app.wait_for("rename", |s| s.contains("rename session"));
@@ -249,9 +376,9 @@ fn sqlite_harnesses_launch_foreground_detach_rename_and_resume_together() {
         app.wait_for("continued native reply", |s| {
             s.contains("continued conversation")
         });
-        app.send(SHIFT_LEFT);
+        app.send(DASHBOARD_BACK);
         app.wait_for("live preview refreshed", |s| {
-            s.contains("agentview") && s.contains("continued conversation")
+            s.contains("BetterAgentView") && s.contains("continued conversation")
         });
     }
     let screen = app.screen();
@@ -354,12 +481,18 @@ impl PtyApp {
         let stdout = duplicate_file(slave).expect("duplicate slave for stdout");
         let stderr = unsafe { File::from_raw_fd(slave) };
         let home = tempfile::tempdir().expect("create isolated home");
+        // Most interaction scenarios below deliberately exercise status groups.
+        // Treat that as a saved preference, not an implicit startup default.
+        agentview::last_view::LastView::at(home.path().join("state/agentview/last-view.json"))
+            .save(agentview::app::ViewMode::Status)
+            .expect("seed the interaction suite's saved status view");
         let mut command = Command::new(
             std::env::var_os("AGENTVIEW_TEST_BIN")
                 .unwrap_or_else(|| env!("CARGO_BIN_EXE_agentview").into()),
         );
         command
             .env("TERM", "xterm-256color")
+            .env_remove("AGENTVIEW_MOUSE_HOVER")
             .env("HOME", home.path())
             .env("XDG_STATE_HOME", home.path().join("state"));
         configure(&mut command, &home);
@@ -529,23 +662,7 @@ impl Drop for PtyApp {
 fn all_supported_providers_coexist_in_one_real_terminal() {
     let _serial = serialize_real_tty_test();
     let mut app = PtyApp::spawn_fixture(150, 44, "all-providers-sessions.json");
-    let startup = app.wait_for("all-provider dashboard", |screen| {
-        screen.contains("pi-refactor")
-            && screen.contains("opencode-api")
-            && screen.contains("cursor-owned-chat")
-            && screen.contains("copilot-acp-session")
-            && screen.contains("antigravity-last-conversa")
-            && screen.contains("vibe-release-check")
-            && screen.contains("muse-ui-pass")
-            && screen.contains("qwen-parser-work")
-            && screen.contains("kimi-test-plan")
-            && screen.contains("omp-extension-review")
-            && screen.contains("grok-code-review")
-            && screen.contains("kilo-feature-pass")
-            && screen.contains("openhands-test-run")
-    });
-    assert_lines_fit(&startup, 150);
-    for (session, provider) in [
+    let expected = [
         ("release-reviewer", "Claude"),
         ("approval-needed", "Codex"),
         ("pi-refactor", "Pi"),
@@ -561,16 +678,17 @@ fn all_supported_providers_coexist_in_one_real_terminal() {
         ("grok-code-review", "Grok"),
         ("kilo-feature-pass", "Kilo Code"),
         ("openhands-test-run", "OpenHands"),
-    ] {
-        let row = startup
-            .lines()
-            .find(|line| line.contains(session))
-            .unwrap_or_else(|| panic!("missing session row {session}"));
-        assert!(
-            row.contains(provider),
-            "session row {session} did not name {provider}: {row:?}"
-        );
-    }
+    ];
+    // A PTY read can end partway through a synchronized draw. Wait for each
+    // complete row, including the provider label, before checking its width.
+    let startup = app.wait_for("all-provider dashboard with provider labels", |screen| {
+        expected.iter().all(|(session, provider)| {
+            screen
+                .lines()
+                .any(|line| line.contains(session) && line.contains(provider))
+        })
+    });
+    assert_lines_fit(&startup, 150);
 
     app.send(CTRL_F);
     app.send(b"pi-refactor");
@@ -761,7 +879,7 @@ else:
     app.wait_for("original evidence row", |s| {
         s.contains("casa-questionnaire-evidence")
     });
-    app.send(CTRL_M_ENHANCED);
+    app.send(MOVE_SESSION);
     app.wait_for("move folder picker", |s| {
         s.contains("move session to folder")
     });
@@ -788,7 +906,7 @@ else:
 }
 
 #[test]
-fn ctrl_m_moves_through_the_real_tui_and_keeps_enter_distinct() {
+fn f6_moves_through_the_real_tui_and_keeps_enter_distinct() {
     let _serial = serialize_real_tty_test();
     let mut app = PtyApp::spawn_configured(110, 32, |command, home| {
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -835,13 +953,12 @@ printf '%s\n' '{"session_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","target_form
     app.wait_for("selected host source row", |screen| {
         screen.contains("approval-needed") && !screen.contains("release-reviewer")
     });
-    app.send(CTRL_M_ENHANCED);
+    app.send(MOVE_SESSION);
     app.wait_for("move folder picker", |screen| {
         screen.contains("move session to folder")
     });
     app.send(target.to_str().expect("UTF-8 move target").as_bytes());
-    // Enter must choose the folder rather than being mistaken for another
-    // Ctrl+M after enhanced keyboard mode is enabled.
+    // Enter chooses the folder; F6 needs no enhanced keyboard encoding.
     app.send(ENTER);
     let moved = app.wait_for("moved row", |screen| {
         screen.contains("moved approval-needed to")
@@ -1060,13 +1177,17 @@ printf '%s\n' '[{"id":"first","cwd":"/workspace/one","kind":"background","sessio
 #[test]
 fn slow_initial_provider_does_not_hide_fast_provider_results() {
     let _serial = serialize_real_tty_test();
-    let startup_started = Instant::now();
     let mut app = PtyApp::spawn_configured(100, 28, |command, home| {
         let fake_claude = home.path().join("slow-claude");
         fs::write(
             &fake_claude,
             r#"#!/bin/sh
-sleep 2
+attempt=0
+while [ ! -f "$AGENTVIEW_SLOW_PROVIDER_RELEASE" ]; do
+  attempt=$((attempt + 1))
+  [ "$attempt" -lt 600 ] || exit 72
+  sleep 0.05
+done
 printf '%s\n' '[{"id":"slow","cwd":"/workspace/slow","kind":"background","sessionId":"11111111-1111-4111-8111-111111111111","name":"slow-claude-session","status":"busy","state":"working"}]'
 "#,
         )
@@ -1114,6 +1235,10 @@ printf '%s\n' '[{"id":"slow","cwd":"/workspace/slow","kind":"background","sessio
             "--refresh-ms",
             "60000",
         ]);
+        command.env(
+            "AGENTVIEW_SLOW_PROVIDER_RELEASE",
+            home.path().join("release-slow-provider"),
+        );
     });
 
     let partial = app.wait_for("fast provider partial startup", |screen| {
@@ -1121,11 +1246,16 @@ printf '%s\n' '[{"id":"slow","cwd":"/workspace/slow","kind":"background","sessio
             && screen.contains("loading remaining providers…")
             && !screen.contains("slow-claude-session")
     });
+    // Do not use a 750ms wall-clock budget that includes fixture creation and
+    // hosted-runner scheduling. The stronger invariant is that fast results
+    // are visible while the slow provider is still unable to return at all.
+    let release = app.home_path().join("release-slow-provider");
     assert!(
-        startup_started.elapsed() < Duration::from_millis(750),
-        "fast provider was hidden behind the slow initial provider"
+        !release.exists(),
+        "slow provider was released before partial startup"
     );
     assert_lines_fit(&partial, 100);
+    fs::write(release, b"ready").expect("release slow provider after partial startup");
 
     app.wait_for("complete initial provider snapshot", |screen| {
         screen.contains("fast (last conversation)") && screen.contains("slow-claude-session")
@@ -1197,7 +1327,7 @@ fn hundreds_of_sessions_coalesce_arrow_bursts_without_output_backlog() {
     app.send(ENTER);
     app.wait_for("second bounded session page", |screen| {
         screen.contains("session-0025")
-            && screen.contains("session-0026")
+            && screen.contains("more sessions")
             && !screen.contains("session-0050")
     });
 
@@ -1308,7 +1438,7 @@ fn harness_picker_switches_visible_backends_without_losing_the_draft() {
     });
 
     app.wait_for("isolated harness-picker startup", |screen| {
-        screen.contains("agentview") && !screen.contains("loading")
+        screen.contains("BetterAgentView") && !screen.contains("loading")
     });
     app.send(b"keep this draft");
     app.wait_for("Claude draft composer", |screen| {
@@ -1421,7 +1551,7 @@ exit 0"#,
     });
 
     app.wait_for("extended-harness startup", |screen| {
-        screen.contains("agentview") && !screen.contains("loading")
+        screen.contains("BetterAgentView") && !screen.contains("loading")
     });
     app.send(b"test every harness");
     app.send(b"\t");
@@ -1492,7 +1622,7 @@ fn terminal_harness_backgrounds_resumes_stops_then_deletes_in_a_real_pty() {
     });
 
     app.wait_for("Terminal-only dashboard startup", |screen| {
-        screen.contains("agentview") && !screen.contains("loading provider sessions")
+        screen.contains("BetterAgentView") && !screen.contains("loading provider sessions")
     });
     app.send(b"/shell");
     app.send(ENTER);
@@ -1511,7 +1641,7 @@ fn terminal_harness_backgrounds_resumes_stops_then_deletes_in_a_real_pty() {
     app.wait_for("foreground Terminal shell", |screen| {
         screen.contains("TERMINAL_HARNESS_READY")
     });
-    app.send(SHIFT_LEFT);
+    app.send(DASHBOARD_BACK);
     app.wait_for("backgrounded Terminal row", |screen| {
         screen.contains("release shell") && screen.contains("Interactive shell")
     });
@@ -1520,7 +1650,7 @@ fn terminal_harness_backgrounds_resumes_stops_then_deletes_in_a_real_pty() {
     app.wait_for("exact Terminal screen replay", |screen| {
         screen.contains("TERMINAL_HARNESS_READY")
     });
-    app.send(SHIFT_LEFT);
+    app.send(DASHBOARD_BACK);
     app.wait_for("second Terminal background", |screen| {
         screen.contains("release shell") && screen.contains("backgrounded terminal release shell")
     });
@@ -1530,7 +1660,7 @@ fn terminal_harness_backgrounds_resumes_stops_then_deletes_in_a_real_pty() {
         "Terminal stopped, retained, and armed for delete",
         |screen| {
             screen.contains("release shell")
-                && screen.contains("Completed")
+                && screen.contains("Idle")
                 && screen.contains("ctrl+x again to delete")
         },
     );
@@ -1593,7 +1723,7 @@ esac
     });
 
     app.wait_for("Cursor-only startup", |screen| {
-        screen.contains("agentview") && !screen.contains("loading provider sessions")
+        screen.contains("BetterAgentView") && !screen.contains("loading provider sessions")
     });
     app.send(b"/harness cursor");
     app.send(ENTER);
@@ -1621,10 +1751,10 @@ esac
         screen.contains("CURSOR INTERACTIVE LOGIN")
     });
     assert!(
-        !login.contains("agentview"),
+        !login.contains("BetterAgentView"),
         "Cursor login was painted over the dashboard instead of receiving an isolated screen"
     );
-    app.send(SHIFT_LEFT);
+    app.send(DASHBOARD_BACK);
     app.wait_for(
         "Cursor login backgrounds to its actionable model picker",
         |screen| {
@@ -1635,7 +1765,7 @@ esac
     );
     app.send(b"l");
     app.wait_for("Cursor setup resumes the exact login PTY", |screen| {
-        screen.contains("CURSOR INTERACTIVE LOGIN") && !screen.contains("agentview")
+        screen.contains("CURSOR INTERACTIVE LOGIN") && !screen.contains("BetterAgentView")
     });
     app.send(ENTER);
     app.wait_for("authenticated Cursor account model catalog", |screen| {
@@ -1664,9 +1794,9 @@ esac
     );
     app.send(ENTER);
     app.wait_for("Enter opens the Cursor native foreground", |screen| {
-        screen.contains("CURSOR NATIVE FOREGROUND") && !screen.contains("agentview")
+        screen.contains("CURSOR NATIVE FOREGROUND") && !screen.contains("BetterAgentView")
     });
-    app.send(SHIFT_LEFT);
+    app.send(DASHBOARD_BACK);
     app.wait_for("new managed Cursor row after launch", |screen| {
         screen.contains("cursor login task")
             && screen.contains("Cursor native session is backgrounded")
@@ -1734,7 +1864,7 @@ printf '%s\n' 'backgrounded · deadbeef'
     });
 
     app.wait_for("empty Claude startup", |screen| {
-        screen.contains("agentview") && !screen.contains("loading provider sessions")
+        screen.contains("BetterAgentView") && !screen.contains("loading provider sessions")
     });
     let paste_disables_before = count_bytes(&app.raw, b"\x1b[?2004l");
     app.send(b"build the foreground feature");
@@ -1743,7 +1873,7 @@ printf '%s\n' 'backgrounded · deadbeef'
         screen.contains("launching Claude")
     });
     app.wait_for("new Claude row on the dashboard", |screen| {
-        screen.contains("agentview") && screen.contains("new-claude-task")
+        screen.contains("BetterAgentView") && screen.contains("new-claude-task")
     });
     thread::sleep(Duration::from_millis(300));
     assert!(
@@ -1762,7 +1892,7 @@ printf '%s\n' 'backgrounded · deadbeef'
     );
     let paste_enables_before = count_bytes(&app.raw, b"\x1b[?2004h");
     let enters_before = count_bytes(&app.raw, b"\x1b[?1049h");
-    app.send(SHIFT_LEFT);
+    app.send(DASHBOARD_BACK);
     app.wait_for_byte_count(
         b"\x1b[?1049h",
         enters_before + 1,
@@ -1774,7 +1904,7 @@ printf '%s\n' 'backgrounded · deadbeef'
         "bracketed paste re-enabled after Claude Left",
     );
     let returned = app.wait_for("new Claude row selected after backgrounding", |screen| {
-        screen.contains("agentview")
+        screen.contains("BetterAgentView")
             && screen.contains("new-claude-task")
             && screen.contains("backgrounded new-claude-task")
     });
@@ -1787,6 +1917,256 @@ printf '%s\n' 'backgrounded · deadbeef'
         "unexpected launch arguments: {arguments}"
     );
     assert!(!arguments.contains("--session-id"));
+    app.exit_cleanly();
+}
+
+#[test]
+fn exceptional_model_launches_one_session_and_is_never_remembered() {
+    let _serial = serialize_real_tty_test();
+    const EXCEPTIONAL: &str = "abliteration-ai/abliterated-model-large-flash";
+    let mut app = PtyApp::spawn_configured(150, 30, |command, home| {
+        let executable = home.path().join("claude");
+        fs::write(
+            &executable,
+            r##"#!/bin/sh
+if [ "${1:-}" = "--help" ]; then
+  printf '%s\n' "  --model <model> Model alias (e.g. 'opus', 'sonnet', or 'haiku')."
+  exit 0
+fi
+if [ "${1:-}" = "agents" ]; then
+  printf '%s\n' '[]'
+  exit 0
+fi
+printf '%s\n' "$*" >> "$HOME/claude-launches.log"
+printf '%s\n' 'backgrounded · deadbeef'
+"##,
+        )
+        .expect("write fake Claude executable");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+            .expect("make fake Claude executable runnable");
+        // A record from before exceptional models were excluded.
+        fs::write(
+            home.path().join("state/agentview/last-harness.json"),
+            format!(
+                r#"{{"version":1,"provider":"claude","models":[{{"provider":"claude","model":"{EXCEPTIONAL}"}}]}}"#
+            ),
+        )
+        .expect("seed legacy exceptional choice");
+        command.args([
+            "--claude-bin",
+            executable.to_str().expect("UTF-8 fake Claude path"),
+            "--no-host-codex",
+            "--no-host-pi",
+            "--no-host-opencode",
+            "--no-host-copilot",
+            "--no-host-cursor",
+            "--no-host-antigravity",
+            "--refresh-ms",
+            "60000",
+        ]);
+    });
+    let launches = |app: &PtyApp| {
+        fs::read_to_string(app.home_path().join("claude-launches.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let wait_for_launches = |app: &mut PtyApp, count: usize| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while launches(app).len() < count {
+            app.drain();
+            assert!(
+                Instant::now() < deadline,
+                "launch {count} never reached Claude"
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+    };
+
+    app.wait_for("empty Claude startup", |screen| {
+        screen.contains("BetterAgentView") && !screen.contains("loading provider sessions")
+    });
+    // The legacy exceptional choice reads as the default.
+    app.send(b"x");
+    app.wait_for("legacy exceptional model falls back to default", |screen| {
+        screen.contains(" · harness Claude · model default")
+    });
+    app.send(ESC);
+
+    app.send(b"/model opus\r");
+    app.wait_for("normal model chosen", |screen| {
+        screen.contains("new Claude tasks will use model opus")
+    });
+    app.send(format!("/model {EXCEPTIONAL}\r").as_bytes());
+    app.wait_for("exceptional model chosen for one session", |screen| {
+        screen.contains("is used for the next session only")
+    });
+    // Cancelling the composer abandons the choice.
+    app.send(ESC);
+    app.send(b"abandoned");
+    app.wait_for(
+        "cancelled exceptional choice does not carry over",
+        |screen| {
+            screen.contains(" · harness Claude · model opus")
+                && screen.contains("abandoned")
+                && !screen.contains("next session only")
+        },
+    );
+    app.send(ESC);
+    app.send(format!("/model {EXCEPTIONAL}\r").as_bytes());
+    app.wait_for("exceptional model chosen again", |screen| {
+        screen.contains("is used for the next session only")
+    });
+    app.send(b"first task");
+    app.wait_for("exceptional title", |screen| {
+        screen.contains(&format!("model {EXCEPTIONAL} (next session only)"))
+            && screen.contains("first task")
+    });
+    app.send(ENTER);
+    wait_for_launches(&mut app, 1);
+    assert!(
+        launches(&app)[0].contains(&format!("--model {EXCEPTIONAL}")),
+        "first launch lost the explicit choice: {:?}",
+        launches(&app)
+    );
+
+    thread::sleep(Duration::from_millis(500));
+    app.send(b"second task");
+    app.wait_for("the earlier normal model returns", |screen| {
+        screen.contains(" · harness Claude · model opus")
+            && screen.contains("second task")
+            && !screen.contains("next session only")
+    });
+    app.send(ENTER);
+    wait_for_launches(&mut app, 2);
+    let recorded = launches(&app);
+    assert!(
+        recorded[1].contains("--model opus") && !recorded[1].contains("abliteration"),
+        "second launch did not use the remembered normal model: {recorded:?}"
+    );
+    let saved = fs::read_to_string(app.home_path().join("state/agentview/last-harness.json"))
+        .expect("read saved harness record");
+    assert!(
+        saved.contains("\"opus\"") && !saved.contains("abliteration"),
+        "saved record: {saved}"
+    );
+    app.exit_cleanly();
+}
+
+#[test]
+fn exceptional_model_reaches_one_opencode_v1_prompt_and_is_never_remembered() {
+    exceptional_model_reaches_one_opencode_prompt(false);
+}
+
+#[test]
+fn exceptional_model_reaches_one_opencode_v2_prompt_and_is_never_remembered() {
+    exceptional_model_reaches_one_opencode_prompt(true);
+}
+
+fn exceptional_model_reaches_one_opencode_prompt(v2: bool) {
+    let _serial = serialize_real_tty_test();
+    const EXCEPTIONAL: &str = "abliteration-ai/abliterated-model-large-flash";
+    let mut app = PtyApp::spawn_configured(150, 30, |command, home| {
+        let executable = home.path().join("fake-opencode");
+        fs::write(
+            &executable,
+            include_str!("fixtures/fake-opencode-prompt-log.py"),
+        )
+        .expect("write fake OpenCode server");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+            .expect("make fake OpenCode runnable");
+        fs::write(
+            home.path().join("state/agentview/last-harness.json"),
+            format!(
+                r#"{{"version":1,"provider":"opencode","models":[{{"provider":"opencode","model":"{EXCEPTIONAL}"}}]}}"#
+            ),
+        )
+        .expect("seed legacy exceptional choice");
+        command
+            .env_remove("AGENTVIEW_OPENCODE_SERVICE_FILE")
+            .env_remove("AGENTVIEW_OPENCODE_URL")
+            .env("AGENTVIEW_OPENCODE_API", if v2 { "v2" } else { "v1" })
+            .args([
+                "--opencode-bin",
+                executable.to_str().expect("UTF-8 fake OpenCode path"),
+                "--no-host-claude",
+                "--no-host-codex",
+                "--no-host-pi",
+                "--no-host-copilot",
+                "--no-host-cursor",
+                "--no-host-antigravity",
+                "--refresh-ms",
+                "60000",
+            ]);
+    });
+    let prompts = |app: &PtyApp| {
+        fs::read_to_string(app.home_path().join("opencode-prompts.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let wait_for_prompts = |app: &mut PtyApp, count: usize| {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while prompts(app).len() < count {
+            app.drain();
+            if Instant::now() >= deadline {
+                let server_log =
+                    fs::read_to_string(app.home_path().join("state/agentview/opencode/server.log"))
+                        .unwrap_or_default();
+                panic!(
+                    "prompt {count} never reached OpenCode:\n{}\nserver log:\n{server_log}",
+                    app.screen()
+                );
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    };
+
+    app.wait_for("OpenCode startup", |screen| {
+        screen.contains("BetterAgentView") && !screen.contains("loading provider sessions")
+    });
+    app.send(b"x");
+    app.wait_for("legacy exceptional model falls back to default", |screen| {
+        screen.contains(" · harness OpenCode · model default")
+    });
+    app.send(ESC);
+    app.send(format!("/model {EXCEPTIONAL}\r").as_bytes());
+    app.wait_for("exceptional model chosen for one session", |screen| {
+        screen.contains("is used for the next session only")
+    });
+    app.send(b"first task");
+    app.wait_for("exceptional title", |screen| {
+        screen.contains(&format!("model {EXCEPTIONAL} (next session only)"))
+    });
+    app.send(ENTER);
+    wait_for_prompts(&mut app, 1);
+    assert_eq!(
+        prompts(&app)[0],
+        if v2 {
+            serde_json::json!({"providerID": "abliteration-ai", "id": "abliterated-model-large-flash"})
+        } else {
+            serde_json::json!({"providerID": "abliteration-ai", "modelID": "abliterated-model-large-flash"})
+        }
+    );
+    thread::sleep(Duration::from_millis(500));
+    app.send(b"second task");
+    app.wait_for("the default returns for the next session", |screen| {
+        screen.contains(" · harness OpenCode · model default")
+            && screen.contains("second task")
+            && !screen.contains("next session only")
+    });
+    app.send(ENTER);
+    wait_for_prompts(&mut app, 2);
+    assert!(
+        prompts(&app)[1].is_null(),
+        "second prompt carried a model: {:?}",
+        prompts(&app)
+    );
+    let saved = fs::read_to_string(app.home_path().join("state/agentview/last-harness.json"))
+        .expect("read saved harness record");
+    assert!(!saved.contains("abliteration"), "saved record: {saved}");
     app.exit_cleanly();
 }
 
@@ -1864,7 +2244,7 @@ send({'jsonrpc':'2.0','id':request['id'],'result':{'models':[
     });
 
     app.wait_for("Copilot-only startup", |screen| {
-        screen.contains("agentview") && !screen.contains("loading provider sessions")
+        screen.contains("BetterAgentView") && !screen.contains("loading provider sessions")
     });
     app.send(b"/harness copilot");
     app.send(ENTER);
@@ -1877,7 +2257,9 @@ send({'jsonrpc':'2.0','id':request['id'],'result':{'models':[
             // which also mentions native setup while a model load settles.
             && screen.contains("enter/l native setup")
     });
-    app.send(b"l");
+    // Enter activates the advertised login action without going through the
+    // printable-key paste heuristic, whose timing varies on busy CI runners.
+    app.send(ENTER);
     app.wait_for("Copilot native login prompt", |screen| {
         screen.contains("COPILOT INTERACTIVE LOGIN")
     });
@@ -1899,11 +2281,11 @@ send({'jsonrpc':'2.0','id':request['id'],'result':{'models':[
     app.wait_for("Copilot native foreground session", |screen| {
         screen.contains("COPILOT FULL SCREEN SESSION")
     });
-    app.send(SHIFT_LEFT);
+    app.send(DASHBOARD_BACK);
     app.wait_for(
         "Copilot dashboard after backgrounding native session",
         |screen| {
-            screen.contains("agentview")
+            screen.contains("BetterAgentView")
                 && screen.contains("copilot account task")
                 && screen.contains("GitHub Copilot")
         },
@@ -1968,16 +2350,16 @@ while :; do sleep 1; done
     });
 
     app.wait_for("Pi-only startup", |screen| {
-        screen.contains("agentview") && !screen.contains("loading provider sessions")
+        screen.contains("BetterAgentView") && !screen.contains("loading provider sessions")
     });
     app.send(b"Pi foreground task");
     app.send(ENTER);
     app.wait_for("Pi native foreground session", |screen| {
         screen.contains("PI FULL SCREEN SESSION")
     });
-    app.send(SHIFT_LEFT);
+    app.send(DASHBOARD_BACK);
     app.wait_for("exact managed Pi row after backgrounding", |screen| {
-        screen.contains("agentview")
+        screen.contains("BetterAgentView")
             && screen.contains("Pi foreground task")
             && screen.contains("Pi")
     });
@@ -2046,7 +2428,7 @@ while :; do sleep 1; done
     });
 
     app.wait_for("Antigravity-only startup", |screen| {
-        screen.contains("agentview") && !screen.contains("loading provider sessions")
+        screen.contains("BetterAgentView") && !screen.contains("loading provider sessions")
     });
     app.send(b"/harness antigravity");
     app.send(ENTER);
@@ -2078,9 +2460,9 @@ while :; do sleep 1; done
         screen.contains("ANTIGRAVITY FULL SCREEN SESSION")
     });
     let return_started = Instant::now();
-    app.send(SHIFT_LEFT);
+    app.send(DASHBOARD_BACK);
     let returned = app.wait_for("owned Antigravity row after Left", |screen| {
-        screen.contains("agentview")
+        screen.contains("BetterAgentView")
             && screen.contains("antigravity account task")
             && screen.contains("Antigravity native session is backgrounded")
     });
@@ -2177,11 +2559,11 @@ while :; do sleep 1; done
     assert!(arguments.contains("--model gemini-3-pro"));
     assert!(!arguments.contains("--sandbox"));
 
-    app.send(SHIFT_LEFT);
+    app.send(DASHBOARD_BACK);
     app.wait_for(
         "dashboard warning after backgrounding YOLO session",
         |screen| {
-            screen.contains("agentview")
+            screen.contains("BetterAgentView")
                 && screen.contains("⚠ YOLO MODE")
                 && screen.contains("Antigravity native session is backgrounded")
         },
@@ -2241,7 +2623,7 @@ fn completed_history_is_visible_by_default_and_stays_responsive() {
     let startup = Instant::now();
 
     let screen = app.wait_for("default bounded completed history", |screen| {
-        screen.contains("Completed")
+        screen.contains("Idle")
             && screen.contains("completed-session-0000")
             && screen.contains("completed-session-0022")
             && screen.contains("Show 23 more · 977 hidden")
@@ -2303,10 +2685,46 @@ fn completed_history_is_visible_by_default_and_stays_responsive() {
     app.send(b"/completed show");
     app.send(ENTER);
     app.wait_for("in-dashboard completed history restore", |screen| {
-        screen.contains("Completed")
+        screen.contains("Idle")
             && screen.contains("completed-session-0000")
             && screen.contains("Show 23 more · 977 hidden")
     });
+    app.exit_cleanly();
+}
+
+#[test]
+fn task_project_and_unassessed_idle_are_distinct_in_the_real_dashboard() {
+    let _serial = serialize_real_tty_test();
+    let mut app = PtyApp::spawn_configured(160, 40, |command, _home| {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/completion-sessions.json");
+        command.args([
+            "--fixture",
+            fixture.to_str().unwrap(),
+            "--no-host-providers",
+            "--theme",
+            "light",
+        ]);
+    });
+    let screen = app.wait_for(
+        "distinct completion categories without hiding the workstream",
+        |screen| {
+            [
+                "Task done",
+                "Project done",
+                "Idle",
+                "Needs input",
+                "Working",
+                "Scheduled",
+                "wrapped-up-workstream",
+                "finished-request",
+                "unassessed-session",
+            ]
+            .iter()
+            .all(|label| screen.contains(label))
+        },
+    );
+    assert_lines_fit(&screen, 160);
     app.exit_cleanly();
 }
 
@@ -2412,7 +2830,7 @@ fn real_host_auto_resolves_harnesses_models_and_bounded_history() {
     });
 
     app.wait_for("real host startup", |screen| {
-        screen.contains("agentview") && !screen.contains("loading provider sessions")
+        screen.contains("BetterAgentView") && !screen.contains("loading provider sessions")
     });
     app.send(b"read-only host draft");
     app.wait_for("real host composer", |screen| {
@@ -2535,7 +2953,7 @@ fn real_nested_pi_history_opens_and_returns_without_lookup_error() {
         "dashboard restoration after real Pi",
     );
     let returned = app.wait_for("returned agentview after Pi", |screen| {
-        screen.contains("agentview")
+        screen.contains("BetterAgentView")
     });
     assert!(returned.contains(&session_name));
     assert!(!contains_bytes(
@@ -2606,7 +3024,7 @@ fn real_claude_attach_explains_and_honors_native_background_return() {
         "dashboard restoration after Claude double-Left",
     );
     app.wait_for("returned agentview after Claude", |screen| {
-        screen.contains("agentview") && screen.contains(&session_name)
+        screen.contains("BetterAgentView") && screen.contains(&session_name)
     });
     assert!(!contains_bytes(
         &app.raw[raw_before_open..],
@@ -2631,7 +3049,7 @@ fn real_host_composer_selects_provider_model_filter_and_manual_refresh() {
         ]);
     });
     app.wait_for("real host composer startup", |screen| {
-        screen.contains("agentview") && !screen.contains("loading")
+        screen.contains("BetterAgentView") && !screen.contains("loading")
     });
 
     app.send(b"/harness pi\r");
@@ -2710,7 +3128,9 @@ if [ "${1:-}" = db ] && [ "${2:-}" != path ]; then
     *"FROM part p JOIN session s"*|*"FROM main.session_message m"*) printf 'record\n'; exit 0 ;;
   esac
   printf '%s\n' "$@" > "$AGENTVIEW_OPENCODE_HISTORY_CALLED"
-  sleep 2
+  # Longer than wait_for's unchanged 10s deadline. A dashboard that waits on
+  # external history must fail, independently of runner startup speed.
+  sleep 30
 fi
 exit 1
 "#,
@@ -2738,8 +3158,6 @@ exit 1
                 home.path().join("opencode-history-called"),
             );
     });
-    let startup = Instant::now();
-
     app.wait_for("OpenCode history-free default startup", |screen| {
         screen.contains("Finished sessions wait here for you to review")
             && !screen.contains("loading provider sessions")
@@ -2751,11 +3169,9 @@ exit 1
         "OpenCode external history ran without --include-external: {}",
         fs::read_to_string(app.home_path().join("opencode-history-called")).unwrap_or_default()
     );
-    assert!(
-        startup.elapsed() < Duration::from_millis(750),
-        "default dashboard waited on OpenCode completed history: {:?}",
-        startup.elapsed()
-    );
+    // The trap cannot complete inside the startup deadline. Together with the
+    // no-query assertion above this checks the dependency directly, rather
+    // than treating a loaded runner's 751ms first paint as a history query.
     app.exit_cleanly();
 }
 
@@ -2763,7 +3179,7 @@ exit 1
 fn wide_real_tty_exercises_primary_interactions_and_restores_terminal() {
     let _serial = serialize_real_tty_test();
     let mut app = PtyApp::spawn(120, 34);
-    let expected_version = format!("agentview v{}", env!("CARGO_PKG_VERSION"));
+    let expected_version = format!("BetterAgentView v{}", env!("CARGO_PKG_VERSION"));
     let startup = app.wait_for("populated startup view", |screen| {
         screen.contains(&expected_version)
             && screen.contains("Ready for review")
@@ -2775,14 +3191,17 @@ fn wide_real_tty_exercises_primary_interactions_and_restores_terminal() {
     assert_eq!(
         startup
             .lines()
-            .filter(|line| line.trim_start().starts_with('✱'))
+            .filter(|line| line.trim_start_matches([' ', '❯']).starts_with('✻'))
             .count(),
         3
     );
     assert_eq!(
         startup
             .lines()
-            .filter(|line| line.trim_start().starts_with('✳') || line.trim_start().starts_with('·'))
+            .filter(|line| {
+                let row = line.trim_start_matches([' ', '❯']);
+                row.starts_with('✳') || row.starts_with('·')
+            })
             .count(),
         3
     );
@@ -3204,7 +3623,7 @@ fn has_help_entry(screen: &str, key: &str, description: &str) -> bool {
 fn narrow_and_tiny_real_ttys_have_bounded_fallback_layouts() {
     let _serial = serialize_real_tty_test();
     let mut narrow = PtyApp::spawn(55, 18);
-    let expected_version = format!("agentview v{}", env!("CARGO_PKG_VERSION"));
+    let expected_version = format!("BetterAgentView v{}", env!("CARGO_PKG_VERSION"));
     let startup = narrow.wait_for("narrow startup", |screen| {
         screen.contains(&expected_version)
             && screen.contains("Needs input")
@@ -3227,7 +3646,7 @@ fn narrow_and_tiny_real_ttys_have_bounded_fallback_layouts() {
 
     let mut tiny = PtyApp::spawn(31, 7);
     let fallback = tiny.wait_for("tiny terminal fallback", |screen| {
-        screen.contains("agentview needs")
+        screen.contains("BetterAgentView needs")
             && screen.contains("at least 32×8")
             && !screen.contains("release-reviewer")
     });
@@ -3258,7 +3677,7 @@ fn vscode_wide_terminal_help_preserves_visual_line_breaks() {
             ]);
     });
     app.wait_for("VS Code-style terminal startup", |screen| {
-        screen.contains("agentview") && screen.contains("? for shortcuts")
+        screen.contains("BetterAgentView") && screen.contains("? for shortcuts")
     });
 
     app.send(b"?");
@@ -3307,6 +3726,90 @@ fn arrow_navigation_and_group_collapse_are_real_terminal_events() {
     app.send(ENTER);
     app.wait_for("expanded Needs input group", |screen| {
         screen.contains("approval-needed") && screen.contains("needs-environment")
+    });
+    app.exit_cleanly();
+}
+
+#[test]
+fn mouse_motion_does_not_steal_real_keyboard_navigation() {
+    let _serial = serialize_real_tty_test();
+    let mut app = PtyApp::spawn(90, 24);
+    let screen = app.wait_for("motion target rendered", |screen| {
+        screen.contains("release-reviewer") && screen.contains("needs-environment")
+    });
+    let row = screen
+        .lines()
+        .position(|line| line.contains("needs-environment"))
+        .unwrap()
+        + 1;
+    // SGR button 35 is motion with no button pressed, not an intentional click.
+    app.send(format!("\x1b[<35;12;{row}M").as_bytes());
+    app.send(DOWN);
+    app.send(ENTER);
+    app.wait_for("keyboard still collapses the next heading", |screen| {
+        screen.contains("Needs input 2") && !screen.contains("approval-needed")
+    });
+    app.exit_cleanly();
+}
+
+#[test]
+fn mouse_hover_can_be_enabled_for_real_terminal_motion_events() {
+    let _serial = serialize_real_tty_test();
+    let mut app = PtyApp::spawn_configured(90, 24, |command, _| {
+        command.args([
+            "--fixture",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/populated-sessions.json"
+            ),
+            "--all",
+            "--mouse-hover",
+            "--refresh-ms",
+            "60000",
+        ]);
+    });
+    let screen = app.wait_for("hover target rendered", |screen| {
+        screen.contains("release-reviewer") && screen.contains("needs-environment")
+    });
+    let row = screen
+        .lines()
+        .position(|line| line.contains("needs-environment"))
+        .unwrap()
+        + 1;
+    app.send(format!("\x1b[<35;12;{row}M").as_bytes());
+    app.wait_for("pointer selected the target row", |screen| {
+        screen
+            .lines()
+            .any(|line| line.starts_with('❯') && line.contains("needs-environment"))
+    });
+    app.exit_cleanly();
+}
+
+#[test]
+fn clicking_a_row_activates_it_like_enter() {
+    let _serial = serialize_real_tty_test();
+    let mut app = PtyApp::spawn(90, 24);
+    let screen = app.wait_for("click target rendered", |screen| {
+        screen.contains("release-reviewer")
+            && screen
+                .lines()
+                .any(|line| line.trim_start().starts_with("Needs input"))
+    });
+    let row = screen
+        .lines()
+        .position(|line| line.trim_start().starts_with("Needs input"))
+        .expect("Needs input heading is on screen")
+        + 1;
+
+    // SGR mouse press and release on the heading, 1-based like the protocol.
+    app.send(format!("\x1b[<0;4;{row}M\x1b[<0;4;{row}m").as_bytes());
+    app.wait_for("heading collapsed by the click", |screen| {
+        screen.contains("Needs input 2") && !screen.contains("approval-needed")
+    });
+
+    app.send(format!("\x1b[<0;4;{row}M\x1b[<0;4;{row}m").as_bytes());
+    app.wait_for("heading expanded by a second click", |screen| {
+        screen.contains("approval-needed")
     });
     app.exit_cleanly();
 }

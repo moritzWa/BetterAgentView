@@ -38,6 +38,20 @@ try{
  messages[7]=projectMessage({id:messages[7].id,type:'assistant',seq:8,time_created:8,time_updated:8,data:{content:[{type:'text',text:special},{type:'tool',text:'CONTEXT_TOOL_ONLY_CANARY'},{type:'reasoning',text:'CONTEXT_REASONING_CANARY'}]}});
  assert.equal(projectMessage({id:'tool_only',type:'assistant',seq:9,time_created:9,time_updated:9,data:{content:[{type:'tool',text:'CONTEXT_TOOL_ONLY_CANARY'}]}}),null);
  for(let i=0;i<ids.length;i++)await post('/v1/sync/batches',writer,{version:1,batch_id:'batch_'+device+'_'+i,session_id:ids[i],kind:'baseline',from:0,through:100,upload_id:'gen_'+device+'_'+i,chunk:0,complete:true,session:{title:'Synthetic cloud contract '+i,archived:false,deleted:false,visible_before:null},messages:i===0?messages:[],delete_ids:[]});
+ // This fixture has not published a heartbeat. Verify production queue receipts before it comes online.
+ const offlineSend='offline_send_'+device,offlineStart='offline_start_'+device;
+ const send=await rpc('send_session_message',{operation_id:offlineSend,session_id:ids[0],text:'Cloud-only offline fixture. Never execute.'});
+ assert.equal(send.status,'queued');assert.equal(send.delivery_state,'queued_mac_offline');
+ assert.equal(send.claim_ceiling,'queued');assert.equal(send.delivery_confirmed,false);
+ assert.equal(send.say_to_owner,'Message saved. Your Mac will pick it up automatically when it reconnects.');
+ assert.equal((await rpc('message_status',{operation_id:offlineSend})).say_to_owner,send.say_to_owner);
+ const start=await rpc('start_session',{operation_id:offlineStart,directory:'/Users/m/OfflineFixture',text:'Cloud-only offline fixture. Never execute.'});
+ assert.equal(start.status,'queued');assert.equal(start.delivery_state,'queued_offline');assert.equal(start.session_id,null);
+ assert.equal(start.say_to_owner,'Start request saved. Your Mac will pick it up automatically when it reconnects.');
+ assert.equal((await rpc('start_status',{operation_id:offlineStart})).say_to_owner,start.say_to_owner);
+ assert.equal((await rpc('cancel_message',{operation_id:offlineSend,confirmed:true})).status,'cancelled');
+ assert.equal((await rpc('cancel_start',{operation_id:offlineStart,confirmed:true})).status,'cancelled');
+ console.log('PASS production offline send and start saved; follow-up status agrees.');
  statuses[0].last_user_message_id=messages[6].id;
  await refresh();timer=setInterval(()=>{refresh().catch(error=>{failedRefresh=error;});},1500);
  const seen=[];let after=0;
@@ -47,12 +61,12 @@ try{
  assert(hit&&hit.excerpt.includes('contractquartzneedle'));assert(hit.excerpt_offset>0);assert([...hit.excerpt].length<=2000);
  const message=await rpc('read_message',{session_id:ids[0],message_id:hit.message_id,offset:hit.excerpt_offset});assert(message.text.startsWith(hit.excerpt));assert(message.mac_seen_recently);assert(message.source_checked_at);
  console.log('PASS deployed matching search excerpt and Unicode-compatible message offset');
- const overview=await rpc('list_sessions',{status:'active'});
+ const overview=await rpc('list_sessions',{status:'active',detail:true});
  assert.equal(overview.sessions.length,2);assert.equal(overview.counts.total,3);assert.equal(overview.counts.working,1);assert.equal(overview.counts.needs_you,1);
- const decision=overview.sessions.find(s=>s.session_id===ids[0]);assert(decision.last_assistant_message.text.endsWith('option A or option B?'));assert(decision.last_user_message);assert.equal(decision.attention,'needs_you');
+ const decision=overview.sessions.find(s=>s.session_id===ids[0]);assert(decision.recent_messages.findLast(m=>m.role==='assistant').text.endsWith('option A or option B?'));assert(decision.recent_messages.findLast(m=>m.role==='user'));assert.equal(decision.attention,'needs_you');
  assert.equal(decision.directory,'/fixtures/project-alpha');assert.equal(decision.project_name,'project-alpha');
  assert.deepEqual(decision.recent_messages.map(m=>[m.message_order,m.role]),[[5,'user'],[6,'assistant'],[7,'user'],[8,'assistant']]);
- assert(decision.last_assistant_message.text.startsWith('😀'));assert(decision.last_assistant_message.text.includes('middle omitted'));
+ assert(decision.recent_messages.findLast(m=>m.role==='assistant').text.startsWith('😀'));assert(decision.recent_messages.findLast(m=>m.role==='assistant').text.includes('middle omitted'));
  assert(!JSON.stringify(overview).includes('CONTEXT_TOOL_ONLY_CANARY'));assert(!JSON.stringify(overview).includes('CONTEXT_REASONING_CANARY'));
  assert.equal((await rpc('list_sessions',{query:'project-alpha'})).sessions.length,2);
  console.log('PASS one deployed overview includes active counts and the actual pending question');
@@ -73,7 +87,7 @@ finally{
  for(const token of [reader,writer].filter(Boolean))await fetch(base+'/revoke',{method:'POST',body:new URLSearchParams({token}),signal:AbortSignal.timeout(30_000)}).catch(()=>{});
  if(db){
   let clean=true;
-  for(const table of ['av_staged_deletes','av_messages','av_baselines','av_receipts','av_sessions','av_outbox','av_credentials'])try{await db.query(`DELETE FROM ${table} WHERE owner_id=$1 AND device_id=$2 AND database_epoch=$3`,source);}catch{clean=false;}
+  for(const table of ['av_staged_deletes','av_messages','av_baselines','av_receipts','av_sessions','av_outbox','av_starts','av_credentials'])try{await db.query(`DELETE FROM ${table} WHERE owner_id=$1 AND device_id=$2 AND database_epoch=$3`,source);}catch{clean=false;}
   try{await db.query('DELETE FROM av_pairings WHERE device_id=$1 AND database_epoch=$2',[device,epoch]);}catch{clean=false;}
   if(!clean){console.error('Synthetic fixture cleanup was incomplete');process.exitCode=1;}else console.log('Synthetic fixture grants and database rows removed.');
   await db.close();

@@ -20,6 +20,7 @@ mod opencode;
 mod opencode_background;
 pub(crate) mod opencode_db;
 mod opencode_live;
+pub(crate) mod opencode_records;
 mod pi;
 mod qwen;
 mod screen_status;

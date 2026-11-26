@@ -26,8 +26,11 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
         area,
     );
     if area.width < 32 || area.height < 8 {
-        let message = if area.width >= 18 && area.height >= 2 {
-            vec![Line::from("agentview needs"), Line::from("at least 32×8")]
+        let message = if area.width >= 21 && area.height >= 2 {
+            vec![
+                Line::from("BetterAgentView needs"),
+                Line::from("at least 32×8"),
+            ]
         } else {
             vec![Line::from("needs 32×8")]
         };
@@ -53,7 +56,8 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
             .min(area.height.saturating_sub(5)),
         _ => 3,
     };
-    let header_height = header_height(area.height, app.usage.len());
+    let header_height =
+        header_height(area.height, app.usage.len()) + u16::from(app.update_available.is_some());
     let queue_height = if app.overlay == Overlay::None {
         let spare = area
             .height
@@ -86,6 +90,7 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
     } else if app.overlay == Overlay::ModelPicker {
         render_model_picker(frame, app, area);
     } else if app.overlay == Overlay::HiddenPicker {
+        fade_background(frame, area);
         render_hidden_picker(frame, app, area);
     } else if app.overlay == Overlay::DirectoryPicker {
         render_directory_picker(frame, app, area);
@@ -96,35 +101,92 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
     }
 }
 
+/// Share of the way each color moves toward the background when a popup
+/// grays out the dashboard behind it.
+const FADE: f32 = 0.6;
+
+/// Gray out what is already drawn, so a popup stands out from the dashboard.
+/// Text and highlights move toward the background color; the popup is drawn
+/// over the result.
+fn fade_background(frame: &mut Frame<'_>, area: Rect) {
+    let background = palette().bg;
+    let foreground = palette().fg;
+    let toward = |color: Color, default: Color| {
+        let (red, green, blue) = fade_rgb(color, default);
+        let (back_red, back_green, back_blue) = fade_rgb(background, background);
+        let mix = |from: u8, to: u8| (from as f32 + (to as f32 - from as f32) * FADE).round() as u8;
+        Color::Rgb(
+            mix(red, back_red),
+            mix(green, back_green),
+            mix(blue, back_blue),
+        )
+    };
+    let buffer = frame.buffer_mut();
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            let cell = buffer.get_mut(x, y);
+            cell.fg = toward(cell.fg, foreground);
+            cell.bg = toward(cell.bg, background);
+        }
+    }
+}
+
+fn fade_rgb(color: Color, default: Color) -> (u8, u8, u8) {
+    match color {
+        Color::Rgb(red, green, blue) => (red, green, blue),
+        Color::White => (255, 255, 255),
+        Color::Black => (0, 0, 0),
+        Color::Reset => fade_rgb(default, Color::Rgb(128, 128, 128)),
+        _ => (128, 128, 128),
+    }
+}
+
 /// Terminal tab title, such as `2 need input · 1 working · 3 done · agentview`.
 pub fn terminal_title(app: &App) -> String {
     let counts = [
-        (app.session_count(SessionState::NeedsInput), "need input"),
-        (app.session_count(SessionState::Working), "working"),
         (
-            app.session_count(SessionState::ReadyForReview)
-                + app.session_count(SessionState::Completed),
-            "done",
+            app.session_count(SessionState::NeedsInput)
+                + app.session_count(SessionState::ReadyForReview),
+            "need input",
         ),
+        (app.session_count(SessionState::Working), "working"),
+        (app.session_count(SessionState::TaskDone), "task done"),
+        (app.session_count(SessionState::ProjectDone), "project done"),
     ];
     let mut parts = counts
         .into_iter()
         .filter(|(count, _)| *count > 0)
         .map(|(count, label)| format!("{count} {label}"))
         .collect::<Vec<_>>();
-    parts.push("agentview".into());
+    parts.push("BetterAgentView".into());
     parts.join(" · ")
 }
 
 fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    let full_area = area;
+    let area = Rect {
+        height: area
+            .height
+            .saturating_sub(u16::from(app.update_available.is_some())),
+        ..area
+    };
     let title = format!(
-        "agentview v{}{}{}",
+        "BetterAgentView v{}{}",
         env!("CARGO_PKG_VERSION"),
         if app.work_only { " · Work only" } else { "" },
-        crate::update_check::newer_version()
-            .map(|version| format!(" · v{version} available, run av update"))
-            .unwrap_or_default()
     );
+    let update = app.update_available.as_ref().map(|version| {
+        Span::styled(
+            if full_area.width < 70 {
+                format!("v{version} available · bav update")
+            } else {
+                format!("Update v{version} available · run bav update, then restart bav")
+            },
+            Style::default()
+                .fg(palette().attention)
+                .add_modifier(Modifier::BOLD),
+        )
+    });
 
     let lines = if area.height <= 2 {
         vec![
@@ -173,7 +235,7 @@ fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
                 title,
                 Style::default().add_modifier(Modifier::BOLD),
             )),
-            Line::from(""),
+            Line::default(),
             Line::default(),
             Line::from(Span::styled(
                 if app.yolo {
@@ -192,6 +254,16 @@ fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
         area,
     );
     render_usage(frame, app, area);
+    if let Some(update) = update {
+        frame.render_widget(
+            Paragraph::new(Line::from(update)),
+            Rect {
+                y: full_area.bottom().saturating_sub(1),
+                height: 1,
+                ..full_area
+            },
+        );
+    }
 }
 
 /// Session rows the list always keeps, so the job panel never squeezes it out.
@@ -360,6 +432,7 @@ fn queued_note(app: &App, session: &AgentSession) -> Option<String> {
 fn render_session_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let mut lines = Vec::new();
     let mut selected_line = None;
+    let mut selectable: Vec<(usize, SelectionKey)> = Vec::new();
     let selection_visible = !matches!(
         app.overlay,
         Overlay::Composer(_)
@@ -395,13 +468,29 @@ fn render_session_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
         if is_selected {
             selected_line = Some(lines.len());
         }
+        selectable.push((lines.len(), SelectionKey::Group(group.key.clone())));
         let collapsed = app.collapsed.contains(&group.key);
         let suffix = collapsed.then(|| format!(" {}", group.sessions.len()));
-        let mut spans = vec![Span::raw(format!(
-            "{}{}",
-            sanitize_inline(&group.label),
-            suffix.unwrap_or_default()
-        ))];
+        let mut spans = vec![
+            Span::styled(
+                if is_selected { "❯ " } else { "  " },
+                Style::default().fg(palette().focus),
+            ),
+            Span::styled(
+                format!(
+                    "{}{}",
+                    sanitize_inline(&group.label),
+                    suffix.unwrap_or_default()
+                ),
+                Style::default()
+                    .fg(if is_selected {
+                        palette().focus
+                    } else {
+                        palette().fg
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ];
         if let Some(verb) = is_selected.then(|| app.pending_removal_verb()).flatten() {
             spans.push(Span::styled(
                 format!("  ctrl+x again to {verb}"),
@@ -438,6 +527,7 @@ fn render_session_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
             if is_selected {
                 selected_line = Some(lines.len());
             }
+            selectable.push((lines.len(), SelectionKey::Session(session.id.clone())));
             lines.push(render_tree_session_row(
                 session,
                 app.view_mode,
@@ -460,6 +550,7 @@ fn render_session_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
             if is_selected {
                 selected_line = Some(lines.len());
             }
+            selectable.push((lines.len(), SelectionKey::ShowMore(group.key.clone())));
             lines.push(render_show_more_row(
                 hidden,
                 app.session_page_size(),
@@ -499,21 +590,99 @@ fn render_session_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
         }
     }
 
-    // Keep the viewport page-aligned. A one-line sliding window rewrites every
-    // visible row for every arrow repeat once the selection reaches the bottom,
-    // which creates a large output backlog on SSH/tmux with long session lists.
-    // Within a page, navigation now changes only the old and new selected rows.
-    let page_height = area.height.max(1) as usize;
-    let scroll = selected_line
-        .map(|line| (line / page_height) * page_height)
-        .unwrap_or(0)
-        .min(u16::MAX as usize);
+    // The list is a pane that scrolls. The viewport stays put while the
+    // selection moves inside it, so an arrow press redraws only the old and new
+    // rows, and moves by one line when the selection reaches an edge. Rows cut
+    // off at either end are counted in a line of their own.
+    let total = lines.len();
+    let height = usize::from(area.height).max(1);
+    let (scroll, content) = list_window(total, height, selected_line, app.list_scroll());
+    let top_hidden = scroll > 0 && height >= MORE_ROWS_MIN_HEIGHT;
+    let bottom_hidden = scroll + content < total && height >= MORE_ROWS_MIN_HEIGHT;
+    let top_offset = usize::from(top_hidden);
+    let sessions_in = |range: std::ops::Range<usize>| {
+        selectable
+            .iter()
+            .filter(|(line, key)| range.contains(line) && matches!(key, SelectionKey::Session(_)))
+            .count()
+    };
+    let mut visible: Vec<Line<'static>> = Vec::with_capacity(height);
+    if top_hidden {
+        visible.push(render_more_row('↑', sessions_in(0..scroll)));
+    }
+    visible.extend(lines.into_iter().skip(scroll).take(content));
+    if bottom_hidden {
+        visible.push(render_more_row('↓', sessions_in(scroll + content..total)));
+    }
+    let rows = selectable
+        .into_iter()
+        .filter(|(line, _)| (scroll..scroll + content).contains(line))
+        .map(|(line, key)| {
+            let row = area.y.saturating_add((line - scroll + top_offset) as u16);
+            (row, key)
+        })
+        .collect();
+    app.set_list_view(scroll, rows);
     frame.render_widget(
-        Paragraph::new(lines)
-            .style(Style::default().bg(palette().bg).fg(palette().fg))
-            .scroll((scroll as u16, 0)),
+        Paragraph::new(visible).style(Style::default().bg(palette().bg).fg(palette().fg)),
         area,
     );
+}
+
+/// Shortest list area that spends rows on "more" lines.
+const MORE_ROWS_MIN_HEIGHT: usize = 3;
+
+/// The first line of a list of `total` lines to show in `height` rows, and how
+/// many lines fit there once the rows that count what is cut off at the top
+/// and bottom are set aside. `previous` is where the list was scrolled before,
+/// which it keeps unless the selected line would leave the view.
+fn list_window(
+    total: usize,
+    height: usize,
+    selected: Option<usize>,
+    previous: usize,
+) -> (usize, usize) {
+    if total <= height {
+        return (0, total);
+    }
+    if height < MORE_ROWS_MIN_HEIGHT {
+        let scroll = selected
+            .map(|line| line.saturating_sub(height - 1))
+            .unwrap_or(previous)
+            .min(total - height);
+        return (scroll, height);
+    }
+    let content = |scroll: usize| {
+        let available = height - usize::from(scroll > 0);
+        available - usize::from(scroll + available < total)
+    };
+    let last = total - (height - 1);
+    let mut scroll = previous.min(last);
+    if let Some(line) = selected {
+        if line < scroll {
+            // One line of what lies above, usually the folder heading.
+            scroll = line.saturating_sub(1);
+        }
+        while line >= scroll + content(scroll) && scroll < last {
+            scroll += 1;
+        }
+        if scroll == 1 && line < content(0) {
+            scroll = 0;
+        }
+    }
+    (scroll, content(scroll))
+}
+
+fn render_more_row(arrow: char, sessions: usize) -> Line<'static> {
+    let text = match sessions {
+        0 => "more".to_owned(),
+        1 => "1 more session".to_owned(),
+        count => format!("{count} more sessions"),
+    };
+    Line::from(vec![
+        Span::styled(format!("  {arrow} "), Style::default().fg(palette().accent)),
+        Span::styled(text, Style::default().fg(palette().dim)),
+    ])
 }
 
 fn render_show_more_row(hidden: usize, page_size: usize, selected: bool) -> Line<'static> {
@@ -631,7 +800,11 @@ fn empty_state_lines(includes_completed: bool) -> Vec<Line<'static>> {
         )),
         Line::default(),
         Line::from(Span::styled(
-            "Hand off a substantial task below. agentview will organize it by status so you can see when it needs you.",
+            "Hand off a substantial task below. BetterAgentView will organize it by status so you can see when it needs you.",
+            Style::default().fg(palette().dim),
+        )),
+        Line::from(Span::styled(
+            "/onboarding copies a setup prompt for your agent. /setup installs a harness.",
             Style::default().fg(palette().dim),
         )),
     ]
@@ -723,7 +896,12 @@ fn render_tree_session_row(
     reminder_column: bool,
 ) -> Line<'static> {
     let soft_ask = session.state == SessionState::NeedsInput
-        && session.raw_state.as_deref() == Some(crate::turn_classifier::ASKED_IN_MESSAGE);
+        && matches!(
+            session.raw_state.as_deref(),
+            Some(
+                crate::turn_classifier::ASKED_IN_MESSAGE | crate::turn_classifier::UNFINISHED_TURN
+            )
+        );
     let waiting = view_mode == ViewMode::Directory
         && (soft_ask
             || session.is_scheduled()
@@ -848,7 +1026,7 @@ fn render_tree_session_row(
     };
     let name_gap = if width >= 70 { "   " } else { " " };
     let fixed = indent
-        + 3
+        + 4
         + name_gap.len()
         + name_width
         + display_width(&provider_column)
@@ -857,8 +1035,19 @@ fn render_tree_session_row(
     // Indent the status marker with its session, keeping later columns aligned.
     let name = pad_to_width(truncate(&session.name, name_width), name_width);
     let mut spans = vec![
-        Span::styled(format!("{} {symbol} ", " ".repeat(indent)), symbol_style),
-        Span::raw(name),
+        Span::styled(
+            if selected { "❯ " } else { "  " },
+            Style::default().fg(palette().focus),
+        ),
+        Span::styled(format!("{}{symbol} ", " ".repeat(indent)), symbol_style),
+        Span::styled(
+            name,
+            Style::default().fg(if selected {
+                palette().focus
+            } else {
+                palette().fg
+            }),
+        ),
         Span::styled(
             format!("{name_gap}{provider_column}"),
             Style::default().fg(palette().dim),
@@ -963,6 +1152,11 @@ fn render_composer(frame: &mut Frame<'_>, app: &App, area: Rect) {
         Overlay::Composer(ComposerMode::NewSession) | Overlay::HarnessPicker | Overlay::ModelPicker
     ) {
         let launch_option = app.launch_model.as_deref().unwrap_or("default");
+        let launch_option = if app.launch_model_is_exceptional() {
+            format!("{launch_option} (next session only)")
+        } else {
+            launch_option.to_owned()
+        };
         let option_label = if app.launch_provider == Provider::Terminal {
             "shell"
         } else {
@@ -1702,7 +1896,7 @@ fn contextual_footer(app: &App, width: u16) -> String {
             "rename · type name · enter save · esc cancel".into()
         }
         Overlay::Composer(ComposerMode::MigrationName { .. }) if width >= 70 => {
-            "migration name is local to agentview · enter migrate · esc target picker".into()
+            "migration name is local to BetterAgentView · enter migrate · esc target picker".into()
         }
         Overlay::Composer(ComposerMode::MigrationName { .. }) => {
             "enter migrate · esc targets".into()
@@ -1920,11 +2114,7 @@ const FOLDER_PICKER_KEYS: &str = if cfg!(target_os = "macos") {
     "ctrl+o"
 };
 
-const MOVE_KEYS: &str = if cfg!(target_os = "macos") {
-    "ctrl+m / cmd+m"
-} else {
-    "ctrl+m"
-};
+const MOVE_KEYS: &str = "F6";
 
 fn help_sections(app: &App) -> Vec<HelpSection> {
     let mut sections = vec![HelpSection {
@@ -1951,7 +2141,7 @@ fn help_sections(app: &App) -> Vec<HelpSection> {
         } else {
             selected.push(("← / → twice", "back, at the prompt edge"));
         }
-        selected.push(("shift+← / →", "back immediately"));
+        selected.push(("F7", "back immediately"));
         if session.capabilities.contains(&Capability::Approve)
             || session.capabilities.contains(&Capability::Decline)
         {
@@ -2027,6 +2217,7 @@ fn help_sections(app: &App) -> Vec<HelpSection> {
             ("/model name", "pick model or Terminal shell"),
             ("/shell name", "pick Terminal shell"),
             ("/setup", "install or sign in"),
+            ("/onboarding", "copy setup prompt"),
             ("/login", "open native setup"),
             ("/migrate", "copy selected to another harness"),
             ("/usage", "subscription limits and resets"),
@@ -2906,11 +3097,13 @@ fn styled_line(spans: Vec<Span<'static>>, selected: bool) -> Line<'static> {
 
 fn state_symbol(state: SessionState, live_animation_visible: bool) -> &'static str {
     match state {
-        SessionState::ReadyForReview => "✱",
-        SessionState::NeedsInput => "✱",
+        SessionState::ReadyForReview => "✻",
+        SessionState::NeedsInput => "✻",
         SessionState::Working if live_animation_visible => "✳",
         SessionState::Working => "·",
         SessionState::Completed => "•",
+        SessionState::TaskDone => "•",
+        SessionState::ProjectDone => "✓",
         SessionState::Scheduled => "•",
         SessionState::Unknown => "?",
     }
@@ -2920,7 +3113,9 @@ fn state_color(state: SessionState) -> Color {
     match state {
         SessionState::ReadyForReview | SessionState::NeedsInput => palette().attention,
         SessionState::Working => palette().fg,
-        SessionState::Completed => palette().complete,
+        SessionState::Completed => palette().dim,
+        SessionState::TaskDone => palette().complete,
+        SessionState::ProjectDone => palette().dim,
         SessionState::Scheduled => palette().fg,
         SessionState::Unknown => palette().dim,
     }
@@ -2931,7 +3126,9 @@ fn short_state(state: SessionState) -> &'static str {
         SessionState::ReadyForReview => "Review",
         SessionState::NeedsInput => "Needs input",
         SessionState::Working => "Working",
-        SessionState::Completed => "Done",
+        SessionState::Completed => "Idle",
+        SessionState::TaskDone => "Task done",
+        SessionState::ProjectDone => "Project done",
         SessionState::Scheduled => "Scheduled",
         SessionState::Unknown => "Unknown",
     }
@@ -3098,6 +3295,109 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dashboard_snapshot_matches_rendered_ui_and_mcp_fixture() {
+        let expected: crate::bridge::contract::DashboardSnapshot =
+            serde_json::from_str(include_str!("../bridge/test/fixtures/dashboard.json")).unwrap();
+        let sessions = expected
+            .sessions
+            .iter()
+            .map(|row| {
+                let state = match row.category {
+                    crate::bridge::contract::DashboardCategory::NeedsInput => {
+                        SessionState::NeedsInput
+                    }
+                    crate::bridge::contract::DashboardCategory::Working => SessionState::Working,
+                    crate::bridge::contract::DashboardCategory::TaskDone => SessionState::TaskDone,
+                    crate::bridge::contract::DashboardCategory::ProjectDone => {
+                        SessionState::ProjectDone
+                    }
+                    _ => SessionState::Completed,
+                };
+                let mut s = session(&row.id, state);
+                s.provider = Provider::OpenCode;
+                s.provider_session_id = row.session_id.clone();
+                s.name = row.title.clone();
+                s.cwd = row.directory.clone().into();
+                s.started_at = None;
+                s
+            })
+            .collect();
+        let mut app = App::new(SessionSnapshot {
+            sessions,
+            warnings: vec![],
+        });
+        let mut terminal = Terminal::new(TestBackend::new(140, 50)).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let rendered = buffer_text(terminal.backend().buffer());
+        let mut actual = crate::dashboard_snapshot::capture(&app);
+        actual.captured_at = expected.captured_at;
+        actual.dashboard_id = expected.dashboard_id.clone();
+        assert_eq!(actual, expected);
+        for row in &actual.sessions {
+            assert!(rendered.contains(&row.title), "{rendered}");
+        }
+        for group in &actual.groups {
+            assert!(rendered.contains(&group.label), "{rendered}");
+        }
+
+        app.collapsed.insert("state:TaskDone".into());
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let rendered = buffer_text(terminal.backend().buffer());
+        let snapshot = crate::dashboard_snapshot::capture(&app);
+        assert!(
+            !snapshot
+                .sessions
+                .iter()
+                .find(|s| s.session_id == "task")
+                .unwrap()
+                .listed
+        );
+        assert!(!rendered.contains("Task test"));
+        assert_eq!(
+            snapshot
+                .groups
+                .iter()
+                .find(|g| g.key == "state:TaskDone")
+                .unwrap()
+                .total,
+            1
+        );
+
+        app.set_filter("Needs test");
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let snapshot = crate::dashboard_snapshot::capture(&app);
+        assert_eq!(snapshot.sessions.len(), 1);
+        assert_eq!(snapshot.sessions[0].session_id, "needs");
+        assert!(!buffer_text(terminal.backend().buffer()).contains("Project test"));
+
+        app.set_filter("");
+        app.set_view_mode(crate::app::ViewMode::Directory);
+        let expected_directories: crate::bridge::contract::DashboardSnapshot =
+            serde_json::from_str(include_str!(
+                "../bridge/test/fixtures/dashboard-directories.json"
+            ))
+            .unwrap();
+        let mut grouped = crate::dashboard_snapshot::capture(&app);
+        grouped.captured_at = expected_directories.captured_at;
+        grouped.dashboard_id = expected_directories.dashboard_id.clone();
+        assert_eq!(grouped, expected_directories);
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let rendered = buffer_text(terminal.backend().buffer());
+        for group in &grouped.groups {
+            assert!(rendered.contains(&group.label));
+        }
+        app.set_session_page_size(1);
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let rendered = buffer_text(terminal.backend().buffer());
+        let snapshot = crate::dashboard_snapshot::capture(&app);
+        assert_eq!(snapshot.sessions.len(), 5);
+        assert_eq!(snapshot.sessions.iter().filter(|s| s.listed).count(), 2);
+        for row in snapshot.sessions {
+            assert_eq!(rendered.contains(&row.title), row.listed, "{rendered}");
+        }
+    }
+
+    #[test]
     fn paused_voice_shows_nothing_in_the_dashboard_footer() {
         let mut app = App::new(SessionSnapshot {
             sessions: Vec::new(),
@@ -3154,11 +3454,11 @@ mod tests {
         terminal.draw(|frame| render(frame, &app)).unwrap();
         let rendered = buffer_text(terminal.backend().buffer());
 
-        assert!(rendered.contains("agentview"));
+        assert!(rendered.contains("BetterAgentView"));
         assert!(rendered.contains("Ready for review"));
         assert!(rendered.contains("Needs input"));
         assert!(rendered.contains("Working"));
-        assert!(rendered.contains("Completed"));
+        assert!(rendered.contains("Idle"));
         assert!(rendered.contains("describe a task · /help for commands"));
         assert!(!rendered.contains("awaiting"));
     }
@@ -3170,14 +3470,18 @@ mod tests {
                 session("review", SessionState::ReadyForReview),
                 session("blocked", SessionState::NeedsInput),
                 session("asks", SessionState::NeedsInput),
-                session("done", SessionState::Completed),
+                session("done", SessionState::TaskDone),
+                session("wrapped", SessionState::ProjectDone),
             ],
             warnings: vec![],
         });
-        assert_eq!(terminal_title(&app), "2 need input · 2 done · agentview");
+        assert_eq!(
+            terminal_title(&app),
+            "3 need input · 1 task done · 1 project done · BetterAgentView"
+        );
         assert_eq!(
             terminal_title(&App::new(SessionSnapshot::default())),
-            "agentview"
+            "BetterAgentView"
         );
     }
 
@@ -3300,6 +3604,85 @@ mod tests {
         terminal.draw(|frame| render(frame, &app)).unwrap();
         let selected_control = buffer_text(terminal.backend().buffer());
         assert!(selected_control.contains("enter to show more"));
+    }
+
+    #[test]
+    fn list_window_scrolls_one_line_at_a_time_and_reserves_the_more_rows() {
+        // Everything fits: no scrolling, no "more" rows.
+        assert_eq!(list_window(10, 10, Some(9), 0), (0, 10));
+        // Cut off below: the last row of the pane is the "more" row.
+        assert_eq!(list_window(30, 10, Some(0), 0), (0, 9));
+        // The selection stays where it is while it is inside the view.
+        assert_eq!(list_window(30, 10, Some(8), 0), (0, 9));
+        // Past the edge it moves one line, not a page.
+        assert_eq!(list_window(30, 10, Some(9), 0), (2, 8));
+        assert_eq!(list_window(30, 10, Some(10), 2), (3, 8));
+        // Scrolling back up keeps one line of context above.
+        assert_eq!(list_window(30, 10, Some(10), 15), (9, 8));
+        // The last page has no bottom row and shows the final line.
+        let (scroll, content) = list_window(30, 10, Some(29), 0);
+        assert_eq!(scroll + content, 30);
+        assert_eq!(content, 9);
+        // A list that shrank pulls the stale scroll back.
+        assert_eq!(list_window(12, 10, None, 40), (3, 9));
+        // Too little room for "more" rows: a plain window.
+        assert_eq!(list_window(30, 2, Some(10), 0), (9, 2));
+    }
+
+    #[test]
+    fn long_lists_scroll_like_a_pane_with_more_counts_and_clickable_rows() {
+        let sessions = (0..60)
+            .map(|index| session(&format!("session-{index:02}"), SessionState::Working))
+            .collect();
+        let mut app = App::new(SessionSnapshot {
+            sessions,
+            warnings: vec![],
+        });
+        app.set_session_page_size(25);
+        let mut terminal = Terminal::new(TestBackend::new(100, 12)).unwrap();
+        let area = ratatui::layout::Rect::new(0, 0, 100, 12);
+        let draw = |terminal: &mut Terminal<TestBackend>, app: &App| {
+            terminal
+                .draw(|frame| render_session_list(frame, app, area))
+                .unwrap();
+            buffer_text(terminal.backend().buffer())
+        };
+
+        app.selection = Some(SelectionKey::Session("session-00".into()));
+        let top = draw(&mut terminal, &app);
+        assert!(top.contains("session-00"), "{top}");
+        assert!(top.contains("↓ 15 more sessions"), "{top}");
+        assert!(!top.contains('↑'), "{top}");
+        assert_eq!(
+            app.list_row_at(1),
+            Some(SelectionKey::Session("session-00".into()))
+        );
+        assert_eq!(app.list_row_at(11), None);
+
+        // Moving down inside the view does not scroll.
+        app.selection = Some(SelectionKey::Session("session-05".into()));
+        draw(&mut terminal, &app);
+        assert_eq!(app.list_scroll(), 0);
+
+        // Past the bottom it moves a line at a time and counts both ends.
+        app.selection = Some(SelectionKey::Session("session-10".into()));
+        let middle = draw(&mut terminal, &app);
+        assert!(middle.contains("session-10"), "{middle}");
+        assert!(middle.contains('↑') && middle.contains('↓'), "{middle}");
+        assert!(!middle.contains("session-00"), "{middle}");
+        assert!(app.list_scroll() > 0 && app.list_scroll() < 11, "{middle}");
+
+        // Clicking the drawn row selects that session.
+        let row = (0..12u16)
+            .find(|row| app.list_row_at(*row) == Some(SelectionKey::Session("session-10".into())))
+            .expect("selected row is on screen");
+        app.selection = None;
+        assert!(app.select_list_row(row));
+        assert_eq!(
+            app.selection,
+            Some(SelectionKey::Session("session-10".into()))
+        );
+        assert!(!app.select_list_row(0));
     }
 
     #[test]
@@ -3477,8 +3860,8 @@ mod tests {
             render_session_row(&working, ViewMode::Status, 120, true, false, true, None, 0);
         let dimmed =
             render_session_row(&working, ViewMode::Status, 120, true, false, false, None, 0);
-        assert_eq!(visible.spans[0].content, " ✳ ");
-        assert_eq!(dimmed.spans[0].content, " · ");
+        assert_eq!(visible.spans[1].content, "✳ ");
+        assert_eq!(dimmed.spans[1].content, "· ");
 
         let completed = session("done", SessionState::Completed);
         let completed = render_session_row(
@@ -3491,7 +3874,7 @@ mod tests {
             None,
             0,
         );
-        assert_eq!(completed.spans[0].content, " • ");
+        assert_eq!(completed.spans[1].content, "• ");
     }
 
     #[test]
@@ -3622,12 +4005,12 @@ mod tests {
                 let buffer = terminal.backend().buffer();
                 let rendered = buffer_text(buffer);
                 let lines = rendered.lines().collect::<Vec<_>>();
-                assert!(lines[0].starts_with("Scheduled"), "{rendered}");
+                assert!(lines[0].starts_with("  Scheduled"), "{rendered}");
                 assert!(lines[1].starts_with("  /work/alpha"), "{rendered}");
-                assert!(lines[2].starts_with("   • first reminder"), "{rendered}");
+                assert!(lines[2].starts_with("    • first reminder"), "{rendered}");
                 assert!(lines[3].trim().is_empty(), "{rendered}");
                 assert!(lines[4].starts_with("  /work/beta"), "{rendered}");
-                assert!(lines[5].starts_with("   • second reminder"), "{rendered}");
+                assert!(lines[5].starts_with("❯   • second reminder"), "{rendered}");
                 assert!(lines[2].contains("Mon 09:00:"), "{rendered}");
                 assert!(lines[5].contains("Tue 10:00:"), "{rendered}");
                 assert!(!rendered.contains("wake-later"), "{rendered}");
@@ -3731,14 +4114,16 @@ mod tests {
             .iter()
             .map(|span| span.content.to_string())
             .collect();
-        assert!(quiet.contains("Done"), "{quiet}");
+        assert!(quiet.contains("Idle"), "{quiet}");
     }
 
     #[test]
     fn directory_row_colors_the_state_label_and_keeps_the_harness_quiet() {
         for (state, label, color) in [
             (SessionState::NeedsInput, "Needs input", palette().attention),
-            (SessionState::Completed, "Done", palette().complete),
+            (SessionState::Completed, "Idle", palette().dim),
+            (SessionState::TaskDone, "Task done", palette().complete),
+            (SessionState::ProjectDone, "Project done", palette().dim),
             (SessionState::Working, "Working", palette().fg),
         ] {
             let item = session("worker", state);
@@ -3756,6 +4141,129 @@ mod tests {
             assert!(text.contains(&format!("{label} · latest summary from worker")));
             assert_eq!(display_width(&text), 120);
         }
+    }
+
+    #[test]
+    fn focused_session_has_a_purple_caret_and_name_without_recoloring_status() {
+        for scheme in [
+            crate::theme::ColorScheme::Light,
+            crate::theme::ColorScheme::Dark,
+        ] {
+            crate::theme::set_active_palette(crate::theme::Palette::for_scheme(scheme));
+            let item = session("worker", SessionState::NeedsInput);
+            let focused =
+                render_session_row(&item, ViewMode::Directory, 120, false, true, true, None, 0);
+            assert_eq!(focused.spans[0].content, "❯ ");
+            assert_eq!(focused.spans[0].style.fg, Some(palette().focus));
+            assert_eq!(focused.spans[2].style.fg, Some(palette().focus));
+            assert_eq!(
+                focused.spans[1].style.fg,
+                Some(state_color(SessionState::NeedsInput))
+            );
+            assert_eq!(focused.style.bg, Some(palette().selected_bg));
+            let normal =
+                render_session_row(&item, ViewMode::Directory, 120, false, false, true, None, 0);
+            assert_eq!(normal.spans[0].content, "  ");
+            assert_eq!(normal.spans[2].style.fg, Some(palette().fg));
+            let text = |line: &Line<'_>| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            };
+            assert_eq!(
+                display_width(&text(&focused)),
+                display_width(&text(&normal))
+            );
+        }
+    }
+
+    #[test]
+    fn updates_are_highlighted_without_hiding_usage_or_stealing_the_draft() {
+        let mut app = App::new(SessionSnapshot::default());
+        app.usage = vec![crate::usage::Usage {
+            provider: "claude",
+            login_command: None,
+            windows: vec![crate::usage::Window {
+                label: "5h",
+                percent: 12.0,
+                resets_at: None,
+            }],
+        }];
+        app.update_available = Some("9.8.7".into());
+        app.start_new_session(None);
+        app.paste_input("my unsent task");
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let text = buffer_text(buffer);
+        assert!(text.contains("Update v9.8.7 available"));
+        assert!(text.contains("bav update"));
+        assert!(text.contains("my unsent task"));
+        assert!(text.contains("claude"));
+        let cell = buffer
+            .content
+            .iter()
+            .find(|cell| cell.symbol() == "U" && cell.fg == palette().attention)
+            .unwrap();
+        assert!(cell.modifier.contains(Modifier::BOLD));
+        for width in [32, 50, 69] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            terminal.draw(|frame| render(frame, &app)).unwrap();
+            assert!(buffer_text(terminal.backend().buffer()).contains("bav update"));
+        }
+    }
+
+    #[test]
+    fn session_bullets_align_with_directory_names_and_leave_a_caret_gap() {
+        let mut app = App::new(SessionSnapshot {
+            sessions: vec![session("worker", SessionState::NeedsInput)],
+            warnings: vec![],
+        });
+        app.view_mode = ViewMode::Directory;
+        app.selection = Some(SelectionKey::Session("worker".into()));
+        let group_label = app.groups()[0].label.clone();
+        let mut terminal = Terminal::new(TestBackend::new(120, 15)).unwrap();
+        terminal
+            .draw(|frame| render_session_list(frame, &app, frame.size()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let rendered = buffer_text(buffer);
+        let lines: Vec<_> = rendered.lines().collect();
+        let heading = lines
+            .iter()
+            .position(|line| line.contains(&group_label))
+            .unwrap();
+        assert!(
+            lines[heading].starts_with(&format!("  {group_label}")),
+            "{rendered}"
+        );
+        assert!(lines[heading + 1].starts_with("❯ ✻ worker"), "{rendered}");
+        assert_eq!(buffer.get(1, (heading + 1) as u16).symbol(), " ");
+        assert_eq!(buffer.get(2, (heading + 1) as u16).symbol(), "✻");
+        assert_eq!(state_symbol(SessionState::NeedsInput, true), "✻");
+        assert_eq!(state_symbol(SessionState::ReadyForReview, true), "✻");
+    }
+
+    #[test]
+    fn focused_directory_has_a_purple_caret_and_bold_label() {
+        let mut app = App::new(SessionSnapshot {
+            sessions: vec![session("worker", SessionState::Working)],
+            warnings: vec![],
+        });
+        let group = app.groups()[0].clone();
+        app.selection = Some(SelectionKey::Group(group.key));
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let caret = buffer
+            .content
+            .iter()
+            .position(|cell| cell.symbol() == "❯")
+            .expect("selected heading caret");
+        assert_eq!(buffer.content[caret].fg, palette().focus);
+        assert_eq!(buffer.content[caret + 2].fg, palette().focus);
+        assert!(buffer.content[caret + 2].modifier.contains(Modifier::BOLD));
     }
 
     #[test]
@@ -3897,6 +4405,42 @@ mod tests {
     }
 
     #[test]
+    fn find_session_popup_grays_out_the_dashboard_behind_it() {
+        use crate::theme::ColorScheme;
+        for scheme in [ColorScheme::Light, ColorScheme::Dark] {
+            let mut app = App::new(SessionSnapshot::default());
+            app.color_scheme = scheme;
+            let draw = |app: &App| {
+                let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+                terminal.draw(|frame| render(frame, app)).unwrap();
+                terminal.backend().buffer().clone()
+            };
+            let before = draw(&app);
+            app.open_restore_picker(vec![crate::hidden::HiddenSessionRecord {
+                id: "opencode:host:abc".into(),
+                provider: Some(Provider::OpenCode),
+                name: Some("archie".into()),
+                hidden_at_ms: 1,
+            }]);
+            let after = draw(&app);
+            // The brand name in the header sits outside the popup.
+            let (before_cell, after_cell) = (before.get(1, 0), after.get(1, 0));
+            assert_eq!(before_cell.symbol(), after_cell.symbol());
+            let background = crate::theme::Palette::for_scheme(scheme).bg;
+            let gap = |color: Color| match (color, background) {
+                (Color::Rgb(red, ..), Color::Rgb(back, ..)) => red.abs_diff(back),
+                _ => panic!("expected RGB colors"),
+            };
+            assert!(
+                gap(after_cell.fg) < gap(before_cell.fg),
+                "{scheme:?}: {:?} should sit closer to the background than {:?}",
+                after_cell.fg,
+                before_cell.fg
+            );
+        }
+    }
+
+    #[test]
     fn text_matches_show_their_message_text_under_the_session_name() {
         let mut app = App::new(SessionSnapshot::default());
         app.open_restore_picker(Vec::new());
@@ -3949,8 +4493,19 @@ mod tests {
         terminal.draw(|frame| render(frame, &app)).unwrap();
 
         let rendered = buffer_text(terminal.backend().buffer());
-        assert!(rendered.contains("agentview needs"));
+        assert!(rendered.contains("BetterAgentView needs"));
         assert!(rendered.contains("at least 32×8"));
+    }
+
+    #[test]
+    fn narrow_terminals_do_not_clip_the_longer_brand_name() {
+        let app = App::new(SessionSnapshot::default());
+        let backend = TestBackend::new(20, 7);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let rendered = buffer_text(terminal.backend().buffer());
+        assert!(rendered.contains("needs 32×8"));
+        assert!(!rendered.contains("Better"));
     }
 
     #[test]
@@ -4178,7 +4733,7 @@ mod tests {
         let naming = buffer_text(terminal.backend().buffer());
         assert!(naming.contains("migrate to Codex · choose local name"));
         assert!(naming.contains("name ❯ review API (Codex)"));
-        assert!(naming.contains("migration name is local to agentview"));
+        assert!(naming.contains("migration name is local to BetterAgentView"));
     }
 
     #[test]
@@ -5073,7 +5628,7 @@ mod tests {
     }
 
     #[test]
-    fn light_theme_uses_a_paper_background_and_dark_selected_text() {
+    fn light_theme_uses_a_paper_background_and_purple_selected_text() {
         let mut app = App::new(SessionSnapshot {
             sessions: vec![session("worker", SessionState::Completed)],
             warnings: vec![],
@@ -5089,21 +5644,21 @@ mod tests {
         assert_eq!(buffer.get(0, 0).bg, light.bg);
         assert_ne!(buffer.get(0, 0).bg, crate::theme::Palette::dark().bg);
         let mut saw_selection = false;
-        let mut saw_dark_text = false;
+        let mut saw_focused_text = false;
         for y in 0..buffer.area.height {
             for x in 0..buffer.area.width {
                 let cell = buffer.get(x, y);
                 if cell.bg == light.selected_bg {
                     saw_selection = true;
                     assert_ne!(cell.fg, Color::White);
-                    if cell.fg == light.selected_fg {
-                        saw_dark_text = true;
+                    if cell.fg == light.focus {
+                        saw_focused_text = true;
                     }
                 }
             }
         }
         assert!(saw_selection);
-        assert!(saw_dark_text);
+        assert!(saw_focused_text);
     }
 
     fn busy_queue() -> crate::queue::Queue {

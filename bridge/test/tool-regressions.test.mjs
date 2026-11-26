@@ -11,7 +11,7 @@ import {application} from '../private/worker.mjs';
 
 let db,store,outbox,reader,writer;const activity=[];let onActivity;
 let runtime={available:true,partial:false,checked_at:0,statuses:[]};
-const gate={activity:async(source,wait,kind)=>{activity.push({source,wait,kind});if(onActivity)await onActivity();return {source_checked_at:Date.now(),mac_seen_recently:true};},runtime:async()=>runtime,signal:async()=>{},signalReceipt:async()=>{}};
+const gate={activity:async(source,wait,kind)=>{activity.push({source,wait,kind});if(onActivity)await onActivity();return {source_checked_at:Date.now(),mac_seen_recently:true};},runtime:async()=>runtime,signal:async()=>{},signalReceipt:async()=>{},waitReceipt:async()=>{}};
 before(async()=>{
  db=new PGlite();await db.exec(await readFile(new URL('../sync/schema.sql',import.meta.url),'utf8'));await db.exec(await readFile(new URL('../private/schema.sql',import.meta.url),'utf8'));
  store=new SyncStore(db);outbox=new Outbox(db,gate);
@@ -27,6 +27,42 @@ async function rpcRaw(name,args){
  return response.json();
 }
 async function rpc(name,args){const body=await rpcRaw(name,args);assert(!body.result?.isError,body.result?.content?.[0]?.text);return JSON.parse(body.result.content[0].text);}
+test('the visible dashboard ID routes to the same native session and operation as its raw ID',async()=>{
+ const nativeId='ses_visible_send_fixture',uiId='opencode:host:'+nativeId;
+ const collision='codex:host:'+nativeId,now=Date.now();
+ const fixture=JSON.parse(await readFile(new URL('./fixtures/dashboard.json',import.meta.url),'utf8'));
+ const row={...fixture.sessions[0],id:uiId,session_id:nativeId,title:'Visible send fixture'};
+ runtime={available:true,partial:false,checked_at:now,statuses:[],dashboard:{...fixture,captured_at:now,sessions:[row,{...row,id:collision,provider:'Codex'}]}};
+ try {
+  await seed(nativeId,[message(1,'Synthetic prompt')]);
+  const view=await rpc('list_visible_sessions',{directory:'/work'});
+  const listed=view.directories.flatMap(d=>d.sessions).find(s=>s.id===uiId);
+  assert(listed,'fixture must be present in the MCP dashboard');
+  const args={operation_id:'visible_send_fixture',text:'Exact synthetic instruction'};
+  const sent=await rpc('send_session_message',{...args,session_id:listed.id});
+  assert.equal(sent.session_id,nativeId);
+  assert.equal(sent.status,'queued');
+  assert.equal(sent.delivery_confirmed,false);
+  const retried=await rpc('send_session_message',{...args,session_id:nativeId});
+  assert.equal(retried.message_id,sent.message_id);
+  const leased=await outbox.lease(writer);
+  assert.equal(leased.session_id,nativeId);
+  assert.equal(leased.text,args.text);
+  await outbox.ack(writer,{operation_id:leased.operation_id,message_id:leased.message_id,status:'accepted'});
+  assert.equal((await rpc('message_status',{operation_id:args.operation_id})).delivery_confirmed,true);
+  const read=await rpc('read_session',{session_id:listed.id});
+  assert.equal(read.messages[0].text,'Synthetic prompt');
+  for(const badId of [collision,'opencode:remote:'+nativeId,'opencode:host:ses_missing']) {
+   const rejected=await rpcRaw('send_session_message',{...args,operation_id:'visible_send_rejected',session_id:badId});
+   assert.equal(rejected.result.isError,true);
+   assert.equal(JSON.parse(rejected.result.content[0].text).error,'session_not_found');
+  }
+  assert.equal(await outbox.lease(writer),null);
+ } finally {
+  runtime={available:true,partial:false,checked_at:0,statuses:[]};
+ }
+});
+
 test('large forward and backward pages never skip a message under the response budget',async()=>{
  await seed('large-pages',Array.from({length:8},(_,i)=>message(i+1,'x'.repeat(25000))));
  const forward=[];let after=0;
@@ -44,6 +80,29 @@ test('large forward and backward pages never skip a message under the response b
  const exhausted=await rpc('read_session',{session_id:'large-pages',after:8});
  assert.deepEqual(exhausted.messages,[]);assert.equal(exhausted.no_newer_messages,true);assert.equal(exhausted.next_after,8);
 });
+test('history defers an intact short turn when the current page has too little room',async()=>{
+ const reply='x'.repeat(317),full='🧪'.repeat(25_000)+' End.';
+ const id='page-boundary';
+ await seed(id,[message(1,full),message(2,full),message(3,'z'.repeat(19_999)),message(4,reply)]);
+ const first=await rpc('read_session',{session_id:id,after:0});
+ assert.equal(first.page_budget_limited,true);
+ assert.equal(first.next_after,3);
+ const next=await rpc('read_session',{session_id:id,after:first.next_after});
+ assert.equal(next.messages[0].text,reply);
+ assert.equal(next.messages[0].truncated,false);
+ const excerpt=first.messages[0];
+ assert.equal(excerpt.truncated,true);
+ assert.equal(excerpt.offset,0);
+ const chunks=[];
+ for(let offset=excerpt.offset;offset!==null;) {
+  const result=await rpc('read_message',{session_id:id,message_id:excerpt.message_id,offset});
+  chunks.push(result.text);
+  assert(result.next_offset===null||result.next_offset>offset);
+  offset=result.next_offset;
+ }
+ assert.equal(chunks.join(''),full);
+});
+
 test('truncating a session preview never splits a Unicode surrogate pair',async()=>{
  await seed('unicode-preview',[message(1,'x'.repeat(19999)+'😀TAIL')]);
  const page=await rpc('read_session',{session_id:'unicode-preview'});
@@ -153,7 +212,7 @@ test('one active overview finds actionable sessions beyond hundreds of done rows
  assert.equal(page.counts.total,401);assert.equal(page.counts.working,2);assert.equal(page.counts.needs_you,1);assert.equal(page.counts.done,398);
  assert.equal(page.sessions.length,3);assert.equal(page.next_after,null);assert.equal(page.status_fresh,true);assert.equal(page.context_fresh,true);
  const decision=page.sessions[0];assert.equal(decision.session_id,'overview-decision');assert.equal(decision.attention,'needs_you');
- assert(decision.last_user_message.text.includes('existing design'));assert(decision.last_assistant_message.text.endsWith('option A or option B?'));assert(decision.last_assistant_message.truncated);
+ assert(decision.recent_messages.findLast(m=>m.role==='user').text.includes('existing design'));assert(decision.recent_messages.findLast(m=>m.role==='assistant').text.endsWith('option A or option B?'));assert(decision.recent_messages.findLast(m=>m.role==='assistant').truncated);
  assert(page.note.includes('Counts cover the entire'));assert(page.note.includes('not that the task is finished'));
  const recent=await rpc('list_sessions',{});assert(recent.sessions.some(s=>s.session_id==='overview-decision'));assert(recent.sessions.length<=14);assert.equal(recent.counts.total,401);
  assert.equal(recent.total_matching,recent.sessions.length);assert.equal(recent.remaining_in_selection,0);assert.equal(recent.next_after,null);assert.equal(recent.outside_selection.needs_you,0);
@@ -166,7 +225,7 @@ test('recent unclassified final questions are provided for review, not equated w
  runtime={available:true,partial:false,checked_at:Date.now(),statuses:[{session_id:'overview-unclassified',status:'done',reason:null,updated_at:Date.now(),last_user_ms:Date.now(),last_user_message_id:'msg_1',attention_assessed:false}]};
  const result=await rpc('list_sessions',{status:'active',detail:true});
  assert.equal(result.counts.unassessed_idle,1);assert.equal(result.sessions.length,1);assert.equal(result.sessions[0].attention,'review_last_reply');
- assert.equal(result.sessions[0].last_assistant_message.text,'Which approach do you prefer?');
+ assert.equal(result.sessions[0].recent_messages.findLast(m=>m.role==='assistant').text,'Which approach do you prefer?');
 });
 
 test('overview context excludes reverted/staged text and child sessions, and flags a mirror behind native input',async()=>{
@@ -177,13 +236,13 @@ test('overview context excludes reverted/staged text and child sessions, and fla
   {session_id:'overview-visible',status:'working',reason:null,updated_at:Date.now(),last_user_message_id:'new_native_input',top_level:true},
   {session_id:'overview-working-a',status:'working',reason:null,updated_at:Date.now(),top_level:false},
  ]};
- const result=await rpc('list_sessions',{view:'all'});
+ const result=await rpc('list_sessions',{view:'all',detail:true});
  assert.equal(result.counts.total,1);assert.equal(result.sessions.length,1);assert.equal(result.context_fresh,false);
- assert.equal(result.sessions[0].last_user_message.text,'Visible request');assert.equal(result.sessions[0].last_assistant_message.text,'Visible answer');
+ assert.equal(result.sessions[0].recent_messages.findLast(m=>m.role==='user').text,'Visible request');assert.equal(result.sessions[0].recent_messages.findLast(m=>m.role==='assistant').text,'Visible answer');
  assert(!JSON.stringify(result).includes('PRIVATE_CANARY'));
  runtime.statuses.push({session_id:'overview-not-mirrored-yet',status:'working',reason:null,updated_at:Date.now(),top_level:true,last_user_message_id:'new_input'});
  const pending=await rpc('list_sessions',{status:'active',detail:true}),fresh=pending.sessions.find(s=>s.session_id==='overview-not-mirrored-yet');
- assert.equal(pending.counts.working,2);assert(fresh);assert.equal(fresh.mirrored,false);assert.equal(fresh.context_fresh,false);assert.equal(fresh.last_assistant_message,null);
+ assert.equal(pending.counts.working,2);assert(fresh);assert.equal(fresh.mirrored,false);assert.equal(fresh.context_fresh,false);assert.deepEqual(fresh.recent_messages,[]);
  runtime.truncated=true;
  const truncated=await rpc('list_sessions',{});assert.equal(truncated.counts_complete,false);assert.equal(truncated.active_counts_complete,true);
 });
@@ -198,7 +257,7 @@ test('overview includes working-directory metadata and the last two actual text 
  const result=await rpc('list_sessions',{status:'active',detail:true}),session=result.sessions[0];
  assert.equal(session.directory,'/Users/test/Code/project-alpha');assert.equal(session.project_name,'project-alpha');
  assert.deepEqual(session.recent_messages.map(m=>[m.message_order,m.role]),[[3,'user'],[4,'assistant'],[5,'user'],[6,'assistant']]);
- assert.equal(session.last_user_message.message_id,'msg_5');assert.equal(session.last_assistant_message.message_id,'msg_6');
+ assert.equal(session.recent_messages.findLast(m=>m.role==='user').message_id,'msg_5');assert.equal(session.recent_messages.findLast(m=>m.role==='assistant').message_id,'msg_6');
  assert(session.recent_messages[1].text.startsWith('TLDR A '));assert(session.recent_messages[1].text.endsWith('Question A?'));
  assert(session.recent_messages[3].text.startsWith('TLDR B '));assert(session.recent_messages[3].text.endsWith('Question B?'));assert(session.recent_messages[3].text.includes('middle omitted'));
  const byDirectory=await rpc('list_sessions',{query:'project-alpha'});assert.equal(byDirectory.sessions.length,1);
@@ -206,7 +265,7 @@ test('overview includes working-directory metadata and the last two actual text 
  assert.equal((await rpc('list_sessions',{})).sessions[0].project_name,null,'never infer a path from title or message text');
 });
 
-test('two messages per role and legacy latest-message aliases stay within the 36K text budget even at 50 sessions',async()=>{
+test('two messages per role stay within the 24K text budget without aliases, even at 50 sessions',async()=>{
  await db.query(`INSERT INTO av_sessions(owner_id,device_id,database_epoch,session_id,generation,cursor,state,synced_at)
   SELECT 'test-owner','test-device','test-epoch','context-budget-'||n,'budget',10,
    jsonb_build_object('title','Budget fixture '||n,'archived',false,'deleted',false,'visible_before',null),now() FROM generate_series(1,50) n`);
@@ -214,11 +273,12 @@ test('two messages per role and legacy latest-message aliases stay within the 36
   SELECT 'test-owner','test-device','test-epoch','context-budget-'||n,'budget','budget_msg_'||i,i,
    CASE WHEN i%2=1 THEN 'user' ELSE 'assistant' END,repeat('😀',5000),i,i FROM generate_series(1,50) n CROSS JOIN generate_series(1,4) i`);
  runtime={available:true,partial:false,checked_at:Date.now(),statuses:Array.from({length:50},(_,i)=>({session_id:'context-budget-'+(i+1),status:'needs_you',reason:'reply',updated_at:Date.now(),directory:'/projects/fixture',last_user_message_id:'budget_msg_3',attention_assessed:true}))};
- const result=await rpc('list_sessions',{view:'all',limit:50});assert.equal(result.sessions.length,50);
+ const result=await rpc('list_sessions',{view:'all',limit:50,detail:true});assert.equal(result.sessions.length,50);
  let characters=0;
  for(const session of result.sessions){
   assert.equal(session.recent_messages.length,4);
-  for(const m of [...session.recent_messages,session.last_user_message,session.last_assistant_message]){characters+=[...m.text].length;assert(m.text.includes('middle omitted'));}
+  assert(!('last_user_message' in session)&&!('last_assistant_message' in session),'each message is serialized once');
+  for(const m of session.recent_messages){characters+=[...m.text].length;assert(m.text.includes('middle omitted'));}
  }
- assert(characters<=36000);
+ assert(characters<=24000);
 });

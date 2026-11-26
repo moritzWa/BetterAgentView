@@ -9,6 +9,7 @@ use crate::domain::{
     AgentSession, Capability, LaunchTarget, Provider, SessionSnapshot, SessionState,
 };
 use crate::hidden::HiddenSessionRecord;
+use crate::last_harness::ModelMemoryPolicy;
 use crate::theme::ColorScheme;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -23,6 +24,15 @@ pub enum SelectionKey {
     Group(String),
     Session(String),
     ShowMore(String),
+}
+
+/// What the last draw of the session list left behind.
+#[derive(Debug, Default)]
+pub struct ListView {
+    /// First line of the list in view, counted from the top of the whole list.
+    pub scroll: usize,
+    /// Screen row and selection of every selectable row in view.
+    pub rows: Vec<(u16, SelectionKey)>,
 }
 
 pub const SESSION_PAGE_SIZE: usize = 25;
@@ -50,6 +60,7 @@ const DASHBOARD_COMMANDS: &[&str] = &[
     "/shell",
     "/login",
     "/setup",
+    "/onboarding",
     "/cd",
     "/completed",
     "/scheduled",
@@ -208,6 +219,7 @@ pub enum AppAction {
     SetupProvider {
         provider: Provider,
     },
+    CopyOnboarding,
     SetupLaunchOption {
         provider: Provider,
         option: String,
@@ -321,6 +333,7 @@ struct WorkReturn {
 
 #[derive(Debug)]
 pub struct App {
+    pub update_available: Option<String>,
     pub work_only: bool,
     pub work_roots: crate::work_view::WorkRoots,
     work_return: Option<WorkReturn>,
@@ -350,6 +363,8 @@ pub struct App {
     /// Model last chosen per harness, restored when that harness is picked
     /// again and saved across restarts (`last-harness.json`).
     pub remembered_models: BTreeMap<Provider, String>,
+    /// Models that apply to one new session and are never remembered.
+    pub do_not_remember: ModelMemoryPolicy,
     /// Ctrl+B is waiting for the model catalog before it switches providers.
     pending_provider_switch: bool,
     /// Directory chosen with `/cd` for the next new session. It wins over the
@@ -389,6 +404,10 @@ pub struct App {
     /// Sessions the list already shows. The picker offers them only when
     /// their message text matches, and choosing one selects its row.
     open_candidates: Vec<HiddenSessionRecord>,
+    /// Opens from the picker; when set, the default view ranks by them.
+    search_opens: Option<crate::search_opens::SearchOpens>,
+    /// The time the picker ranks against, fixed while it is open.
+    picker_now_ms: u64,
     pub restorable_loading: bool,
     /// Whether the picker still waits for the message text it searches.
     pub restorable_text_loading: bool,
@@ -411,6 +430,10 @@ pub struct App {
     revealed_shelves: BTreeSet<String>,
     visible_limits: BTreeMap<String, usize>,
     session_page_size: usize,
+    /// Where the session list was last drawn: its scroll position, which keeps
+    /// the viewport still until the selection reaches an edge, and the rows on
+    /// screen, which mouse clicks map back to a selection.
+    list_view: RefCell<ListView>,
     group_cache: Vec<Group>,
     /// Bare OpenCode child id -> bare parent id, from the spawned-session links.
     session_parents: HashMap<String, String>,
@@ -475,6 +498,7 @@ impl App {
             .position(|target| target.provider == launch_provider)
             .unwrap_or(0);
         let mut app = Self {
+            update_available: None,
             work_only: false,
             work_roots: Default::default(),
             work_return: None,
@@ -496,6 +520,7 @@ impl App {
             launch_provider,
             launch_model: None,
             remembered_models: BTreeMap::new(),
+            do_not_remember: ModelMemoryPolicy::default(),
             pending_provider_switch: false,
             launch_directory_override: None,
             directory_candidates: Vec::new(),
@@ -519,6 +544,8 @@ impl App {
             transcripts_lower: BTreeMap::new(),
             hidden_ids: BTreeSet::new(),
             open_candidates: Vec::new(),
+            search_opens: None,
+            picker_now_ms: 0,
             restorable_loading: false,
             restorable_text_loading: false,
             history_indices: Vec::new(),
@@ -541,6 +568,7 @@ impl App {
             revealed_shelves: BTreeSet::new(),
             visible_limits: BTreeMap::new(),
             session_page_size: SESSION_PAGE_SIZE,
+            list_view: RefCell::new(ListView::default()),
             group_cache: Vec::new(),
             session_parents: HashMap::new(),
             parent_links: Default::default(),
@@ -798,6 +826,68 @@ impl App {
         self.revealed_shelves = keep_open;
     }
 
+    pub fn list_scroll(&self) -> usize {
+        self.list_view.borrow().scroll
+    }
+
+    pub fn set_list_view(&self, scroll: usize, rows: Vec<(u16, SelectionKey)>) {
+        *self.list_view.borrow_mut() = ListView { scroll, rows };
+    }
+
+    /// The list row drawn on screen row `row`, if any.
+    pub fn list_row_at(&self, row: u16) -> Option<SelectionKey> {
+        self.list_view
+            .borrow()
+            .rows
+            .iter()
+            .find(|(screen_row, _)| *screen_row == row)
+            .map(|(_, key)| key.clone())
+    }
+
+    /// Moves the selection to the row on screen row `row`. Returns whether it
+    /// is a row at all, and so whether a click there should open it. Does
+    /// nothing while an overlay owns the screen.
+    pub fn select_list_row(&mut self, row: u16) -> bool {
+        if !matches!(self.overlay, Overlay::None) {
+            return false;
+        }
+        let Some(key) = self.list_row_at(row) else {
+            return false;
+        };
+        if self.selection.as_ref() != Some(&key) {
+            self.selection = Some(key);
+            self.notice = None;
+            self.pending_removal = None;
+        }
+        true
+    }
+
+    /// Moves the selection one row without wrapping, as the mouse wheel does.
+    pub fn scroll_selection(&mut self, delta: isize) {
+        if !matches!(self.overlay, Overlay::None) {
+            return;
+        }
+        let keys = self.selectable_keys();
+        let current = self
+            .selection
+            .as_ref()
+            .and_then(|selected| keys.iter().position(|key| key == selected));
+        let next = match current {
+            Some(index) => index
+                .saturating_add_signed(delta)
+                .min(keys.len().saturating_sub(1)),
+            None if delta < 0 => keys.len().saturating_sub(1),
+            None => 0,
+        };
+        if let Some(key) = keys.get(next) {
+            if self.selection.as_ref() != Some(key) {
+                self.selection = Some(key.clone());
+                self.notice = None;
+                self.pending_removal = None;
+            }
+        }
+    }
+
     /// Jump one folder up or down, keeping the row's position inside it: the
     /// third session of a folder lands on the third session of the next one,
     /// clamped to its last row when it is shorter. A folder with nothing under
@@ -1027,6 +1117,12 @@ impl App {
                 self.notice = None;
                 AppAction::None
             }
+            Overlay::Composer(ComposerMode::NewSession) => {
+                self.drop_exceptional_model();
+                self.overlay = Overlay::None;
+                self.clear_input();
+                AppAction::None
+            }
             Overlay::ModelPicker => {
                 self.overlay = Overlay::Composer(ComposerMode::NewSession);
                 self.model_filter.clear();
@@ -1134,6 +1230,9 @@ impl App {
     }
 
     pub fn start_new_session(&mut self, first_character: Option<char>) {
+        if self.overlay != Overlay::Composer(ComposerMode::NewSession) {
+            self.drop_exceptional_model();
+        }
         self.notice = None;
         self.clear_input();
         if let Some(character) = first_character {
@@ -1312,8 +1411,34 @@ impl App {
         self.launch_model = Some(switched);
     }
 
+    /// An exceptional choice lives until the composer it was made in launches
+    /// or is cancelled; after that the remembered model (or the default) is back.
+    fn drop_exceptional_model(&mut self) {
+        if self.launch_model_is_exceptional() {
+            self.launch_model = self.remembered_models.get(&self.launch_provider).cloned();
+        }
+    }
+
+    fn note_exceptional_model(&mut self) {
+        if let Some(model) = self.launch_model.clone() {
+            if self.launch_model_is_exceptional() {
+                self.set_notice(format!("{model} is used for the next session only"));
+            }
+        }
+    }
+
+    /// The chosen model is used for one session only and is not remembered.
+    pub fn launch_model_is_exceptional(&self) -> bool {
+        self.launch_model
+            .as_deref()
+            .is_some_and(|model| self.do_not_remember.is_exceptional(model))
+    }
+
     /// The model change since the last call, for the caller to persist.
     pub fn take_model_change(&mut self) -> Option<(Provider, Option<String>)> {
+        if self.launch_model_is_exceptional() {
+            return None;
+        }
         let provider = self.launch_provider.clone();
         if self.remembered_models.get(&provider) == self.launch_model.as_ref() {
             return None;
@@ -1639,6 +1764,7 @@ impl App {
             self.launch_model = Some(self.model_filter.clone());
             self.model_filter.clear();
             self.notice = None;
+            self.note_exceptional_model();
             self.overlay = Overlay::Composer(ComposerMode::NewSession);
             return AppAction::None;
         }
@@ -1667,6 +1793,7 @@ impl App {
         self.launch_model = selection;
         self.model_filter.clear();
         self.notice = None;
+        self.note_exceptional_model();
         self.overlay = Overlay::Composer(ComposerMode::NewSession);
         AppAction::None
     }
@@ -2782,7 +2909,7 @@ impl App {
         })
     }
 
-    fn directory_groups(&self) -> Vec<Group> {
+    pub(crate) fn directory_groups(&self) -> Vec<Group> {
         let needle = self.filter.to_ascii_lowercase();
         let mut paused = Vec::new();
         let mut scheduled = Vec::new();
@@ -2969,6 +3096,7 @@ impl App {
             !self.history_indices.is_empty() && !self.history_index_ready;
         self.hidden_filter.clear();
         self.hidden_selection = 0;
+        self.picker_now_ms = now_ms();
         self.notice = None;
         self.hidden_picker_from_composer =
             self.overlay == Overlay::Composer(ComposerMode::NewSession);
@@ -3144,8 +3272,29 @@ impl App {
         // A session where the words sit together outranks one that only
         // mentions each word somewhere. Equal distances keep list order.
         by_text.sort_by_key(|(record, _)| self.text_distance(&record.id, &needle));
+        if needle.is_empty() {
+            if let Some(opens) = &self.search_opens {
+                let now_ms = self.picker_now_ms;
+                let score = |record: &HiddenSessionRecord| {
+                    opens.score(&record.id, self.picker_activity_ms(record), now_ms)
+                };
+                by_label.sort_by(|(left, _), (right, _)| score(right).total_cmp(&score(left)));
+            }
+        }
         by_label.extend(by_text);
         by_label.into_iter().map(|(record, _)| record).collect()
+    }
+
+    pub fn set_search_opens(&mut self, opens: crate::search_opens::SearchOpens) {
+        self.search_opens = Some(opens);
+    }
+
+    /// When the session last saw activity: its provider update time, else
+    /// the time it was hidden.
+    fn picker_activity_ms(&self, record: &HiddenSessionRecord) -> u64 {
+        self.restorable
+            .get(&record.id)
+            .map_or(record.hidden_at_ms, |session| session.updated_at_ms)
     }
 
     /// The working directory of a picker row, when it is known.
@@ -3270,6 +3419,11 @@ impl App {
             return AppAction::None;
         };
         let session_id = record.id.clone();
+        if let Some(opens) = &mut self.search_opens {
+            if let Err(error) = opens.record(&session_id, now_ms()) {
+                crate::perf_log::event("search_opens_save_failed", format_args!("{error:#}"));
+            }
+        }
         let hidden = self.hidden_ids.contains(&session_id);
         let open = self.is_open_choice(&session_id);
         let restorable = self.restorable.remove(&session_id);
@@ -3297,6 +3451,12 @@ impl App {
             None => AppAction::Unhide { session_id },
         }
     }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis() as u64)
 }
 
 /// Keep printable text, tabs, and line breaks from a paste. `\r\n` and bare
@@ -3482,9 +3642,11 @@ impl App {
             }
             let cwd = self.launch_directory();
             self.launch_directory_override = None;
+            let model = self.launch_model.clone();
+            self.drop_exceptional_model();
             return AppAction::Launch {
                 provider: self.launch_provider.clone(),
-                model: self.launch_model.clone(),
+                model,
                 prompt: pasted.expand(&input),
                 cwd,
             };
@@ -3495,6 +3657,7 @@ impl App {
             .unwrap_or((input.as_str(), ""));
         match command.to_ascii_lowercase().as_str() {
             "/help" => self.toggle_help(),
+            "/onboarding" => return AppAction::CopyOnboarding,
             "/scheduled" => self.toggle_scheduled(),
             "/keep" if argument.is_empty() => return self.schedule_visibility(None),
             "/defer" => return self.schedule_visibility(Some(argument.to_owned())),
@@ -3531,7 +3694,7 @@ impl App {
             "/hidden" | "/restore" => return AppAction::BrowseHidden,
             "/migrate" => self.start_migration(),
             "/usage" if self.usage.is_empty() => self.set_notice(
-                "no subscription usage yet; agentview reads Claude Code and Codex logins",
+                "no subscription usage yet; BetterAgentView reads Claude Code and Codex logins",
             ),
             "/usage" => {
                 self.notice = None;
@@ -3890,6 +4053,11 @@ impl App {
                 "model"
             }
         ));
+        self.note_exceptional_model();
+        if self.launch_model_is_exceptional() {
+            // Stay in the composer so Esc cancels the choice with the draft.
+            self.overlay = Overlay::Composer(ComposerMode::NewSession);
+        }
         AppAction::None
     }
 
@@ -3943,7 +4111,7 @@ fn default_migration_name(name: &str, target: &str) -> String {
 }
 
 pub(crate) fn is_active_session_state(state: SessionState) -> bool {
-    state != SessionState::Completed
+    !state.is_idle()
 }
 
 fn normalize_provider_name(value: &str) -> String {
@@ -5096,6 +5264,81 @@ mod tests {
     }
 
     #[test]
+    fn restore_picker_default_view_ranks_by_opens_and_recency() {
+        let day = 86_400_000;
+        let now = now_ms();
+        let directory = crate::test_support::tempfile::tempdir().unwrap();
+        let path = directory.path().join("search-opens.json");
+        let mut opens = crate::search_opens::SearchOpens::load(path.clone());
+        for _ in 0..4 {
+            opens.record("claude:host:favorite", now - day).unwrap();
+        }
+        for _ in 0..10 {
+            opens.record("claude:host:stale", now - 40 * day).unwrap();
+        }
+        let mut app = app_with(Vec::new());
+        app.set_search_opens(opens);
+        app.open_restore_picker(vec![
+            hidden("claude:host:newest", "Newest", Provider::Claude, now - 1000),
+            hidden(
+                "claude:host:favorite",
+                "Favorite",
+                Provider::Claude,
+                now - day,
+            ),
+            hidden(
+                "claude:host:stale",
+                "Stale",
+                Provider::Claude,
+                now - 30 * day,
+            ),
+            hidden(
+                "claude:host:plain",
+                "Plain",
+                Provider::Claude,
+                now - 2 * day,
+            ),
+        ]);
+        let order = app
+            .hidden_choices()
+            .iter()
+            .map(|record| record.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            order,
+            [
+                "claude:host:favorite",
+                "claude:host:newest",
+                "claude:host:plain",
+                "claude:host:stale"
+            ]
+        );
+
+        app.hidden_selection = 3;
+        assert_eq!(
+            app.activate(),
+            AppAction::Unhide {
+                session_id: "claude:host:stale".into()
+            }
+        );
+        let saved = crate::search_opens::SearchOpens::load(path);
+        assert!(
+            saved.score("claude:host:stale", now, now) > saved.score("claude:host:never", now, now),
+            "opening a session from the picker is counted"
+        );
+    }
+
+    #[test]
+    fn restore_picker_default_view_keeps_its_order_without_open_counts() {
+        let mut app = app_with(Vec::new());
+        app.open_restore_picker(vec![
+            hidden("claude:host:old", "Old", Provider::Claude, 10),
+            hidden("claude:host:new", "New", Provider::Claude, 20),
+        ]);
+        assert_eq!(app.hidden_choices()[0].id, "claude:host:new");
+    }
+
+    #[test]
     fn restore_picker_ignores_message_text_for_short_filters() {
         let mut app = app_with(Vec::new());
         app.open_restore_picker(Vec::new());
@@ -5412,6 +5655,143 @@ mod tests {
         assert_eq!(
             app.launch_model.as_deref(),
             Some("groq/openai/gpt-oss-120b")
+        );
+    }
+
+    fn exceptional_opencode_app() -> App {
+        App::with_launch_targets(
+            SessionSnapshot::default(),
+            false,
+            Provider::OpenCode,
+            vec![LaunchTarget {
+                provider: Provider::OpenCode,
+                supports_model: true,
+            }],
+        )
+    }
+
+    const EXCEPTIONAL: &str = "abliteration-ai/abliterated-model-large-flash";
+
+    #[test]
+    fn an_exceptional_model_applies_to_one_launch_and_keeps_the_remembered_one() {
+        let mut app = exceptional_opencode_app();
+        app.remembered_models
+            .insert(Provider::OpenCode, "anthropic/claude-opus-5-5".into());
+        app.launch_model = Some("anthropic/claude-opus-5-5".into());
+        app.start_new_session(None);
+        app.input = format!("/model {EXCEPTIONAL}");
+        app.activate();
+        assert!(app.launch_model_is_exceptional());
+        assert!(app.notice.as_deref().unwrap().contains("next session only"));
+        assert_eq!(app.take_model_change(), None);
+        assert_eq!(
+            app.remembered_models
+                .get(&Provider::OpenCode)
+                .map(String::as_str),
+            Some("anthropic/claude-opus-5-5")
+        );
+
+        app.input = "do the task".into();
+        match app.activate() {
+            AppAction::Launch { model, .. } => assert_eq!(model.as_deref(), Some(EXCEPTIONAL)),
+            other => panic!("expected a launch, got {other:?}"),
+        }
+        assert_eq!(
+            app.launch_model.as_deref(),
+            Some("anthropic/claude-opus-5-5")
+        );
+        assert_eq!(app.take_model_change(), None);
+
+        app.start_new_session(None);
+        app.input = "next task".into();
+        match app.activate() {
+            AppAction::Launch { model, .. } => {
+                assert_eq!(model.as_deref(), Some("anthropic/claude-opus-5-5"))
+            }
+            other => panic!("expected a launch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cancelling_the_composer_drops_an_exceptional_choice() {
+        let mut app = exceptional_opencode_app();
+        app.remembered_models
+            .insert(Provider::OpenCode, "anthropic/claude-opus-5-5".into());
+        app.launch_model = Some("anthropic/claude-opus-5-5".into());
+        app.start_new_session(None);
+        app.input = format!("/model {EXCEPTIONAL}");
+        app.activate();
+        assert_eq!(app.overlay, Overlay::Composer(ComposerMode::NewSession));
+        assert!(app.launch_model_is_exceptional());
+        app.escape();
+        assert_eq!(app.overlay, Overlay::None);
+        assert_eq!(
+            app.launch_model.as_deref(),
+            Some("anthropic/claude-opus-5-5")
+        );
+        app.start_new_session(None);
+        assert!(!app.launch_model_is_exceptional());
+    }
+
+    #[test]
+    fn a_composer_opened_fresh_never_inherits_an_exceptional_choice() {
+        let mut app = exceptional_opencode_app();
+        app.launch_model = Some(EXCEPTIONAL.into());
+        app.start_new_session(None);
+        assert_eq!(app.launch_model, None);
+        // Opening the model picker and cancelling it keeps the choice made in
+        // this composer.
+        app.launch_model = Some(EXCEPTIONAL.into());
+        app.overlay = Overlay::ModelPicker;
+        app.escape();
+        assert!(app.launch_model_is_exceptional());
+    }
+
+    #[test]
+    fn an_exceptional_model_without_a_remembered_one_falls_back_to_the_default() {
+        let mut app = exceptional_opencode_app();
+        app.start_new_session(None);
+        app.input = format!("/model {EXCEPTIONAL}");
+        app.activate();
+        app.input = "task".into();
+        app.activate();
+        assert_eq!(app.launch_model, None);
+        assert_eq!(app.take_model_change(), None);
+    }
+
+    #[test]
+    fn an_exceptional_model_picked_in_the_picker_is_not_remembered() {
+        let mut app = exceptional_opencode_app();
+        app.remembered_models
+            .insert(Provider::OpenCode, "anthropic/claude-opus-5-5".into());
+        app.launch_model = Some("anthropic/claude-opus-5-5".into());
+        app.set_available_models(Provider::OpenCode, Ok(vec![EXCEPTIONAL.to_owned()]));
+        app.start_new_session(None);
+        app.open_model_picker();
+        app.model_filter = EXCEPTIONAL.into();
+        app.confirm_model_selection();
+        assert_eq!(app.launch_model.as_deref(), Some(EXCEPTIONAL));
+        assert_eq!(app.take_model_change(), None);
+        assert_eq!(
+            app.remembered_models
+                .get(&Provider::OpenCode)
+                .map(String::as_str),
+            Some("anthropic/claude-opus-5-5")
+        );
+    }
+
+    #[test]
+    fn a_normal_pick_after_an_exceptional_one_is_remembered() {
+        let mut app = exceptional_opencode_app();
+        app.launch_model = Some(EXCEPTIONAL.into());
+        assert_eq!(app.take_model_change(), None);
+        app.launch_model = Some("anthropic/claude-haiku-5-5".into());
+        assert_eq!(
+            app.take_model_change(),
+            Some((
+                Provider::OpenCode,
+                Some("anthropic/claude-haiku-5-5".into())
+            ))
         );
     }
 
@@ -5771,7 +6151,7 @@ mod tests {
                 .iter()
                 .map(|group| group.label.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Ready for review", "Needs input", "Working", "Completed"]
+            vec!["Ready for review", "Needs input", "Working", "Idle"]
         );
 
         app.set_filter("summary working");
@@ -5914,7 +6294,7 @@ mod tests {
                 .iter()
                 .map(|group| group.label.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Paused", "Needs input", "Completed"]
+            vec!["Paused", "Needs input", "Idle"]
         );
     }
 
@@ -7124,6 +7504,10 @@ mod tests {
                 provider: Provider::GitHubCopilot
             }
         );
+
+        app.start_new_session(None);
+        app.input = "/onboarding".into();
+        assert_eq!(app.activate(), AppAction::CopyOnboarding);
 
         app.start_new_session(None);
         app.input = "/setup shell".into();

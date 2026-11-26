@@ -3,8 +3,15 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "contracts:generate": "node contracts/generate.mjs",
+    "contracts:check": "node contracts/generate.mjs --check",
+    "typecheck": "tsc --noEmit",
+    "pretest": "npm run contracts:check && npm run typecheck",
     "test": "node --test test/*.test.mjs",
-    "deploy": "wrangler deploy --config wrangler.private.jsonc",
+    "predeploy": "npm test",
+    "deploy": "node release/deploy.mjs",
+    "verify:live": "node release/live.mjs",
+    "prebuild": "npm run contracts:check && npm run typecheck",
     "build": "wrangler deploy --config wrangler.private.jsonc --dry-run --outdir dist"
   },
   "dependencies": {
@@ -15,6 +22,9 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.16",
+    "@types/node": "26.6.6",
+    "quicktype-core": "26.0.0",
+    "typescript": "5.9.3",
     "wrangler": "^4.162.0"
   }
 }

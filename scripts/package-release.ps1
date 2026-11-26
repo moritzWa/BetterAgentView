@@ -28,6 +28,9 @@ try {
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
     New-Item -ItemType Directory -Path $DistDir -Force | Out-Null
     Copy-Item -LiteralPath $Binary -Destination (Join-Path $stage "agentview.exe")
+    Copy-Item -LiteralPath $Binary -Destination (Join-Path $stage "betteragentview.exe")
+    Copy-Item -LiteralPath $Binary -Destination (Join-Path $stage "av.exe")
+    Copy-Item -LiteralPath $Binary -Destination (Join-Path $stage "bav.exe")
     Copy-Item -LiteralPath (Join-Path $repo "LICENSE") -Destination $stage
     Copy-Item -LiteralPath (Join-Path $repo "README.md") -Destination $stage
     Compress-Archive -Path $stage -DestinationPath $archive -Force

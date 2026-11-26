@@ -1,6 +1,6 @@
 # Release guide
 
-agentview is distributed as a prebuilt `agentview` executable. Users
+betteragentview is distributed as a prebuilt `betteragentview` executable. Users
 should not need Rust or Cargo. This guide is for maintainers preparing the
 artifacts consumed by [`install.sh`](../install.sh).
 
@@ -21,7 +21,7 @@ per release. Pushing a `vMAJOR.MINOR.PATCH` tag by hand still works. The manual
 procedure below is the fallback when the workflows cannot run.
 
 Release builds set `AGENTVIEW_RELEASE_BUILD`, which turns on the dashboard's
-once-a-day check for a newer release (`· v0.3.4 available, run av update` in the
+once-a-day check for a newer release (`Update v0.3.4 available · run bav update` in the
 header). Local and source builds never check. `AGENTVIEW_NO_UPDATE_CHECK=1`
 turns it off.
 Release archives are built, packaged, and checksum-verified on the exact tagged commit. The adjacent `.sha256` release asset records the
@@ -65,11 +65,11 @@ Extract and smoke-test the archive, test `install.sh` or `install.ps1` against a
 release root, create and push an annotated version tag, then publish exactly the
 verified archive and checksum with `gh release create`. Never
 upload an untested cross-compiled artifact merely to fill the matrix.
-Unix archives contain the canonical `agentview` executable and the
-installer creates a relative `av` shorthand symlink after version
+Unix archives contain the canonical `betteragentview` executable and the
+installer creates relative `bav` and legacy `av` shorthand symlinks after version
 verification. Windows archives contain
-`agentview.exe`; the PowerShell installer copies the verified executable
-to `av.exe` because ordinary Windows
+`betteragentview.exe`; the PowerShell installer copies the verified executable
+to `bav.exe` and legacy `av.exe` because ordinary Windows
 installations cannot rely on developer-mode symlinks.
 
 ## Publication policy
@@ -122,7 +122,7 @@ for these focused gates in addition to the aggregate commands:
   asynchronous prompt body;
 - Claude and Codex catalog tests consume their provider-native surfaces and
   reject malformed/pagination-overflow results; and
-- `agentview sessions hide`, `hidden`, and `unhide` are smoke-tested with an
+- `betteragentview sessions hide`, `hidden`, and `unhide` are smoke-tested with an
   isolated `HOME`/`XDG_STATE_HOME`, including JSON output and private file modes.
 
 Do not describe authenticated model availability as verified merely because a
@@ -143,14 +143,14 @@ From the approved commit, create and push the immutable annotated tag, then
 publish only the locally verified files:
 
 ```console
-git tag -a vMAJOR.MINOR.PATCH -m "agentview vMAJOR.MINOR.PATCH"
+git tag -a vMAJOR.MINOR.PATCH -m "betteragentview vMAJOR.MINOR.PATCH"
 git push origin vMAJOR.MINOR.PATCH
 gh release create vMAJOR.MINOR.PATCH \
   dist/agentview-MAJOR.MINOR.PATCH-x86_64-unknown-linux-gnu.tar.gz \
   dist/agentview-MAJOR.MINOR.PATCH-x86_64-unknown-linux-gnu.tar.gz.sha256 \
-  --repo moritzWa/agentview \
+  --repo moritzWa/betteragentview \
   --generate-notes \
-  --title "agentview vMAJOR.MINOR.PATCH"
+  --title "betteragentview vMAJOR.MINOR.PATCH"
 ```
 
 The installed `gh` version may not support `--verify-tag`. Before creating the
@@ -190,9 +190,9 @@ then exercise both authenticated and public installation paths as applicable:
 
 ```console
 AGENTVIEW_VERSION=MAJOR.MINOR.PATCH ./install.sh
-agentview --version
-av --version
-agentview --json --no-host-providers
+betteragentview --version
+bav --version
+betteragentview --json --no-host-providers
 ```
 
 For a public release, repeat the command from fresh Linux x86_64, Linux ARM64,
@@ -204,9 +204,9 @@ read the repository.
 
 The installer downloads both release assets, validates that the checksum is a
 64-character SHA-256 value, verifies the archive before extraction, stages the
-new executable, and atomically replaces `agentview` only after verification.
+new executable, and atomically replaces `betteragentview` only after verification.
 It then creates guarded relative shorthand/compatibility symlinks; it never
-overwrites a command whose version output does not identify agentview.
+overwrites a command whose version output does not identify betteragentview.
 It does not edit shell startup files or fall back to compiling source.
 
 SHA-256 detects corruption and release-asset mismatch, but it does not by

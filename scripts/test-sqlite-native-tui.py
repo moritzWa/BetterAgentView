@@ -90,7 +90,7 @@ def run(args):
                     if b"\x1b[6n" in output: os.write(master,b"\x1b[1;1R")
                     stream.feed(output)
                 visible="\n".join(screen.display)
-                if marker in visible and (not native or "agentview v" not in visible): return visible
+                if marker in visible and (not native or "BetterAgentView v" not in visible): return visible
                 if child.poll() is not None: break
             raise AssertionError(f"{args.provider}: waiting for {marker}\n{visible[-5000:]}")
         def send(text): os.write(master,text.encode())
@@ -100,11 +100,11 @@ def run(args):
             send(f"/model {model}\r"); wait(model)
             send("AGENTVIEW_NATIVE_HELLO\r")
             wait("AGENTVIEW_NATIVE_REPLY_CONFIRMED_1",90,native=True)
-            send("\x1b[1;2D"); wait("agentview"); wait("AGENTVIEW_NATIVE_REPLY")
+            send("\x1b[18~"); wait("agentview"); wait("AGENTVIEW_NATIVE_REPLY")
             send("\r"); wait("AGENTVIEW_NATIVE_REPLY_CONFIRMED_1",native=True)
             send("AGENTVIEW_NATIVE_FOLLOWUP\r")
             wait("AGENTVIEW_NATIVE_REPLY_CONFIRMED_2",native=True)
-            send("\x1b[1;2D"); wait("agentview"); wait("AGENTVIEW_NATIVE_REPLY_CONFIRMED_2")
+            send("\x1b[18~"); wait("agentview"); wait("AGENTVIEW_NATIVE_REPLY_CONFIRMED_2")
             send("\x1b"); child.wait(timeout=10)
             # Reopen agentview and prove exact native resume, not just reattachment
             # to the in-memory frontend from the first launch.

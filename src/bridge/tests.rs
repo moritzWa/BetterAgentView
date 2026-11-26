@@ -6,6 +6,155 @@ use source::{Capture, Message};
 use tempfile::tempdir;
 
 #[test]
+fn visibility_delivery_uses_local_registry_and_replays_only_the_receipt() {
+    use contract::AckStatus::{Accepted, Failed};
+    let temp = tempdir().unwrap();
+    let path = temp.path().join("registry").join("hidden-sessions.json");
+    let registry = || crate::hidden::HiddenSessions::load(&path);
+    let journal = Journal::open(&temp.path().join("journal.sqlite")).unwrap();
+    let lease = |operation_id, action, expires_at| {
+        let body = json!({"operation_id":operation_id,"session_id":"ses_fixture",
+            "message_id":"receipt_fixture","action":action,"expires_at":expires_at});
+        journal
+            .db
+            .execute(
+                "INSERT INTO delivery(operation_id,body) VALUES (?1,?2)",
+                rusqlite::params![operation_id, body.to_string()],
+            )
+            .unwrap();
+        body
+    };
+    let later = delivery_now().unwrap() + 60_000;
+    let hide = lease("hide_fixture", "hide", later);
+    assert_eq!(
+        visibility_delivery(&journal, hide, registry).unwrap(),
+        Accepted
+    );
+    assert!(registry().unwrap().contains("ses_fixture"));
+    let unhide = lease("unhide_fixture", "unhide", later);
+    assert_eq!(
+        visibility_delivery(&journal, unhide, registry).unwrap(),
+        Accepted
+    );
+    assert!(!registry().unwrap().contains("ses_fixture"));
+    let recorded: String = journal
+        .db
+        .query_row(
+            "SELECT body FROM delivery WHERE operation_id='hide_fixture'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        visibility_delivery(
+            &journal,
+            serde_json::from_str(&recorded).unwrap(),
+            || panic!("replayed registry mutation")
+        )
+        .unwrap(),
+        Accepted
+    );
+    let expired = lease("expired_fixture", "hide", 1);
+    assert_eq!(
+        visibility_delivery(&journal, expired, || panic!("applied an expired lease")).unwrap(),
+        Failed
+    );
+    assert!(!registry().unwrap().contains("ses_fixture"));
+}
+
+#[test]
+fn generated_wire_types_roundtrip_the_same_fixtures_as_the_worker() {
+    let fixtures: Value = serde_json::from_str(include_str!(
+        "../../bridge/test/fixtures/wire-payloads.json"
+    ))
+    .unwrap();
+    macro_rules! check {
+        ($name:ident) => {{
+            let value = fixtures[stringify!($name)].clone();
+            let typed: contract::$name = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(
+                serde_json::to_value(typed).unwrap(),
+                value,
+                stringify!($name)
+            );
+        }};
+    }
+    check!(Message);
+    check!(Session);
+    check!(Batch);
+    check!(ReadContext);
+    check!(CursorRequest);
+    check!(CheckedRequest);
+    check!(EmptyRequest);
+    check!(ProbeResult);
+    check!(AckRequest);
+    check!(StartAckRequest);
+    check!(VerifyRequest);
+    check!(PairStart);
+    check!(PairToken);
+    check!(ArtifactUpload);
+    assert!(serde_json::from_value::<contract::CursorRequest>(
+        json!({"sessions":[],"invented":true})
+    )
+    .is_err());
+}
+
+#[test]
+fn typed_responses_accept_the_previous_server_and_reject_missing_queue_envelopes() {
+    let fixtures: Value = serde_json::from_str(include_str!(
+        "../../bridge/test/fixtures/previous-responses.json"
+    ))
+    .unwrap();
+    macro_rules! check {
+        ($name:ident) => {{
+            let mut value = fixtures[stringify!($name)].clone();
+            value["future_metadata"] = json!(42);
+            let _: contract::$name = serde_json::from_value(value).unwrap();
+        }};
+    }
+    check!(OkResponse);
+    check!(PairStartResponse);
+    check!(PairTokenResponse);
+    check!(BatchResponse);
+    check!(CursorsResponse);
+    check!(VerifyResponse);
+    check!(PollResponse);
+    check!(LeaseResponse);
+    check!(MessageLease);
+    check!(StartLeaseResponse);
+    check!(ReceiptResponse);
+    check!(StartReceiptResponse);
+    check!(ArtifactResponse);
+    assert!(serde_json::from_value::<contract::LeaseResponse>(json!({})).is_err());
+    assert!(serde_json::from_value::<contract::StartLeaseResponse>(json!({})).is_err());
+    assert!(serde_json::from_value::<contract::PollResponse>(
+        json!({"pending":"false","generation":0,"active_until":0})
+    )
+    .is_err());
+}
+
+#[test]
+fn runtime_alert_is_deduplicated_across_restarts_and_clears_on_recovery() {
+    let dir = tempdir().unwrap();
+    let alert = contract::RuntimeAlert {
+        incident: 123,
+        stale_for_ms: 120_000,
+    };
+    assert!(runtime_alert_changed(dir.path(), Some(&alert)).unwrap());
+    assert!(!runtime_alert_changed(dir.path(), Some(&alert)).unwrap());
+    assert!(!runtime_alert_changed(dir.path(), None).unwrap());
+    assert!(!runtime_alert_changed(dir.path(), None).unwrap());
+    assert!(runtime_alert_changed(
+        dir.path(),
+        Some(&contract::RuntimeAlert {
+            incident: 456,
+            ..alert
+        })
+    )
+    .unwrap());
+}
+
+#[test]
 fn an_unknown_source_event_reconciles_visible_text_instead_of_stalling_sync() {
     let mut db = fixture();
     db.execute_batch(
@@ -240,6 +389,14 @@ fn runtime_projection_includes_requested_directory_but_never_chat_or_tool_payloa
         capabilities: Default::default(),
     };
     let status = serde_json::to_value(runtime::project(&session)).unwrap();
+    let contract: Value = serde_json::from_str(include_str!(
+        "../../bridge/test/fixtures/runtime-status.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        status, contract,
+        "update the shared Worker contract when changing the producer"
+    );
     assert_eq!(status["status"], "needs_you");
     assert_eq!(status["reason"], "approval");
     assert_eq!(status["can_message"], false);
@@ -261,10 +418,20 @@ fn real_runtime_snapshot_audit_without_upload() {
     let start = std::time::Instant::now();
     let snapshot = serde_json::to_value(runtime::snapshot(&config).unwrap()).unwrap();
     let mut counts = std::collections::BTreeMap::new();
+    let targets = std::env::var("AGENTVIEW_RUNTIME_AUDIT_SESSIONS").unwrap_or_default();
     for status in snapshot["statuses"].as_array().unwrap() {
         *counts
             .entry(status["status"].as_str().unwrap())
             .or_insert(0usize) += 1;
+        if targets
+            .split(',')
+            .any(|id| Some(id) == status["session_id"].as_str())
+        {
+            eprintln!("Native target status: {status}");
+        }
+    }
+    if let Some(path) = std::env::var_os("AGENTVIEW_RUNTIME_AUDIT_OUTPUT") {
+        crate::fs_util::write_private_json(std::path::Path::new(&path), &snapshot).unwrap();
     }
     eprintln!("Native runtime audit: available={}, partial={}, truncated={}, states={counts:?}, elapsed_ms={}",snapshot["available"],snapshot["partial"],snapshot["truncated"],start.elapsed().as_millis());
     assert_eq!(snapshot["available"], true);
@@ -440,7 +607,6 @@ fn a_replace_uploads_the_whole_projection_and_does_not_move_the_pointer_until_co
 #[test]
 fn projection_text_matches_the_cloud_byte_for_byte() {
     let text = source::projection_text(
-        10,
         &json!({"title":"T","archived":false,"deleted":false,"visible_before":null}),
         &[Message {
             id: "m1".into(),
@@ -453,8 +619,166 @@ fn projection_text_matches_the_cloud_byte_for_byte() {
     );
     assert_eq!(
         text,
-        "cursor=10\narchived=false\ndeleted=false\ntitle=T\nvisible_before=\nm1\t1\tuser\thi"
+        "archived=false\ndeleted=false\ntitle=T\nvisible_before=\nm1\t1\tuser\thi"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_busy_lock_is_skipped_quietly_and_failures_name_their_stage() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("x.lock");
+    let held = local_lock(&path).unwrap();
+    assert!(try_local_lock(&path).unwrap().is_none());
+    drop(held);
+    assert!(try_local_lock(&path).unwrap().is_some());
+    let error =
+        anyhow::anyhow!("OpenCode database query timed out").context("runtime snapshot: discover");
+    let chain = format!("{error:#}");
+    assert_eq!(error_kind(&chain), "timeout");
+    assert_eq!(runtime_stage(&chain), Some("discover"));
+    assert_eq!(runtime_stage("something else"), None);
+    assert_eq!(error_kind("database is locked"), "source_locked");
+    assert_eq!(error_kind("bridge network request failed"), "network");
+    assert_eq!(error_kind("bridge operation already running"), "busy");
+    assert_eq!(
+        error_kind("bridge HTTP 400 invalid_runtime_snapshot"),
+        "protocol"
+    );
+    assert_eq!(
+        http_failure("bridge HTTP 400 invalid_runtime_snapshot"),
+        Some(" http=400 code=invalid_runtime_snapshot".into())
+    );
+    assert_eq!(
+        http_failure("private path: bridge HTTP 400 invalid_runtime_snapshot"),
+        None
+    );
+    assert_eq!(
+        http_failure("bridge HTTP 400 /private/path"),
+        Some(" http=400".into())
+    );
+}
+
+#[test]
+fn cursor_inventory_is_bounded_even_above_the_cloud_limit() {
+    let pointers = (0..4973)
+        .map(|i| (format!("ses_{i}"), i))
+        .collect::<Vec<_>>();
+    let chunks = pointers.chunks(CURSOR_BATCH_SIZE).collect::<Vec<_>>();
+    assert_eq!(chunks.len(), 5);
+    assert!(chunks.iter().all(|chunk| chunk.len() <= 1000));
+    assert_eq!(
+        chunks.into_iter().flatten().cloned().collect::<Vec<_>>(),
+        pointers
+    );
+}
+
+#[test]
+fn fresh_history_does_not_hide_a_missing_or_stale_runtime_snapshot() {
+    let dir = tempdir().unwrap();
+    let database = dir.path().join("source.sqlite");
+    std::fs::write(&database, b"").unwrap();
+    let config = Config {
+        version: 1,
+        endpoint: "https://example.test".into(),
+        device_id: "device".into(),
+        database_epoch: "epoch".into(),
+        inode: inode(&database).unwrap(),
+        database,
+        opencode_bin: "opencode".into(),
+        keychain_service: "unused-test-service".into(),
+        supervisor_state: None,
+    };
+    crate::fs_util::write_private_json(&dir.path().join("config.json"), &config).unwrap();
+    let health = Health {
+        last_pass_at: now_secs(),
+        ..Health::default()
+    };
+    crate::fs_util::write_private_json(&dir.path().join("sync-health.json"), &health).unwrap();
+    let missing = status(dir.path()).unwrap();
+    assert_eq!(missing["stale"], false);
+    assert_eq!(missing["runtime_stale"], true);
+    assert_eq!(missing["runtime_age_seconds"], Value::Null);
+    let stamp = dir.path().join("runtime-checked.json");
+    std::fs::write(&stamp, b"{}").unwrap();
+    assert_eq!(status(dir.path()).unwrap()["runtime_stale"], false);
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&stamp)
+        .unwrap();
+    file.set_times(
+        std::fs::FileTimes::new()
+            .set_modified(std::time::SystemTime::now() - Duration::from_secs(7200)),
+    )
+    .unwrap();
+    let stale = status(dir.path()).unwrap();
+    assert_eq!(stale["stale"], false);
+    assert_eq!(stale["runtime_stale"], true);
+    assert!(stale["runtime_age_seconds"].as_u64().unwrap() >= 7200);
+}
+
+#[test]
+fn a_transport_failure_reports_its_curl_code_and_stays_a_network_error() {
+    let chain = "bridge network request failed (curl 28)";
+    assert_eq!(curl_code(chain), Some(28));
+    assert_eq!(error_kind(chain), "network");
+    assert_eq!(curl_code("bridge HTTP 503"), None);
+}
+
+#[test]
+fn a_repeated_outage_prints_once_then_summarizes_and_reports_recovery() {
+    let mut outages = std::collections::BTreeMap::new();
+    assert_eq!(
+        outage_failed(&mut outages, "sync", "network", 1000),
+        Some((0, 0))
+    );
+    for second in [1010, 1100, 1299] {
+        assert_eq!(outage_failed(&mut outages, "sync", "network", second), None);
+    }
+    // A different channel is tracked on its own.
+    assert_eq!(
+        outage_failed(&mut outages, "delivery", "network", 1050),
+        Some((0, 0))
+    );
+    // A new kind prints at once, a repeat prints after five minutes.
+    assert_eq!(
+        outage_failed(&mut outages, "sync", "timeout", 1300),
+        Some((300, 3))
+    );
+    assert_eq!(outage_failed(&mut outages, "sync", "timeout", 1400), None);
+    assert_eq!(
+        outage_failed(&mut outages, "sync", "timeout", 1600),
+        Some((600, 1))
+    );
+    assert_eq!(outage_recovered(&mut outages, "sync", 1700), Some(700));
+    assert_eq!(outage_recovered(&mut outages, "sync", 1701), None);
+}
+
+#[test]
+fn a_wall_clock_that_outran_the_monotonic_clock_means_the_mac_slept() {
+    let secs = Duration::from_secs;
+    assert!(!slept_between(secs(5), secs(5)));
+    assert!(!slept_between(secs(34), secs(5)));
+    assert!(slept_between(secs(3000), secs(5)));
+}
+
+#[test]
+fn the_projection_hash_ignores_the_cursor_and_notices_any_text_change() {
+    let state = json!({"title":"T","archived":false,"deleted":false,"visible_before":null});
+    let message = |text: &str| Message {
+        id: "m1".into(),
+        role: "user".into(),
+        order: 1,
+        created_at: 1,
+        updated_at: 1,
+        text: text.into(),
+    };
+    let same = source::projection_text(&state, &[message("hi")]);
+    assert_eq!(same, source::projection_text(&state, &[message("hi")]));
+    assert_ne!(same, source::projection_text(&state, &[message("hi!")]));
+    let mut archived = state.clone();
+    archived["archived"] = json!(true);
+    assert_ne!(same, source::projection_text(&archived, &[message("hi")]));
 }
 
 #[test]
@@ -714,7 +1038,7 @@ fn health_treats_a_long_tool_as_running_and_silence_as_unknown() {
 fn progress_reads_an_open_tool_without_copying_message_text() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("source.sqlite");
-    let db = Connection::open(&path).unwrap();
+    let db = Connection::open(path).unwrap();
     db.execute_batch(
         "CREATE TABLE session_v2(id TEXT, parent_id TEXT);
          CREATE TABLE session_message(id TEXT, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT);
@@ -728,6 +1052,59 @@ fn progress_reads_an_open_tool_without_copying_message_text() {
     assert_eq!(row.health, "running");
     assert_eq!(row.in_flight, Some("tool"));
     assert!(!format!("{row:?}").contains("PRIVATE"));
+}
+
+#[test]
+fn a_tool_left_open_in_an_earlier_turn_is_not_in_flight_now() {
+    let dir = tempdir().unwrap();
+    let db = Connection::open(dir.path().join("source.sqlite")).unwrap();
+    db.execute_batch(
+        "CREATE TABLE session_v2(id TEXT, parent_id TEXT);
+         CREATE TABLE session_message(id TEXT, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT);
+         INSERT INTO session_v2 VALUES('s', NULL);
+         INSERT INTO session_message VALUES('u1','s','user',1,1700000000000,1700000000000,'{}');
+         INSERT INTO session_message VALUES('a1','s','assistant',2,1700000001000,1700000002000,'{\"time\":{},\"content\":[{\"type\":\"tool\",\"name\":\"bash\",\"state\":{\"status\":\"running\"}}]}');
+         INSERT INTO session_message VALUES('u2','s','user',3,1700000100000,1700000100000,'{}');
+         INSERT INTO session_message VALUES('a2','s','assistant',4,1700000101000,1700000102000,'{\"time\":{\"completed\":1},\"content\":[{\"type\":\"text\"}]}');",
+    )
+    .unwrap();
+    let found = progress(&db, &["s".into()], 1_700_000_130_000).unwrap();
+    assert_eq!(found["s"].in_flight, None);
+    // The same tool in the current turn still counts.
+    db.execute("UPDATE session_message SET seq=5 WHERE id='a1'", [])
+        .unwrap();
+    let found = progress(&db, &["s".into()], 1_700_000_130_000).unwrap();
+    assert_eq!(found["s"].in_flight, Some("tool"));
+}
+
+#[test]
+fn progress_comes_from_the_newest_messages_of_a_long_session() {
+    let dir = tempdir().unwrap();
+    let db = Connection::open(dir.path().join("source.sqlite")).unwrap();
+    db.execute_batch(
+        "CREATE TABLE session_v2(id TEXT, parent_id TEXT);
+         CREATE TABLE session_message(id TEXT, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT);
+         INSERT INTO session_v2 VALUES('s', NULL);
+         INSERT INTO session_message VALUES('u','s','user',1,1700000000000,1700000000000,'{}');",
+    )
+    .unwrap();
+    for n in 2..=120i64 {
+        db.execute(
+            "INSERT INTO session_message VALUES(?1,'s','assistant',?2,?3,?3,'{\"time\":{\"completed\":1},\"content\":[]}')",
+            rusqlite::params![format!("a{n}"), n, 1_700_000_000_000i64 + n * 1000],
+        )
+        .unwrap();
+    }
+    // A tool opened early in a long turn is not what this turn is doing now.
+    db.execute(
+        "UPDATE session_message SET data='{\"time\":{},\"content\":[{\"type\":\"tool\",\"name\":\"bash\",\"state\":{\"status\":\"running\"}}]}' WHERE id='a5'",
+        [],
+    )
+    .unwrap();
+    let found = progress(&db, &["s".into()], 1_700_000_000_000 + 121_000).unwrap();
+    assert_eq!(found["s"].last_progress_at, Some(1_700_000_120_000));
+    assert_eq!(found["s"].in_flight, None);
+    assert_eq!(found["s"].health, "running");
 }
 
 #[test]
@@ -749,13 +1126,16 @@ fn a_start_directory_must_be_a_real_folder_under_home() {
         allowed_directory(&ssh, home.path()).unwrap_err(),
         "not_allowed"
     );
-    let outside = tempdir().unwrap();
-    let link = home.path().join("Code/escape");
-    std::os::unix::fs::symlink(outside.path(), &link).unwrap();
-    assert_eq!(
-        allowed_directory(&link, home.path()).unwrap_err(),
-        "not_allowed"
-    );
+    #[cfg(unix)]
+    {
+        let outside = tempdir().unwrap();
+        let link = home.path().join("Code/escape");
+        std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+        assert_eq!(
+            allowed_directory(&link, home.path()).unwrap_err(),
+            "not_allowed"
+        );
+    }
     assert_eq!(
         allowed_directory(std::path::Path::new("relative"), home.path()).unwrap_err(),
         "not_a_directory"
@@ -781,5 +1161,166 @@ fn a_start_claim_is_not_launched_twice() {
             session_id: "ses_real".into(),
             prompt_accepted: true
         }
+    );
+}
+
+#[test]
+fn pointer_reconciliation_stays_off_the_phone_read_path() {
+    let secs = Duration::from_secs;
+    // A reconnect, wake or restart always reconciles.
+    assert!(should_reconcile(true, true, Some(secs(1))));
+    assert!(should_reconcile(false, false, None));
+    assert!(should_reconcile(false, true, None));
+    // Idle: the idle cadence. Active: only half-hourly, never on every tick.
+    assert!(!should_reconcile(false, false, Some(secs(899))));
+    assert!(should_reconcile(false, false, Some(secs(900))));
+    assert!(!should_reconcile(false, true, Some(secs(901))));
+    assert!(!should_reconcile(false, true, Some(secs(1799))));
+    assert!(should_reconcile(false, true, Some(secs(1800))));
+    // Active reads need a check at least every few seconds to stay under the
+    // five-second history window the Worker accepts.
+    assert!(ACTIVE_SYNC_PAUSE < Duration::from_secs(5) / 2 + Duration::from_millis(1));
+}
+
+/// Not part of the normal run. Times the runtime snapshot against the paired Mac's
+/// real OpenCode state; it reads only and uploads nothing:
+///   AGENTVIEW_PERF_LOG=/tmp/runtime-spans.log AGENTVIEW_BRIDGE_STATE=~/.local/state/agentview/bridge \
+///     cargo test --release profile_real_runtime_snapshot -- --ignored --nocapture
+#[test]
+#[ignore = "profiles the real paired Mac; reads only"]
+fn profile_real_runtime_snapshot() {
+    let dir = std::path::PathBuf::from(
+        std::env::var_os("AGENTVIEW_BRIDGE_STATE").expect("set AGENTVIEW_BRIDGE_STATE"),
+    );
+    let config = load(&dir).unwrap();
+    for round in 0..3 {
+        let started = std::time::Instant::now();
+        let snapshot = runtime::snapshot(&config).unwrap();
+        let bytes = serde_json::to_vec(&snapshot).unwrap().len();
+        eprintln!(
+            "round {round}: {} ms, {} statuses, {bytes} bytes, partial={}, truncated={}",
+            started.elapsed().as_millis(),
+            snapshot.statuses.len(),
+            snapshot.partial,
+            snapshot.truncated
+        );
+    }
+}
+
+#[test]
+fn bulk_scan_skips_only_native_sessions_whose_watermark_is_unchanged() {
+    let dir = tempdir().unwrap();
+    let db = Connection::open(dir.path().join("source.sqlite")).unwrap();
+    db.execute_batch(
+        "CREATE TABLE session_v2(id TEXT);
+         CREATE TABLE event_sequence(aggregate_id TEXT, seq INTEGER);
+         INSERT INTO session_v2 VALUES('same'),('moved'),('held'),('no_events'),('was_v1');
+         INSERT INTO event_sequence VALUES('same',7),('moved',9),('held',3),('was_v1',2);",
+    )
+    .unwrap();
+    let marks = vec![
+        ("same".to_string(), 7, true),
+        ("moved".to_string(), 8, true),
+        ("held".to_string(), 3, true),
+        ("no_events".to_string(), 0, true),
+        ("was_v1".to_string(), 2, false),
+        ("deleted_from_source".to_string(), 4, true),
+    ];
+    let held = BTreeSet::from(["held".to_string()]);
+    let unchanged = source::unchanged_native(&db, &marks, &held).unwrap();
+    // A session with no events yet has watermark 0, as `watermark` reports it.
+    assert_eq!(
+        unchanged.into_iter().collect::<Vec<_>>(),
+        vec!["no_events".to_string(), "same".to_string()]
+    );
+}
+
+/// Not part of the normal run. For every session that is working or needs the
+/// owner, plus the newest finished ones, compares the one-session probe with the
+/// whole snapshot's row and prints how long each takes. Sessions change while it
+/// runs, so a difference only counts if it survives a second snapshot. Reads only.
+///   AGENTVIEW_BRIDGE_STATE=~/.local/state/agentview/bridge cargo test --release \
+///     probe_status_matches -- --ignored --nocapture
+#[test]
+#[ignore = "profiles the real paired Mac; reads only"]
+fn probe_status_matches_the_snapshot_row_on_the_real_store() {
+    let dir = std::path::PathBuf::from(std::env::var_os("AGENTVIEW_BRIDGE_STATE").unwrap());
+    let config = load(&dir).unwrap();
+    let mut snapshot_ms = Vec::new();
+    let mut snapshot = None;
+    for _ in 0..3 {
+        let started = std::time::Instant::now();
+        snapshot = Some(runtime::snapshot(&config).unwrap());
+        snapshot_ms.push(started.elapsed().as_millis());
+    }
+    let snapshot = snapshot.unwrap();
+    println!(
+        "snapshot ms (cold, then warm): {snapshot_ms:?}, {} statuses",
+        snapshot.statuses.len()
+    );
+    let mut chosen: Vec<_> = snapshot
+        .statuses
+        .iter()
+        .filter(|s| s.top_level && s.status != contract::Status::Done)
+        .take(20)
+        .collect();
+    let busy = chosen.len();
+    chosen.extend(
+        snapshot
+            .statuses
+            .iter()
+            .filter(|s| s.top_level && s.status == contract::Status::Done)
+            .take(10),
+    );
+    let same = |p: &contract::RuntimeStatus, row: &contract::RuntimeStatus| {
+        p.status == row.status
+            && p.reason == row.reason
+            && p.can_message == row.can_message
+            && p.last_user_message_id == row.last_user_message_id
+            && p.directory == row.directory
+            && p.top_level == row.top_level
+            && p.attention_assessed == row.attention_assessed
+            && p.completion == row.completion
+            && p.health == row.health
+    };
+    let (mut total_ms, mut worst_ms, mut first_round) = (0u128, 0u128, Vec::new());
+    for row in &chosen {
+        let started = std::time::Instant::now();
+        let probed = runtime::session_status(&config, &row.session_id).unwrap();
+        let ms = started.elapsed().as_millis();
+        total_ms += ms;
+        worst_ms = worst_ms.max(ms);
+        if !probed.as_ref().is_some_and(|p| same(p, row)) {
+            first_round.push((row.session_id.clone(), probed, (*row).clone()));
+        }
+    }
+    println!(
+        "{} sessions ({busy} not done): probe avg {} ms, worst {worst_ms} ms; {} differ from the first snapshot",
+        chosen.len(),
+        total_ms / chosen.len().max(1) as u128,
+        first_round.len()
+    );
+    let again = runtime::snapshot(&config).unwrap();
+    let mut persistent = 0;
+    for (id, first, row) in &first_round {
+        let now_probe = runtime::session_status(&config, id).unwrap();
+        let now_row = again.statuses.iter().find(|s| &s.session_id == id);
+        let ok = matches!((&now_probe, now_row), (Some(p), Some(r)) if same(p, r));
+        if !ok {
+            persistent += 1;
+        }
+        println!(
+            "{id}: first snapshot {:?}/{:?}, first probe {:?}, now snapshot {:?}, now probe {:?} -> {}",
+            row.status,
+            row.health,
+            first.as_ref().map(|p| (&p.status, &p.health)),
+            now_row.map(|r| (&r.status, &r.health)),
+            now_probe.as_ref().map(|p| (&p.status, &p.health)),
+            if ok { "agrees now" } else { "STILL DIFFERS" }
+        );
+    }
+    assert_eq!(
+        persistent, 0,
+        "probe and snapshot disagree on a stable session"
     );
 }

@@ -1,0 +1,84 @@
+{
+  "date": "2026-11-23",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "cpu": "Apple M5 Pro",
+  "runs_per_measured_harness": 30,
+  "messages_per_chat": 40,
+  "terminal": { "rows": 40, "columns": 140 },
+  "operation": "New native process resuming a different saved synthetic chat; final reply reaches PTY",
+  "warmup": "One uncounted native opening per harness",
+  "excludes": "Fixture import, shutdown, dashboard dispatch, model requests, and retained-TUI revisits",
+  "harnesses": {
+    "claude": {
+      "status": "measured",
+      "version": "2.1.330 (Claude Code)",
+      "median_ms": 208.021,
+      "samples_ms": [
+        225.004, 208.131, 197.359, 208.143, 223.378,
+        207.065, 195.868, 207.911, 224.678, 230.904,
+        253.231, 254.315, 214.326, 197.168, 222.332,
+        203.571, 226.047, 246.819, 201.477, 191.557,
+        964.743, 323.915, 204.617, 205.630, 200.613,
+        243.839, 188.008, 191.158, 194.423, 205.553
+      ],
+      "path": ["claude", "--resume", "<session-id>"]
+    },
+    "codex": {
+      "status": "measured",
+      "version": "codex-cli 0.163.0",
+      "median_ms": 1347.072,
+      "samples_ms": [
+        1073.363, 1372.258, 1016.695, 1069.332, 1225.380,
+        1038.363, 1066.298, 1217.665, 1188.109, 1136.786,
+        1798.630, 1543.260, 1240.918, 1394.608, 1142.682,
+        1419.262, 1827.563, 1323.420, 1924.048, 1363.628,
+        1751.078, 1222.710, 1331.551, 1556.035, 1232.472,
+        1362.593, 1612.992, 1402.708, 1872.629, 1381.720
+      ],
+      "path": ["codex", "resume", "<session-id>"]
+    },
+    "cursor": {
+      "status": "measured",
+      "version": "2026.09.28-64d2043",
+      "median_ms": 1306.790,
+      "samples_ms": [
+        1269.354, 2210.406, 1108.963, 1266.578, 1226.213,
+        1110.010, 1290.082, 920.732, 1323.498, 1105.407,
+        1082.517, 2341.904, 3942.797, 1679.020, 2209.034,
+        2952.003, 2210.719, 3791.533, 2083.157, 1064.872,
+        1811.754, 1268.888, 1134.779, 1191.455, 1575.533,
+        1781.225, 1281.473, 1273.633, 4126.296, 1533.281
+      ],
+      "path": ["cursor-agent", "--workspace", "<project>", "--trust", "--resume", "<session-id>"],
+      "authentication": "Existing valid login, memory-only credential store"
+    },
+    "pi": {
+      "status": "measured",
+      "version": "1.6.0",
+      "median_ms": 159.377,
+      "samples_ms": [
+        160.705, 155.173, 156.509, 158.687, 161.606,
+        176.659, 159.038, 157.864, 159.723, 159.717,
+        163.798, 159.020, 158.162, 162.176, 157.664,
+        155.888, 163.384, 166.506, 156.508, 155.301,
+        158.741, 154.146, 160.560, 166.168, 171.238,
+        162.027, 152.710, 184.161, 162.441, 153.824
+      ],
+      "path": ["pi", "--session", "<session-file>"]
+    },
+    "devin": {
+      "status": "excluded",
+      "version": "3000.11.3 (9c803229faa4)",
+      "reason": "Full run entered browser sign-in instead of restoring the transcript; macOS runner now refuses this test before launch"
+    },
+    "antigravity": {
+      "status": "excluded",
+      "version": "1.5.15",
+      "reason": "Conversation not found: current macOS binary rejected the fixture generated from the converter's older 1.1.16 format, then displayed sign-in"
+    },
+    "terminal": {
+      "status": "not_applicable",
+      "reason": "No native chat transcript to restore"
+    }
+  }
+}

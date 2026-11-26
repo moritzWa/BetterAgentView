@@ -17,14 +17,16 @@ pub struct Message {
 }
 
 /// The bytes both sides hash. Field order is fixed so a Rust hash equals a JS hash.
-pub fn projection_text(cursor: i64, state: &Value, messages: &[Message]) -> String {
+/// The sync cursor is left out on purpose: it moves on events that change no visible
+/// text, so two identical copies can sit at different cursors. Pointers are compared
+/// separately.
+pub fn projection_text(state: &Value, messages: &[Message]) -> String {
     let visible = state
         .get("visible_before")
         .and_then(|v| v.as_i64())
         .map(|n| n.to_string())
         .unwrap_or_default();
     let mut lines = vec![
-        format!("cursor={cursor}"),
         format!("archived={}", state["archived"].as_bool().unwrap_or(false)),
         format!("deleted={}", state["deleted"].as_bool().unwrap_or(false)),
         format!("title={}", state["title"].as_str().unwrap_or("")),
@@ -90,6 +92,38 @@ pub fn sessions(db: &Connection) -> Result<Vec<String>> {
         );
     }
     Ok(ids)
+}
+
+/// Native sessions whose event watermark equals the one already synced. One
+/// bulk read replaces four lookups per session, which dominated a cold pass over
+/// thousands of sessions. A session missing from the answer simply takes the
+/// per-session path, so this can only skip work, never a change.
+pub fn unchanged_native(
+    db: &Connection,
+    marks: &[(String, i64, bool)],
+    held: &BTreeSet<String>,
+) -> Result<BTreeSet<String>> {
+    let mut native_ids = BTreeSet::new();
+    let mut statement = db.prepare("SELECT id FROM session_v2")?;
+    for id in statement.query_map([], |r| r.get::<_, String>(0))? {
+        native_ids.insert(id?);
+    }
+    let mut seqs = BTreeMap::new();
+    let mut statement = db.prepare("SELECT aggregate_id, seq FROM event_sequence")?;
+    for row in statement.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))? {
+        let (id, seq) = row?;
+        seqs.insert(id, seq);
+    }
+    Ok(marks
+        .iter()
+        .filter(|(id, observed, native)| {
+            *native
+                && !held.contains(id)
+                && native_ids.contains(id)
+                && seqs.get(id).copied().unwrap_or(0) == *observed
+        })
+        .map(|(id, _, _)| id.clone())
+        .collect())
 }
 
 pub fn native(db: &Connection, id: &str) -> Result<bool> {
@@ -393,7 +427,7 @@ pub fn project(
 }
 
 const TEXT_LIMIT: usize = 800_000;
-const TRUNCATED: &str = "\n[Agent View omitted the rest of this message: too large to sync]";
+const TRUNCATED: &str = "\n[BetterAgentView omitted the rest of this message: too large to sync]";
 
 /// The cloud rejects NUL characters and oversized text. A single such message
 /// must not stall its session forever, so make it fit and say so visibly.
@@ -490,7 +524,7 @@ fn validate_event(kind: &str) -> Result<()> {
         .strip_prefix("session.")
         .context("unknown event aggregate")?;
     if version == 0 || version > 2 || !known.contains(&short) {
-        bail!("unsupported source event; update Agent View");
+        bail!("unsupported source event; update BetterAgentView");
     }
     Ok(())
 }

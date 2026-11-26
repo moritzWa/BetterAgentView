@@ -3,6 +3,43 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Copy plain text without interpolating it into a shell command.
+pub fn copy_text(text: &str) -> Result<()> {
+    use std::io::Write;
+    #[cfg(target_os = "macos")]
+    let candidates: &[(&str, &[&str])] = &[("pbcopy", &[])];
+    #[cfg(target_os = "linux")]
+    let candidates: &[(&str, &[&str])] =
+        &[("wl-copy", &[]), ("xclip", &["-selection", "clipboard"])];
+    #[cfg(windows)]
+    let candidates: &[(&str, &[&str])] = &[("powershell.exe", &["-NoProfile", "-Command", "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())"])];
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    let candidates: &[(&str, &[&str])] = &[];
+    for (program, args) in candidates {
+        let Ok(mut child) = Command::new(program)
+            .args(*args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        else {
+            continue;
+        };
+        let written = child
+            .stdin
+            .take()
+            .context("clipboard stdin unavailable")?
+            .write_all(text.as_bytes());
+        let status = child.wait()?;
+        if written.is_ok() && status.success() {
+            return Ok(());
+        }
+    }
+    anyhow::bail!(
+        "clipboard unavailable; run `betteragentview onboarding` to print the setup prompt"
+    )
+}
+
 #[cfg(any(target_os = "macos", test))]
 const IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "heic"];
 
