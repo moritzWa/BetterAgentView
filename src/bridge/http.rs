@@ -1,7 +1,8 @@
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 use std::io::{Read, Write};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::time::{Duration, Instant};
 
 pub fn request<T: serde::de::DeserializeOwned>(
     endpoint: &str,
@@ -54,17 +55,26 @@ pub fn request<T: serde::de::DeserializeOwned>(
         let mut bytes = Vec::new();
         stdout.read_to_end(&mut bytes).map(|_| bytes)
     });
-    child.stdin.take().unwrap().write_all(config.as_bytes())?;
-    let status = child.wait()?;
+    // Curl has its own request and connect limits. The parent also owns a
+    // deadline, including handing the request to curl over stdin, so a wedged
+    // helper cannot strand the poll, delivery or sync loop.
+    let mut stdin = child.stdin.take().unwrap();
+    let input = std::thread::spawn(move || stdin.write_all(config.as_bytes()));
+    let status = wait_for_transport(&mut child, Duration::from_secs(timeout.saturating_add(2)));
+    let written = input
+        .join()
+        .map_err(|_| anyhow::anyhow!("bridge request writer failed"))?;
     let bytes = output
         .join()
         .map_err(|_| anyhow::anyhow!("bridge response reader failed"))??;
+    let status = status?;
     if !status.success() {
         bail!(
             "bridge network request failed (curl {})",
             status.code().unwrap_or(-1)
         );
     }
+    written.context("could not write bridge HTTPS request")?;
     let text = String::from_utf8(bytes).context("invalid bridge response encoding")?;
     let (json, status) = text
         .rsplit_once('\n')
@@ -84,4 +94,54 @@ pub fn request<T: serde::de::DeserializeOwned>(
         bail!("bridge HTTP {status}");
     }
     serde_json::from_str(json).context("invalid bridge JSON response")
+}
+
+fn wait_for_transport(child: &mut Child, timeout: Duration) -> Result<ExitStatus> {
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) if started.elapsed() < timeout => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            result => {
+                // Reap the child before joining pipe readers/writers.
+                let _ = child.kill();
+                child
+                    .wait()
+                    .context("could not reap bridge HTTPS transport")?;
+                result?;
+                bail!("bridge network request exceeded transport watchdog deadline");
+            }
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transport_watchdog_kills_and_reaps_a_hung_child() {
+        let mut child = Command::new("/bin/sleep").arg("60").spawn().unwrap();
+        let started = Instant::now();
+        let error = wait_for_transport(&mut child, Duration::from_millis(40)).unwrap_err();
+        assert!(error.to_string().contains("watchdog deadline"));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(child.try_wait().unwrap().is_some());
+    }
+
+    #[test]
+    fn transport_watchdog_preserves_the_childs_exit_status() {
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "exit 6"])
+            .spawn()
+            .unwrap();
+        assert_eq!(
+            wait_for_transport(&mut child, Duration::from_secs(5))
+                .unwrap()
+                .code(),
+            Some(6)
+        );
+    }
 }

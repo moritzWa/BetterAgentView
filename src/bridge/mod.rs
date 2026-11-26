@@ -517,6 +517,7 @@ fn sync_pass(dir: &Path, reconcile: bool) -> Result<usize> {
         Ok(Vec::new())
     } {
         if !local.is_empty() {
+            let mut complete = true;
             for chunk in local.chunks(CURSOR_BATCH_SIZE) {
                 let sessions: Vec<contract::CursorPointer> = chunk
                     .iter()
@@ -544,8 +545,14 @@ fn sync_pass(dir: &Path, reconcile: bool) -> Result<usize> {
                             }
                         }
                     }
-                    Err(error) => log_unavailable("cursors", &error),
+                    Err(error) => {
+                        complete = false;
+                        log_unavailable("cursors", &error);
+                    }
                 }
+            }
+            if complete {
+                log_recovered("cursors");
             }
         }
     }
