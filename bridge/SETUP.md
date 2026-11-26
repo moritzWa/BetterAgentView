@@ -81,6 +81,29 @@ This is an operator gate for the private bridge. Public GitHub release jobs do n
 have the owner's Mac or account credentials; their synthetic tests are not a live
 private-bridge pass.
 
+## Required ChatGPT client check
+
+Do this after every AgentVoice MCP deployment. The installed-connector gate and
+raw MCP tests do not exercise ChatGPT's tools or approval UI.
+
+1. Create a disposable native OpenCode session in an empty test directory and
+   wait for it to appear in the dashboard and history mirror. Open a fresh,
+   authenticated ChatGPT web or desktop chat with the deployed AgentVoice app.
+   Refresh the app's tools if ChatGPT is using an old schema, then start another
+   fresh chat.
+2. Ask ChatGPT to call `list_visible_sessions` for that directory and send a
+   unique, harmless instruction to the test session. Check that it passed the
+   exact row `id` to `send_session_message` without stripping the prefix. Complete
+   ChatGPT's on-screen approval for that instruction only.
+3. Record the operation and message IDs, verify native admission, then check the
+   target OpenCode history for exactly one user message with that ID and text.
+   A queued receipt or a ChatGPT success claim is not proof. If verifying task
+   completion, require a new reply tied to that input.
+4. Repeat with a different marker in voice if the client offers AgentVoice in
+   voice mode. Use the same on-screen approval. If blocked, record the client,
+   what was tried, and what prevented verification. Record the deployed Worker
+   version and the text and voice results separately. Remove only your fixture.
+
 ## Provisioning is not migration
 
 `private/provision.mjs` is an operator tool for initial setup or explicit schema

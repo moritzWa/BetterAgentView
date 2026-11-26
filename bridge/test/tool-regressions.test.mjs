@@ -11,7 +11,7 @@ import {application} from '../private/worker.mjs';
 
 let db,store,outbox,reader,writer;const activity=[];let onActivity;
 let runtime={available:true,partial:false,checked_at:0,statuses:[]};
-const gate={activity:async(source,wait,kind)=>{activity.push({source,wait,kind});if(onActivity)await onActivity();return {source_checked_at:Date.now(),mac_seen_recently:true};},runtime:async()=>runtime,signal:async()=>{},signalReceipt:async()=>{}};
+const gate={activity:async(source,wait,kind)=>{activity.push({source,wait,kind});if(onActivity)await onActivity();return {source_checked_at:Date.now(),mac_seen_recently:true};},runtime:async()=>runtime,signal:async()=>{},signalReceipt:async()=>{},waitReceipt:async()=>{}};
 before(async()=>{
  db=new PGlite();await db.exec(await readFile(new URL('../sync/schema.sql',import.meta.url),'utf8'));await db.exec(await readFile(new URL('../private/schema.sql',import.meta.url),'utf8'));
  store=new SyncStore(db);outbox=new Outbox(db,gate);
@@ -27,6 +27,42 @@ async function rpcRaw(name,args){
  return response.json();
 }
 async function rpc(name,args){const body=await rpcRaw(name,args);assert(!body.result?.isError,body.result?.content?.[0]?.text);return JSON.parse(body.result.content[0].text);}
+test('the visible dashboard ID routes to the same native session and operation as its raw ID',async()=>{
+ const nativeId='ses_visible_send_fixture',uiId='opencode:host:'+nativeId;
+ const collision='codex:host:'+nativeId,now=Date.now();
+ const fixture=JSON.parse(await readFile(new URL('./fixtures/dashboard.json',import.meta.url),'utf8'));
+ const row={...fixture.sessions[0],id:uiId,session_id:nativeId,title:'Visible send fixture'};
+ runtime={available:true,partial:false,checked_at:now,statuses:[],dashboard:{...fixture,captured_at:now,sessions:[row,{...row,id:collision,provider:'Codex'}]}};
+ try {
+  await seed(nativeId,[message(1,'Synthetic prompt')]);
+  const view=await rpc('list_visible_sessions',{directory:'/work'});
+  const listed=view.directories.flatMap(d=>d.sessions).find(s=>s.id===uiId);
+  assert(listed,'fixture must be present in the MCP dashboard');
+  const args={operation_id:'visible_send_fixture',text:'Exact synthetic instruction',confirmed:true};
+  const sent=await rpc('send_session_message',{...args,session_id:listed.id});
+  assert.equal(sent.session_id,nativeId);
+  assert.equal(sent.status,'queued');
+  assert.equal(sent.delivery_confirmed,false);
+  const retried=await rpc('send_session_message',{...args,session_id:nativeId});
+  assert.equal(retried.message_id,sent.message_id);
+  const leased=await outbox.lease(writer);
+  assert.equal(leased.session_id,nativeId);
+  assert.equal(leased.text,args.text);
+  await outbox.ack(writer,{operation_id:leased.operation_id,message_id:leased.message_id,status:'accepted'});
+  assert.equal((await rpc('message_status',{operation_id:args.operation_id})).delivery_confirmed,true);
+  const read=await rpc('read_session',{session_id:listed.id});
+  assert.equal(read.messages[0].text,'Synthetic prompt');
+  for(const badId of [collision,'opencode:remote:'+nativeId,'opencode:host:ses_missing']) {
+   const rejected=await rpcRaw('send_session_message',{...args,operation_id:'visible_send_rejected',session_id:badId});
+   assert.equal(rejected.result.isError,true);
+   assert.equal(JSON.parse(rejected.result.content[0].text).error,'session_not_found');
+  }
+  assert.equal(await outbox.lease(writer),null);
+ } finally {
+  runtime={available:true,partial:false,checked_at:0,statuses:[]};
+ }
+});
+
 test('large forward and backward pages never skip a message under the response budget',async()=>{
  await seed('large-pages',Array.from({length:8},(_,i)=>message(i+1,'x'.repeat(25000))));
  const forward=[];let after=0;

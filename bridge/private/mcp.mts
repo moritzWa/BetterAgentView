@@ -21,6 +21,7 @@ import {sessionHealth} from './health.mjs';
 import {Starts,startView} from './starts.mjs';
 import {listVisibleSessions,REVIEW_RULES} from './visible.mjs';
 import {timedDatabase,timedGate} from './timing.mjs';
+import {pairedSessionId} from './session-id.mjs';
 
 const where='s.owner_id=$1 AND s.device_id=$2 AND s.database_epoch=$3';
 const visible="s.cursor IS NOT NULL AND (s.state->>'deleted')::boolean=false";
@@ -126,7 +127,8 @@ export async function privateMcp(request: Request,{db:rawDb,store,principal,outb
     const matches=found.slice(0,limit);
     return {matches,excerpt_chars,next_offset:found.length>limit?offset+limit:null,...freshness};
   });
-  register('read_session','For a session the owner named, prefer session_brief; use this to page older or newer history. Read the LATEST visible messages, oldest-to-newest within the page. Use before=oldest message_order for older pages, after=newest message_order for newer pages. If a message is truncated, call read_message with session_id, message_id and the message offset. A sync cursor is not a message offset. Does not run the agent.',async({session_id,after,before,limit})=>{
+  register('read_session','For a session the owner named, prefer session_brief; use this to page older or newer history. Accepts the raw session_id or the id from list_visible_sessions. Read the LATEST visible messages, oldest-to-newest within the page. Use before=oldest message_order for older pages, after=newest message_order for newer pages. If a message is truncated, call read_message with session_id, message_id and the message offset. A sync cursor is not a message offset. Does not run the agent.',async({session_id:target,after,before,limit})=>{
+    const session_id=pairedSessionId(target);
     if(after!==undefined&&before!==undefined)throw new SyncError('choose_before_or_after',400);
     const freshness=await gate.activity(`${principal.device_id}|${principal.database_epoch}`,true);
     const view=await db.transaction(async (tx:any)=>{
@@ -165,14 +167,14 @@ export async function privateMcp(request: Request,{db:rawDb,store,principal,outb
     const freshness=await gate.activity(`${principal.device_id}|${principal.database_epoch}`,true);
     const row=(await db.query(`SELECT m.message_id,m.role,s.synced_at,substring(m.text FROM $6::int+1 FOR 20000) AS text,length(m.text) AS total_characters
       FROM av_sessions s JOIN av_messages m ON m.owner_id=s.owner_id AND m.device_id=s.device_id AND m.database_epoch=s.database_epoch AND m.session_id=s.session_id AND m.generation=s.generation
-      WHERE ${where} AND ${visible} AND ${active} AND s.session_id=$4 AND m.message_id=$5`,[...scope(principal),session_id.replace(/^opencode:host:/,''),message_id,offset])).rows[0];
+      WHERE ${where} AND ${visible} AND ${active} AND s.session_id=$4 AND m.message_id=$5`,[...scope(principal),pairedSessionId(session_id),message_id,offset])).rows[0];
     if(!row)throw new SyncError('message_not_found',404);
     // Postgres substring/length count Unicode characters, not UTF-16 units.
     const consumed=[...row.text].length;
     return {...row,...freshness,offset,next_offset:offset+consumed<row.total_characters?offset+consumed:null};
   });
-  register('send_session_message','MUTATING: append a real user instruction to a session, only after the owner has decided what to say: state the exact text first. Call this directly in the same turn the owner decides; base_cursor and context are optional (the server uses the current state of the session and still refuses delivery if its history changes before the Mac accepts it), so do not call session_brief or read_session first just to get them. If you already hold them from session_brief.send_params, pass both. Preserve operation_id on retries. The result IS the current delivery status (the call waits briefly for the Mac to accept it): say say_to_owner and never claim more than claim_ceiling. Call message_status only when delivery_state is queued_waiting_for_mac, queued_mac_offline or uncertain, or later to see whether the session finished. Report needs_confirmation instead of silently stopping. accepted means native admission, not completed work. Requires write grant and client approval.',async args=>{
-    let receipt=await outbox.send(principal,args);
+  register('send_session_message','MUTATING: append a real user instruction to a session, only after the owner has decided what to say: state the exact text first. Pass the exact id from list_visible_sessions or the raw OpenCode session_id; do not translate IDs or send to other providers. Call this directly in the same turn the owner decides; base_cursor and context are optional (the server uses the current state of the session and still refuses delivery if its history changes before the Mac accepts it), so do not call session_brief or read_session first just to get them. If you already hold them from session_brief.send_params, pass both. Preserve operation_id on retries. The result IS the current delivery status (the call waits briefly for the Mac to accept it): say say_to_owner and never claim more than claim_ceiling. Call message_status only when delivery_state is queued_waiting_for_mac, queued_mac_offline or uncertain, or later to see whether the session finished. Report needs_confirmation instead of silently stopping. accepted means native admission, not completed work. Requires write grant and client approval.',async args=>{
+    let receipt=await outbox.send(principal,{...args,session_id:pairedSessionId(args.session_id)});
     const source=`${principal.device_id}|${principal.database_epoch}`;
     if(['queued','leased'].includes(receipt.status)) {
       const presence=await gate.activity(source);
