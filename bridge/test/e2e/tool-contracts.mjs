@@ -61,7 +61,7 @@ try{
  assert(hit&&hit.excerpt.includes('contractquartzneedle'));assert(hit.excerpt_offset>0);assert([...hit.excerpt].length<=2000);
  const message=await rpc('read_message',{session_id:ids[0],message_id:hit.message_id,offset:hit.excerpt_offset});assert(message.text.startsWith(hit.excerpt));assert(message.mac_seen_recently);assert(message.source_checked_at);
  console.log('PASS deployed matching search excerpt and Unicode-compatible message offset');
- const overview=await rpc('list_sessions',{status:'active'});
+ const overview=await rpc('list_sessions',{status:'active',detail:true});
  assert.equal(overview.sessions.length,2);assert.equal(overview.counts.total,3);assert.equal(overview.counts.working,1);assert.equal(overview.counts.needs_you,1);
  const decision=overview.sessions.find(s=>s.session_id===ids[0]);assert(decision.recent_messages.findLast(m=>m.role==='assistant').text.endsWith('option A or option B?'));assert(decision.recent_messages.findLast(m=>m.role==='user'));assert.equal(decision.attention,'needs_you');
  assert.equal(decision.directory,'/fixtures/project-alpha');assert.equal(decision.project_name,'project-alpha');
