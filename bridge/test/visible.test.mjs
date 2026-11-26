@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {visibleView,listVisibleSessions,REVIEW_RULES} from '../private/visible.mjs';
 import {addVisibleContext,CONTEXT_CHARACTERS} from '../private/visible-context.mjs';
 import {voiceView,readableExcerpt} from '../private/voice-view.mjs';
+import {WakeGate,gateClient} from '../private/gate.mjs';
 const dashboard=JSON.parse(await readFile(new URL('./fixtures/dashboard.json',import.meta.url)));
 const directoryDashboard=JSON.parse(await readFile(new URL('./fixtures/dashboard-directories.json',import.meta.url)));
 const runtime={available:true,partial:false,checked_at:100000,dashboard,statuses:Array.from({length:381},(_,i)=>({session_id:`old-${i}`,status:'done'}))};
@@ -30,6 +31,37 @@ test('no UI, stale UI, partial UI and old connector never fall back to history',
     const result=visibleView(r,{mac_seen_recently:true},140001);
     assert.equal(result.exact,false);assert.deepEqual(result.review_ids,[]);
   }
+});
+test('native-only writes retain the last dashboard for that source and mark it stale',async()=>{
+  const map=new Map();
+  const storage={get:async k=>Array.isArray(k)?new Map(k.filter(key=>map.has(key)).map(key=>[key,map.get(key)])):map.get(k),
+    put:async (entries,value)=>{for(const [key,item] of typeof entries==='string'?[[entries,value]]:Object.entries(entries))map.set(key,structuredClone(item));}};
+  const gate=gateClient({idFromName:()=>0,get:()=>({fetch:(url,init)=>new WakeGate({storage}).fetch(new Request(url,init))})},'owner');
+  const principal={owner_id:'owner',device_id:'d',database_epoch:'e'},source='d|e';
+  const db={transaction:async fn=>fn({query:async()=>({rows:[]})})};
+  await gate.enroll({...principal,token_hash:'hash',expires_at:Date.now()+60_000});
+  const native={available:true,partial:false,statuses:[{session_id:'history-only',status:'done'}]};
+  const list=args=>listVisibleSessions({db,gate,principal},args);
+  await gate.setRuntime('hash',native);
+  assert.equal((await list({})).counts,null);
+  const observed={...dashboard,captured_at:Date.now()-2_000};
+  await gate.setRuntime('hash',{...native,dashboard:observed});
+  assert.equal(visibleView(await gate.runtime(source),{mac_seen_recently:true}).exact,true);
+  for(let i=0;i<2;i++)await gate.setRuntime('hash',{...native,statuses:[{session_id:'history-only',status:'working'}]});
+  const saved=await gate.runtime(source);
+  assert.deepEqual(saved.dashboard,observed);
+  assert.equal(saved.statuses[0].status,'working');
+  assert.equal((await gate.runtime('d|other-epoch')).dashboard,undefined);
+  assert.deepEqual(visibleView(saved,{mac_seen_recently:true}).review_ids,[]);
+  for(const [args,total] of [[{},5],[{directory:'/work'},4]]) {
+    const value=await list(args);
+    assert.equal(value.counts.total,total);
+    assert.match(value.warning,/last observed [(][0-9]+ seconds ago[)]/);
+    assert(!JSON.stringify(value).includes('history-only'));
+  }
+  // A real empty list replaces the old one and restores fresh results.
+  await gate.setRuntime('hash',{...native,dashboard:{...observed,captured_at:Date.now(),sessions:[],groups:[]}});
+  assert.deepEqual(await list({}),{counts:{total:0},directories:[]});
 });
 test('only fresh stalled/decision Working rows join the review queue, before Project Done',()=>{
   for(const extra of [{health:'potentially_stalled'},{reason:'question'}]) {

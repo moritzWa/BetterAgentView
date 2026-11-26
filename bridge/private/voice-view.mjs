@@ -1,3 +1,4 @@
+import {ageText} from './attention.mjs';
 import {fullMessageReference} from './excerpt.mjs';
 
 /** The voice response is a review list, not a copy of the dashboard debugger. */
@@ -5,7 +6,10 @@ export function voiceView(view) {
  const nonzero=counts=>counts?Object.fromEntries(Object.entries(counts).filter(([key,n])=>key==='total'||n>0)):null;
  const warnings=[];
  if(!view.available)warnings.push('Current Agent View snapshot unavailable. Do not substitute historical session counts.');
- else if(!view.exact)warnings.push('UI snapshot is stale or partial; counts are last observed.');
+ else if(!view.exact) {
+  const age=ageText(view.dashboard_age_ms);
+  warnings.push(`UI snapshot is stale or partial; counts are last observed${age?` (${age} ago)`:''}.`);
+ }
  if(view.directory_found===false)warnings.push('No visible directory matches that path.');
  const review=new Set(view.review_ids??[]);
  const rows=view.directories.flatMap(d=>[...d.sessions,...d.working]);

@@ -13,7 +13,7 @@ export async function listVisibleSessions({db,gate,principal},{directory,include
 
 export function visibleView(runtime,freshness={},now=Date.now(),{directory,include_scheduled_and_paused=false}={}) {
   const dashboard=runtime.dashboard?DashboardSnapshot.parse(runtime.dashboard):null;
-  const status_fresh=Boolean(dashboard&&freshness.mac_seen_recently&&runtime.checked_at>now-30_000&&dashboard.captured_at>now-30_000&&dashboard.captured_at<=now);
+  const status_fresh=Boolean(dashboard&&!runtime.dashboard_retained&&freshness.mac_seen_recently&&runtime.checked_at>now-30_000&&dashboard.captured_at>now-30_000&&dashboard.captured_at<=now);
   const exact=Boolean(status_fresh&&!dashboard.partial);
   const native_status_fresh=Boolean(runtime.available&&!runtime.partial&&freshness.mac_seen_recently&&runtime.checked_at>now-30_000);
   if(!dashboard)return {available:false,exact:false,status_fresh:false,dashboard:null,counts:null,displayed_counts:null,directories:[],review_ids:[],note:'No live dashboard snapshot. Restart an updated Agent View dashboard if needed. The historical inventory is NOT a substitute for the displayed set.'};
@@ -44,7 +44,7 @@ export function visibleView(runtime,freshness={},now=Date.now(),{directory,inclu
     working:rows.filter(s=>s.category==='working'),review_ids:review(rows),
   }));
   const review_ids=review(selected);
-  return {available:true,exact,status_fresh,native_status_fresh,dashboard,counts,displayed_counts,directories,review_ids,status_observed_at:runtime.checked_at,directory_filter:directory??null,directory_found:!directory||directories.length>0,dashboard_counts:count(dashboard.sessions),
+  return {available:true,exact,status_fresh,native_status_fresh,dashboard,counts,displayed_counts,directories,review_ids,dashboard_age_ms:now-dashboard.captured_at,status_observed_at:runtime.checked_at,directory_filter:directory??null,directory_found:!directory||directories.length>0,dashboard_counts:count(dashboard.sessions),
     counts_scope:'Current dashboard group membership after UI discovery, visibility and filters, intersected with directory selection. Group totals include collapsed and Show More rows. displayed_counts includes only expanded/paged rows, not viewport clipping. dashboard is the unmodified source snapshot; directories, counts and review_ids are the selected result.',
     note:(exact?'':'Snapshot is stale or partial. Counts are last observed, not exact current counts; review is paused. ')+REVIEW_RULES};
 }

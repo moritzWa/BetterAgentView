@@ -150,8 +150,12 @@ export class WakeGate {
     if(path==='/runtime-write') {
       const {statuses,...meta}=p.snapshot,now=Date.now(),buckets=Array.from({length:64},()=>[]);
       for(const status of statuses)buckets[runtimeBucket(status.session_id)].push(status);
-      const keys=buckets.map((_,i)=>`runtime:${source}:${i}`),old=await s.get(keys);
-      const changed={[`runtime_meta:${source}`]:{...meta,checked_at:now},[`runtime_checked:${source}`]:now,[`last_seen:${source}`]:now};
+      const metaKey=`runtime_meta:${source}`,keys=buckets.map((_,i)=>`runtime:${source}:${i}`);
+      const old=await s.get(meta.dashboard?keys:[...keys,metaKey]);
+      // Native status keeps publishing when the desktop list is not being drawn.
+      // Keep the prior list without renewing its capture time or claiming it is live.
+      const retained=meta.dashboard?null:old.get(metaKey)?.dashboard;
+      const changed={[metaKey]:{...meta,...(retained?{dashboard:retained,dashboard_retained:true}:{}),checked_at:now},[`runtime_checked:${source}`]:now,[`last_seen:${source}`]:now};
       for(let i=0;i<buckets.length;i++) {
         const value=JSON.stringify(buckets[i].sort((a,b)=>a.session_id.localeCompare(b.session_id)));
         if(value!==(old.get(keys[i])??'[]'))changed[keys[i]]=value;
