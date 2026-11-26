@@ -662,23 +662,7 @@ impl Drop for PtyApp {
 fn all_supported_providers_coexist_in_one_real_terminal() {
     let _serial = serialize_real_tty_test();
     let mut app = PtyApp::spawn_fixture(150, 44, "all-providers-sessions.json");
-    let startup = app.wait_for("all-provider dashboard", |screen| {
-        screen.contains("pi-refactor")
-            && screen.contains("opencode-api")
-            && screen.contains("cursor-owned-chat")
-            && screen.contains("copilot-acp-session")
-            && screen.contains("antigravity-last-conversa")
-            && screen.contains("vibe-release-check")
-            && screen.contains("muse-ui-pass")
-            && screen.contains("qwen-parser-work")
-            && screen.contains("kimi-test-plan")
-            && screen.contains("omp-extension-review")
-            && screen.contains("grok-code-review")
-            && screen.contains("kilo-feature-pass")
-            && screen.contains("openhands-test-run")
-    });
-    assert_lines_fit(&startup, 150);
-    for (session, provider) in [
+    let expected = [
         ("release-reviewer", "Claude"),
         ("approval-needed", "Codex"),
         ("pi-refactor", "Pi"),
@@ -694,16 +678,17 @@ fn all_supported_providers_coexist_in_one_real_terminal() {
         ("grok-code-review", "Grok"),
         ("kilo-feature-pass", "Kilo Code"),
         ("openhands-test-run", "OpenHands"),
-    ] {
-        let row = startup
-            .lines()
-            .find(|line| line.contains(session))
-            .unwrap_or_else(|| panic!("missing session row {session}"));
-        assert!(
-            row.contains(provider),
-            "session row {session} did not name {provider}: {row:?}"
-        );
-    }
+    ];
+    // A PTY read can end partway through a synchronized draw. Wait for each
+    // complete row, including the provider label, before checking its width.
+    let startup = app.wait_for("all-provider dashboard with provider labels", |screen| {
+        expected.iter().all(|(session, provider)| {
+            screen
+                .lines()
+                .any(|line| line.contains(session) && line.contains(provider))
+        })
+    });
+    assert_lines_fit(&startup, 150);
 
     app.send(CTRL_F);
     app.send(b"pi-refactor");
