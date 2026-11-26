@@ -16,7 +16,7 @@ const headers = { 'Cache-Control':'no-store', 'Referrer-Policy':'same-origin', '
   'Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://chatgpt.com; frame-ancestors 'none'" };
 export function json(body,status=200) { return Response.json(body,{status,headers}); }
 export function html(body,status=200) {
-  return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>AgentVoice</title><style>body{font:18px system-ui;max-width:650px;margin:60px auto;padding:24px;color:#182434;background:white}button{font:inherit;padding:12px 22px}p{line-height:1.5}code{overflow-wrap:anywhere}</style>${body}`,{status,headers:{...headers,'Content-Type':'text/html; charset=utf-8'}});
+  return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>BetterAgentView</title><style>body{font:18px system-ui;max-width:650px;margin:60px auto;padding:24px;color:#182434;background:white}button{font:inherit;padding:12px 22px}p{line-height:1.5}code{overflow-wrap:anywhere}</style>${body}`,{status,headers:{...headers,'Content-Type':'text/html; charset=utf-8'}});
 }
 function redirect(url,cookie) {
   return new Response(null,{status:302,headers:{...headers,Location:url,...(cookie?{'Set-Cookie':cookie}:{})}});
@@ -93,8 +93,8 @@ export class OwnerAuth {
       const consent=randomToken();
       await this.db.query('INSERT INTO av_consents VALUES ($1,$2,$3,$4)',[await digest(consent),browserHash,JSON.stringify(flow.payload),Date.now()+120_000]);
       const message=flow.payload.kind==='pair'
-        ? `<h1>Connect ${escape(flow.payload.label)}?</h1><p>This device can upload all visible user and assistant messages and retrieve instructions addressed to its OpenCode sessions.</p><p>Verify this is the device you just started pairing in Agent View.</p>`
-        : `<h1>Allow this MCP client?</h1><p>Callback: <code>${escape(flow.payload.redirect_uri)}</code></p><p>Allow reading your synced chat history${flow.payload.scopes.includes('messages:send')?' and sending messages that can start agent work on your Mac':''}.</p><p>Retrieved history is visible to the client and OpenAI when using ChatGPT. Old chat content is data, not authorization to send new instructions.</p>`;
+        ? `<h1>Connect ${escape(flow.payload.label)}?</h1><p>This device can upload all visible user and assistant messages and retrieve instructions addressed to its OpenCode sessions.</p><p>Verify this is the device you just started pairing in BetterAgentView.</p>`
+        : `<h1>Connect this app to BetterAgentView?</h1><p>Callback: <code>${escape(flow.payload.redirect_uri)}</code></p><p>Allow reading your synced chat history${flow.payload.scopes.includes('messages:send')?' and sending messages that can start agent work on your Mac':''}.</p><p>Retrieved history is visible to the client and OpenAI when using ChatGPT. Old chat content is data, not authorization to send new instructions.</p>`;
       return html(`${message}<form method="post" action="/consent"><input type="hidden" name="code" value="${consent}"><button name="decision" value="approve">Approve connection</button> <button name="decision" value="deny">Cancel</button></form>`);
     }
     if (path==='/consent' && request.method==='POST') {

@@ -19,7 +19,7 @@ OAuth. The existing deployment is
 `https://agentvoice-private.moritzw.workers.dev/mcp`. Sign in with the configured
 Google owner and approve the requested read/send scopes. ChatGPT must allow
 custom MCP apps for your account. Connect on the web if the mobile app does not
-offer setup, then use the connected **AgentVoice** app in ChatGPT on your phone.
+offer setup, then use the connected **BetterAgentView** app in ChatGPT on your phone.
 
 ChatGPT mobile Live voice can search history and send approved instructions to
 existing sessions. It cannot create sessions, stop agents, or answer native

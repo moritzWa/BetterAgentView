@@ -63,7 +63,7 @@ Stale context still stops delivery. Read-tool errors stay bare codes.
 
 ### November 25–26 voice incident
 
-Some voice turns stopped before ChatGPT called AgentVoice. On November 25,
+Some voice turns stopped before ChatGPT called BetterAgentView (then named AgentVoice). On November 25,
 ChatGPT fetched session context again instead of submitting the write. The
 November 26 transcript showed reads but no send or start call when ChatGPT said
 it was waiting for approval. Those turns never reached Neon. Two later sends did

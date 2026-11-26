@@ -34,7 +34,7 @@ export const SERVER_INSTRUCTIONS = 'Call list_visible_sessions FIRST for current
 export async function privateMcp(request, { db: rawDb, store, principal, outbox: injectedOutbox, gate: rawGate, starts, timing, initialPresence }) {
     // Phase durations go out in Server-Timing, never in the tool result the model reads.
     const db = timing ? timedDatabase(rawDb, timing) : rawDb, gate = timing ? timedGate(rawGate, timing) : rawGate;
-    const server = new McpServer({ name: 'Agent View paired sessions', version: '0.7.0' }, { instructions: SERVER_INSTRUCTIONS });
+    const server = new McpServer({ name: 'BetterAgentView', version: '0.7.0' }, { instructions: SERVER_INSTRUCTIONS });
     const outbox = injectedOutbox ?? new Outbox(db, gate);
     const startsApi = starts ?? new Starts(db, gate);
     const writeHints = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };

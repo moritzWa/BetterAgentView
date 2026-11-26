@@ -86,12 +86,12 @@ private-bridge pass.
 
 ## Required ChatGPT client check
 
-Do this after every AgentVoice MCP deployment. The installed-connector gate and
+Do this after every BetterAgentView MCP deployment. The installed-connector gate and
 raw MCP tests do not exercise ChatGPT's tools or approval UI.
 
 1. Create a disposable native OpenCode session in an empty test directory and
    wait for it to appear in the dashboard and history mirror. Open a fresh,
-   authenticated ChatGPT web or desktop chat with the deployed AgentVoice app.
+   authenticated ChatGPT web or desktop chat with the deployed BetterAgentView app.
    Refresh the app's tools if ChatGPT is using an old schema, then start another
    fresh chat.
 2. Ask ChatGPT to call `list_visible_sessions` for that directory and send a
@@ -102,7 +102,7 @@ raw MCP tests do not exercise ChatGPT's tools or approval UI.
    target OpenCode history for exactly one user message with that ID and text.
    A queued receipt or a ChatGPT success claim is not proof. If verifying task
    completion, require a new reply tied to that input.
-4. Repeat with a different marker in voice if the client offers AgentVoice in
+4. Repeat with a different marker in voice if the client offers BetterAgentView in
    voice mode. Check that no on-screen approval is required. If blocked, record the client,
    what was tried, and what prevented verification. Record the deployed Worker
    version and the text and voice results separately. Remove only your fixture.

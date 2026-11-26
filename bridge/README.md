@@ -1,4 +1,4 @@
-# AgentVoice mobile bridge
+# BetterAgentView mobile bridge
 
 ChatGPT can search OpenCode history and queue messages through this private MCP
 server. It includes the Cloudflare Worker, OAuth, Neon schemas and sync protocol.
@@ -11,7 +11,7 @@ The production connector and login daemon are Rust code in `src/bridge`.
 - [Recorded deployment verification](test/e2e/VERIFIED.md)
 
 This is separate from BetterAgentView's built-in OpenAI/Grok voice mode. ChatGPT
-mobile Live voice uses the connected AgentVoice MCP app, not BetterAgentView's audio
+mobile Live voice uses the connected BetterAgentView MCP app, not BetterAgentView's audio
 engine. The legacy VoiceCode app and public synthetic MCP probe remain in
 [voizecode](https://github.com/moritzWa/voizecode).
 
