@@ -183,6 +183,35 @@ test('actual MCP tool returns the UI render fixture, not the historical inventor
  } finally { runtime=old; }
 });
 
+test('the 317-character quote survives a crowded overview, brief and history page',async()=>{
+ const old=runtime;
+ try {
+  const opening="Yes, we reviewed it before, but it isn't cited in the outline. ";
+  const quote='Best quote: “Digital records change who can see the work, not just how it is stored.” 🧪 ';
+  const detail='Use the quote in the section on evidence, not in the introduction. ';
+  const closing='We can cite it directly once the reference is in the bibliography.';
+  const reply=opening+quote+detail.padEnd(317-[...(opening+quote+closing)].length)+closing;
+  assert.equal([...reply].length,317);
+  const id='quote-regression';
+  await seed(id,'Digitalization paper',[turn(1,'user','Did we review it before?'),turn(2,'assistant',reply)]);
+  const fixture=JSON.parse(await readFile(new URL('./fixtures/dashboard.json',import.meta.url)));
+  const row={...fixture.sessions[0],id:'opencode:host:'+id,session_id:id,category:'needs_input'};
+  const crowded=Array.from({length:59},(_,i)=>({...row,id:'opencode:host:extra-'+i,session_id:'extra-'+i,category:'idle'}));
+  runtime={available:true,partial:false,checked_at:Date.now(),dashboard:{...fixture,captured_at:Date.now(),sessions:[row,...crowded]},statuses:[status(id,{status:'needs_you'})]};
+  const overview=await rpc('list_visible_sessions',{});
+  const visible=overview.directories.flatMap(d=>d.sessions).find(s=>s.id===row.id);
+  assert.equal(visible.agent,reply);
+  assert.equal(visible.agent_truncation,undefined);
+  assert.match(overview.warning,/Some previews did not fit/);
+  const brief=await rpc('session_brief',{session_id:id});
+  assert.equal(brief.transcript.at(-1).text,reply);
+  assert.equal(brief.transcript.at(-1).truncated,false);
+  const page=await rpc('read_session',{session_id:id});
+  assert.equal(page.messages.at(-1).text,reply);
+  assert.equal(page.messages.at(-1).truncated,false);
+ } finally {runtime=old;}
+});
+
 test('visible MCP includes one latest user and agent excerpt, without debug clutter or progress-message crowding',async()=>{
  const old=runtime,activity=gate.activity;
  try {
@@ -193,11 +222,21 @@ test('visible MCP includes one latest user and agent excerpt, without debug clut
   gate.activity=async()=>({mac_seen_recently:true,history_fresh:true,source_checked_at:Date.now()});
   const result=await rpc('list_visible_sessions',{}),s=result.directories[0].sessions[0];
   assert.equal(result.warning,undefined);
-  assert.deepEqual(Object.keys(s),['id','title','status','user','agent']);
+  assert.deepEqual(Object.keys(s),['id','title','status','user','agent','user_truncation','agent_truncation']);
+  assert.deepEqual(s.user_truncation,{truncated:true,message_id:'msg_11',offset:0});
+  assert.deepEqual(s.agent_truncation,{truncated:true,message_id:'msg_12',offset:0});
+  const fullReply=await rpc('read_message',{session_id:s.id,message_id:s.agent_truncation.message_id,offset:s.agent_truncation.offset});
+  assert.equal(fullReply.text,'start12. '+'Detail 🧪. '.repeat(1000)+' end12.');
+  assert.equal(fullReply.next_offset,null);
   assert(s.user.startsWith('start11.'));assert(s.agent.startsWith('start12.'));
   assert(s.user.endsWith('end11.'));assert(s.agent.endsWith('end12.'));
   assert([s.user,s.agent].every(text=>[...text].length<=600&&!text.includes('middle omitted')));
   const full=await rpc('session_brief',{session_id:s.id});assert.equal(full.found,true);
+  const briefExcerpt=full.transcript.at(-1);
+  assert.equal(briefExcerpt.truncated,true);
+  assert.equal(briefExcerpt.offset,0);
+  assert.equal(briefExcerpt.message_id,fullReply.message_id);
+  assert.equal((await rpc('read_message',{session_id:full.session.session_id,message_id:briefExcerpt.message_id,offset:briefExcerpt.offset})).text,fullReply.text);
   await db.query("UPDATE av_messages SET role='assistant' WHERE session_id=$1 AND message_order=11",['context-tail']);
   runtime.statuses[0].last_user_message_id='msg_9';
   const assistantTail=await rpc('list_visible_sessions',{});

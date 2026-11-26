@@ -33,11 +33,12 @@ export const responseByRoute={
 const extensible=<T extends z.ZodRawShape>(shape:T)=>z.object(shape).passthrough();
 const freshness={source_checked_at:counter.nullable().optional(),mac_seen_recently:z.boolean().optional(),history_fresh:z.boolean().optional()};
 const row=extensible({session_id:id,title:z.string(),status:Status,health:Health.optional()});
-const message=extensible({message_id:id,role:z.enum(['user','assistant']),message_order:counter,text:z.string()});
+const message=extensible({message_id:id,role:z.enum(['user','assistant']),message_order:counter,text:z.string(),truncated:z.boolean().optional(),offset:counter.optional()});
 const delivery=ReceiptResponse.extend({delivery_state:z.string(),claim_ceiling:z.string(),say_to_owner:z.string(),report_rule:z.string(),...freshness}).passthrough();
 const start=StartReceiptResponse.extend({delivery_state:z.string(),claim_ceiling:z.string(),say_to_owner:z.string(),report_rule:z.string(),...freshness}).passthrough();
 const categoryCounts=z.record(z.string(),counter);
-const voiceSession=z.object({id,title:z.string(),status:DashboardCategory,user:z.string().nullable(),agent:z.string().nullable(),review:z.literal(true).optional()}).strict();
+const messageTruncation=object({truncated:z.literal(true),message_id:id,offset:counter});
+const voiceSession=z.object({id,title:z.string(),status:DashboardCategory,user:z.string().nullable(),agent:z.string().nullable(),user_truncation:messageTruncation.optional(),agent_truncation:messageTruncation.optional(),review:z.literal(true).optional()}).strict();
 const directoryGroup=z.object({path:z.string(),label:z.string(),counts:categoryCounts,sessions:z.array(voiceSession),working:z.array(voiceSession)}).strict();
 export const toolOutputs={
   list_visible_sessions:z.object({counts:categoryCounts.nullable(),directories:z.array(directoryGroup),warning:z.string().optional()}).strict(),

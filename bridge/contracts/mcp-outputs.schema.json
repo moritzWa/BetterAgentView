@@ -71,6 +71,56 @@
                       "null"
                     ]
                   },
+                  "user_truncation": {
+                    "type": "object",
+                    "properties": {
+                      "truncated": {
+                        "type": "boolean",
+                        "const": true
+                      },
+                      "message_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "truncated",
+                      "message_id",
+                      "offset"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "agent_truncation": {
+                    "type": "object",
+                    "properties": {
+                      "truncated": {
+                        "type": "boolean",
+                        "const": true
+                      },
+                      "message_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "truncated",
+                      "message_id",
+                      "offset"
+                    ],
+                    "additionalProperties": false
+                  },
                   "review": {
                     "type": "boolean",
                     "const": true
@@ -113,6 +163,56 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "user_truncation": {
+                    "type": "object",
+                    "properties": {
+                      "truncated": {
+                        "type": "boolean",
+                        "const": true
+                      },
+                      "message_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "truncated",
+                      "message_id",
+                      "offset"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "agent_truncation": {
+                    "type": "object",
+                    "properties": {
+                      "truncated": {
+                        "type": "boolean",
+                        "const": true
+                      },
+                      "message_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "truncated",
+                      "message_id",
+                      "offset"
+                    ],
+                    "additionalProperties": false
                   },
                   "review": {
                     "type": "boolean",
@@ -731,6 +831,14 @@
                 },
                 "text": {
                   "type": "string"
+                },
+                "truncated": {
+                  "type": "boolean"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
                 }
               },
               "required": [
@@ -971,6 +1079,14 @@
             },
             "text": {
               "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
             }
           },
           "required": [

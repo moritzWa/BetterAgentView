@@ -44,6 +44,29 @@ test('large forward and backward pages never skip a message under the response b
  const exhausted=await rpc('read_session',{session_id:'large-pages',after:8});
  assert.deepEqual(exhausted.messages,[]);assert.equal(exhausted.no_newer_messages,true);assert.equal(exhausted.next_after,8);
 });
+test('history defers an intact short turn when the current page has too little room',async()=>{
+ const reply='x'.repeat(317),full='🧪'.repeat(25_000)+' End.';
+ const id='page-boundary';
+ await seed(id,[message(1,full),message(2,full),message(3,'z'.repeat(19_999)),message(4,reply)]);
+ const first=await rpc('read_session',{session_id:id,after:0});
+ assert.equal(first.page_budget_limited,true);
+ assert.equal(first.next_after,3);
+ const next=await rpc('read_session',{session_id:id,after:first.next_after});
+ assert.equal(next.messages[0].text,reply);
+ assert.equal(next.messages[0].truncated,false);
+ const excerpt=first.messages[0];
+ assert.equal(excerpt.truncated,true);
+ assert.equal(excerpt.offset,0);
+ const chunks=[];
+ for(let offset=excerpt.offset;offset!==null;) {
+  const result=await rpc('read_message',{session_id:id,message_id:excerpt.message_id,offset});
+  chunks.push(result.text);
+  assert(result.next_offset===null||result.next_offset>offset);
+  offset=result.next_offset;
+ }
+ assert.equal(chunks.join(''),full);
+});
+
 test('truncating a session preview never splits a Unicode surrogate pair',async()=>{
  await seed('unicode-preview',[message(1,'x'.repeat(19999)+'😀TAIL')]);
  const page=await rpc('read_session',{session_id:'unicode-preview'});

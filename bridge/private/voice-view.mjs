@@ -1,3 +1,5 @@
+import {fullMessageReference} from './excerpt.mjs';
+
 /** The voice response is a review list, not a copy of the dashboard debugger. */
 export function voiceView(view) {
  const nonzero=counts=>counts?Object.fromEntries(Object.entries(counts).filter(([key,n])=>key==='total'||n>0)):null;
@@ -7,14 +9,18 @@ export function voiceView(view) {
  if(view.directory_found===false)warnings.push('No visible directory matches that path.');
  const review=new Set(view.review_ids??[]);
  const rows=view.directories.flatMap(d=>[...d.sessions,...d.working]);
- if(rows.some(s=>s.context_state&&s.context_state!=='available'))warnings.push('Some message context is unavailable; use session_brief for the selected session.');
+ if(rows.some(s=>s.context_state==='budget_limited'))warnings.push('Some previews did not fit. Select a directory or use session_brief for one session.');
+ if(rows.some(s=>s.context_state&&!['available','budget_limited'].includes(s.context_state)))warnings.push('Some message context is unavailable; use session_brief for the selected session.');
  else if(rows.some(s=>s.context_fresh===false))warnings.push('Recent messages may lag the Mac; check session_brief before acting.');
- const session=s=>({
-  id:s.id,title:s.title,status:s.category,
-  user:s.recent_messages?.find(m=>m.role==='user')?.text??null,
-  agent:s.recent_messages?.find(m=>m.role==='assistant')?.text??null,
-  ...(s.category==='working'&&review.has(s.id)?{review:true}:{}),
- });
+ const session=s=>{
+  const user=s.recent_messages?.find(m=>m.role==='user');
+  const agent=s.recent_messages?.find(m=>m.role==='assistant');
+  return {id:s.id,title:s.title,status:s.category,user:user?.text??null,agent:agent?.text??null,
+   ...(user?.truncated?{user_truncation:fullMessageReference(user.message_id)}:{}),
+   ...(agent?.truncated?{agent_truncation:fullMessageReference(agent.message_id)}:{}),
+   ...(s.category==='working'&&review.has(s.id)?{review:true}:{}),
+  };
+ };
  return {counts:nonzero(view.counts),directories:view.directories.map(d=>({
   path:d.path,label:d.label,counts:nonzero(d.counts),
   sessions:d.sessions.map(session),working:d.working.map(session),

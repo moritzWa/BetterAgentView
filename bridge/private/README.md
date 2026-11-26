@@ -143,7 +143,14 @@ them has not been observed here; do not rely on text alone.
 
 - `read_session` defaults to recent messages. Forward and backward pages preserve
   source order under the response budget. No newer messages means an empty page,
-  never a substituted older reply. Read truncated messages with `read_message`.
+  never a substituted older reply. Messages that do not fit the remaining page
+  budget appear on the next page instead of being cut to fit.
+- The visible overview keeps messages up to 600 Unicode characters whole. If
+  the preview budget runs out, select a directory or use `session_brief`.
+  A cut overview excerpt has `user_truncation` or `agent_truncation`. Cut brief
+  and history messages carry `truncated: true` on the message itself. Call
+  `read_message` with the session ID, `message_id` and `offset` (zero for the
+  full synced message). Pass `next_offset` back as `offset` until it is null.
 - `search_history` returns a short passage around the first matching term (400
   characters by default, `excerpt_chars` up to 2,000) and its Unicode character
   offset for `read_message`, newest first. It returns 8 matches by default, at
