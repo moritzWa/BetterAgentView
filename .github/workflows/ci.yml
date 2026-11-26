@@ -106,6 +106,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.75.0
+      - name: Use lighter debug info for Intel macOS tests
+        if: matrix.platform.runner == 'macos-15-intel' && matrix.check == 'test'
+        shell: bash
+        run: |
+          # Keep line tables and debug assertions. Keep Cargo's default test
+          # codegen parallelism, which rust-cache would otherwise turn off.
+          echo "CARGO_PROFILE_TEST_DEBUG=1" >> "$GITHUB_ENV"
+          echo "CARGO_INCREMENTAL=1" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           cache-bin: "false"
