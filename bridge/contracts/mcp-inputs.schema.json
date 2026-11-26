@@ -256,7 +256,6 @@
       "operation_id",
       "session_id",
       "text",
-      "base_cursor",
       "confirmed"
     ],
     "definitions": {

@@ -154,6 +154,15 @@ test('outbox is idempotent, source-scoped, ordered and checks stale context',asy
   assert.equal((await outbox.lease(writer)).operation_id,'operation456');
   assert.equal((await outbox.status(reader,'operation123')).status,'accepted');
 });
+test('a send without base_cursor takes the current session state in one call and stays idempotent',async()=>{
+  const store=new SyncStore(db),reader=await store.authenticate(readerToken,'read'),outbox=new Outbox(db,gate);
+  const input={operation_id:'nocursor123',session_id:'ses_fixture',text:'Voice instruction without a prior session_brief'};
+  const first=await outbox.send(reader,input);
+  assert.deepEqual(await outbox.send(reader,input),first);
+  assert.equal(Number((await db.query("SELECT base_cursor FROM av_outbox WHERE operation_id='nocursor123'")).rows[0].base_cursor),10);
+  await assert.rejects(outbox.send(reader,{...input,text:'changed'}),/operation_id_conflict/);
+  await outbox.cancel(reader,'nocursor123');
+});
 
 test('a queued offline message survives later appended turns but not edits or reverts',async()=>{
   const store=new SyncStore(db),writer=await store.authenticate(writerToken,'sync'),reader=await store.authenticate(readerToken,'read'),outbox=new Outbox(db,gate);

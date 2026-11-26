@@ -8,9 +8,9 @@ export class Outbox {
   constructor(db,gate) { this.db=db;this.gate=gate; }
   async send(principal,{operation_id,session_id,text,base_cursor,context}) {
     if(!principal.scopes?.split(' ').includes('messages:send'))throw new SyncError('write_permission_required',403);
-    if(!/^[A-Za-z0-9_-]{8,160}$/.test(operation_id??'') || typeof session_id!=='string' || session_id.length>200 || typeof text!=='string' || !text.trim() || text.length>50_000 || !Number.isSafeInteger(base_cursor) || base_cursor<0)throw new SyncError('invalid_message',400);
+    if(!/^[A-Za-z0-9_-]{8,160}$/.test(operation_id??'') || typeof session_id!=='string' || session_id.length>200 || typeof text!=='string' || !text.trim() || text.length>50_000 || (base_cursor!==undefined && (!Number.isSafeInteger(base_cursor) || base_cursor<0)))throw new SyncError('invalid_message',400);
     if(context && !ReadContext.safeParse(context).success)throw new SyncError('invalid_read_context',400);
-    const hash=await digest({operation_id,session_id,text,base_cursor,...(context?{context}:{})});
+    const hash=await digest({operation_id,session_id,text,...(base_cursor===undefined?{}:{base_cursor}),...(context?{context}:{})});
     // Signal first: a failed DB write causes a harmless extra poll, not a stranded message.
     await this.gate.signal(`${principal.device_id}|${principal.database_epoch}`);
     const receipt=await this.db.transaction(async tx=>{
@@ -23,11 +23,13 @@ export class Outbox {
       if(old) { if(old.payload_hash!==hash)throw new SyncError('operation_id_conflict');return publicReceipt(old); }
       const session=(await tx.query(`SELECT cursor,state FROM av_sessions WHERE ${where} AND session_id=$4 AND cursor IS NOT NULL FOR SHARE`,[...s,session_id])).rows[0];
       if(!session || session.state.deleted)throw new SyncError('session_not_found',404);
-      if(base_cursor>Number(session.cursor) || (!context && Number(session.cursor)!==base_cursor))throw new SyncError('context_changed_re_read_and_confirm',409);
+      // Omitted cursor: the owner decided from a review moments ago, so take the current state. The context guard below still stops delivery if the history changes before the Mac accepts it.
+      const cursor=base_cursor===undefined?Number(session.cursor):base_cursor;
+      if(cursor>Number(session.cursor) || (!context && Number(session.cursor)!==cursor))throw new SyncError('context_changed_re_read_and_confirm',409);
       const guard=await readContext(tx,principal,session_id,context??null);
       if(context && !sameContext(context,guard))throw new SyncError('history_changed_re_read_and_confirm',409);
       const row=(await tx.query(`INSERT INTO av_outbox (owner_id,device_id,database_epoch,operation_id,session_id,message_id,text,payload_hash,base_cursor,created_at,expires_at,context_guard)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[...s,operation_id,session_id,`msg_agentvoice_${operation_id}`,text,hash,base_cursor,Date.now(),Date.now()+86400_000,JSON.stringify(guard)])).rows[0];
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,[...s,operation_id,session_id,`msg_agentvoice_${operation_id}`,text,hash,cursor,Date.now(),Date.now()+86400_000,JSON.stringify(guard)])).rows[0];
       return publicReceipt(row);
     });
     // The first signal can be consumed before Postgres commits. Signal again
