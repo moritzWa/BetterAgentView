@@ -9,6 +9,29 @@ permissions:
   contents: read
 
 jobs:
+  scope:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.scope.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - id: scope
+        shell: bash
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          rust=true
+          case "$GITHUB_EVENT_NAME:$GITHUB_REF" in
+            pull_request:*) base=HEAD^1 ;; # Base parent of GitHub's PR merge commit.
+            push:refs/heads/*) base="$PUSH_BEFORE" ;;
+            *) base= ;;
+          esac
+          if [[ -n "$base" ]] && bash scripts/ci-docs-only.sh "$base" HEAD; then
+            rust=false
+          fi
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
 
   voice-input:
     runs-on: ubuntu-latest
@@ -17,10 +40,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - run: bash scripts/test-ci-docs-only.sh
       - run: node --test scripts/test-voice-input.cjs
       - run: node --test scripts/test-site-rename.mjs scripts/test-landing.mjs
 
   quality:
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.outputs.rust != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -28,27 +54,42 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: cargo fmt --all -- --check
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          cache-bin: "false"
       - run: cargo clippy --all-targets --locked -- -D warnings
 
   test:
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.outputs.rust != 'false' }}
     strategy:
+      fail-fast: false
       matrix:
         rust: ["1.75.0", "stable"]
+        check: [test, release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
-      - run: cargo test --locked
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          cache-bin: "false"
+          key: ubuntu-latest-${{ matrix.check }}
+      - if: matrix.check == 'test'
+        run: cargo test --locked
         timeout-minutes: 15
-      - run: cargo build --release --locked
+      - if: matrix.check == 'release'
+        run: cargo build --release --locked
 
-  native-portability:
+  portability:
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.outputs.rust != 'false' }}
     strategy:
       fail-fast: false
       matrix:
-        include:
+        platform:
           - runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
           - runner: ubuntu-22.04-arm
@@ -57,31 +98,26 @@ jobs:
             target: x86_64-apple-darwin
           - runner: macos-15
             target: aarch64-apple-darwin
-    runs-on: ${{ matrix.runner }}
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+        check: [test, package]
+    name: portability (${{ matrix.platform.target }}, ${{ matrix.check }})
+    runs-on: ${{ matrix.platform.runner }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.75.0
-      - run: cargo test --locked
-        timeout-minutes: 15
-      - run: cargo build --release --locked --target ${{ matrix.target }}
-      - run: scripts/test-installer.sh
-      - run: scripts/package-release.sh ${{ matrix.target }}
-      - uses: actions/upload-artifact@v6
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          name: release-${{ matrix.target }}
-          path: |
-            dist/*.tar.gz
-            dist/*.tar.gz.sha256
-
-  windows-portability:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.75.0
-      - run: cargo test --locked
+          cache-bin: "false"
+          # Keep OS images, targets and build profiles in separate caches.
+          key: ${{ matrix.platform.runner }}-${{ matrix.platform.target }}-${{ matrix.check }}
+      - if: matrix.check == 'test'
+        run: cargo test --locked
         timeout-minutes: 15
-      - run: cargo build --release --locked --target x86_64-pc-windows-msvc
+      - if: matrix.check == 'package'
+        run: cargo build --release --locked --target ${{ matrix.platform.target }}
       - name: Test native startup without HOME
+        if: matrix.check == 'package' && runner.os == 'Windows'
         shell: pwsh
         run: |
           Remove-Item Env:HOME -ErrorAction SilentlyContinue
@@ -89,13 +125,23 @@ jobs:
           New-Item -ItemType Directory -Path $env:USERPROFILE -Force | Out-Null
           $json = & .\target\x86_64-pc-windows-msvc\release\agentview.exe --json --no-host-providers | ConvertFrom-Json
           if ($json.sessions.Count -ne 0 -or $json.warnings.Count -ne 0) { throw "unexpected smoke-test output" }
-      - shell: pwsh
+      - if: matrix.check == 'package' && runner.os != 'Windows'
+        run: scripts/test-installer.sh
+      - if: matrix.check == 'package' && runner.os != 'Windows'
+        run: scripts/package-release.sh ${{ matrix.platform.target }}
+      - if: matrix.check == 'package' && runner.os == 'Windows'
+        shell: pwsh
         run: .\scripts\test-installer.ps1
-      - shell: pwsh
+      - if: matrix.check == 'package' && runner.os == 'Windows'
+        shell: pwsh
         run: .\scripts\package-release.ps1
-      - uses: actions/upload-artifact@v6
+      - if: matrix.check == 'package'
+        uses: actions/upload-artifact@v6
         with:
-          name: release-x86_64-pc-windows-msvc
+          name: release-${{ matrix.platform.target }}
           path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
             dist/*.zip
             dist/*.zip.sha256
+          if-no-files-found: error
