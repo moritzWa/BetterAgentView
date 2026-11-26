@@ -1,13 +1,13 @@
 // Pure helpers: what the model may honestly say about one send. No I/O.
 // claim_ceiling is the strongest claim allowed: none < queued < accepted < completed.
 
-export const REPORT_RULE='Say say_to_owner. Never claim more than claim_ceiling. Queued is not delivered. Accepted is not done.';
+export const REPORT_RULE='Say say_to_owner. Never claim more than claim_ceiling. Queued means saved for the Mac. Say the session has it only after acceptance, and say it finished only after confirmed completion.';
 
 const SAYS={
   not_sent:'Not sent. Nothing reached the session.',
-  queued_mac_offline:'It is queued, not delivered. Your Mac looks offline. It can pick up the message when it reconnects.',
-  queued_waiting_for_mac:'It is queued. The session has not received it yet.',
-  accepted_by_session:'The session has it. It has not finished yet.',
+  queued_mac_offline:'Message saved. Your Mac will pick it up automatically when it reconnects.',
+  queued_waiting_for_mac:'Message saved. Your Mac will pick it up automatically.',
+  accepted_by_session:'The session has your message.',
   completed_confirmed:'The session got it, finished, and replied.',
   needs_confirmation:'It is held. The session changed after you decided. I need your OK before it goes.',
   needs_confirmation_blocked:'It is waiting behind an earlier message that needs your OK.',

@@ -36,7 +36,11 @@ test('a queued start has no session id and cannot be described as started', () =
   assert.equal(view.claim_ceiling, 'none');
   assert.equal(view.session_id, null);
   assert.equal(view.started, false);
-  assert.match(view.say_to_owner, /No session has been created/);
+  assert.equal(view.say_to_owner, 'Start request saved. Your Mac will pick it up automatically.');
+  const offline=startView({status:'queued',session_id:null},{mac_seen_recently:false});
+  assert.equal(offline.say_to_owner,'Start request saved. Your Mac will pick it up automatically when it reconnects.');
+  assert.equal(offline.session_id,null);
+  assert.equal(offline.started,false);
   assert.equal(view.report_rule, START_RULE);
   assert.equal(startView({status:'started', session_id:'ses_real'}).session_id, 'ses_real');
   assert.equal(startView({status:'started', session_id:null}).delivery_state, 'uncertain');
@@ -56,7 +60,7 @@ test('queueing a start does not invent a session, and the id appears only after 
   assert.equal(queued.status, 'queued');
   assert.equal(queued.session_id, null);
   assert.equal(queued.started, false);
-  assert.match(queued.say_to_owner, /No session has been created/);
+  assert.match(queued.say_to_owner, /^Start request saved[.].*automatically/);
   const again = body(await rpc('start_session', {operation_id:'start_queue_1', directory:'/Users/m/Code/agentview', text:'Add a health tool'}));
   assert.equal(again.operation_id, queued.operation_id);
   const conflict = await rpc('start_session', {operation_id:'start_queue_1', directory:'/Users/m/Code/other', text:'Add a health tool'});

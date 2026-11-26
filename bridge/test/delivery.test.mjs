@@ -37,10 +37,13 @@ test('every receipt status maps to one state, one honest line and a claim ceilin
 });
 
 test('queued and accepted lines never claim delivery or completion',()=>{
-  const queued=deliveryView({status:'queued'},{mac_seen_recently:false}).say_to_owner;
-  assert(/not delivered/i.test(queued));assert(!/\b(delivered to|sent to|done|finished)\b/i.test(queued.replace(/not delivered/i,'')));
-  const accepted=deliveryView({status:'accepted'},{}).say_to_owner;
-  assert(/not finished/i.test(accepted));
+  for(const mac_seen_recently of [true,false]) {
+    const queued=deliveryView({status:'queued'},{mac_seen_recently}).say_to_owner;
+    assert.match(queued,/^Message saved[.].*automatically/);
+    assert.doesNotMatch(queued,/not delivered|couldn.t deliver|undelivered|failed|the session has it|finished/i);
+    if(!mac_seen_recently)assert.match(queued,/reconnects/);
+  }
+  assert.equal(deliveryView({status:'accepted'}).say_to_owner,'The session has your message.');
   assert.equal(deliveryView({status:'accepted'},{}).claim_ceiling,'accepted');
   assert(ORDER[deliveryView({status:'queued'},{}).claim_ceiling]<ORDER[deliveryView({status:'accepted'},{}).claim_ceiling]);
 });
@@ -89,12 +92,13 @@ async function rpcRaw(name,args,rpcGate=gate){
 const body=raw=>JSON.parse(raw.result.content[0].text);
 const input=id=>({operation_id:id,session_id:'ses_delivery',text:'Synthetic approved text',base_cursor:100});
 
-test('send with the Mac offline reports queued, not delivered, and claims at most queued',async()=>{
+test('send with the Mac offline reports saved for automatic pickup and claims at most queued',async()=>{
   macSeen=false;
   const raw=await rpcRaw('send_session_message',input('delivery_offline_1'));
   assert(!raw.result.isError);const out=body(raw);
   assert.equal(out.delivery_state,'queued_mac_offline');assert.equal(out.claim_ceiling,'queued');assert.equal(out.status,'queued');
-  assert(/not delivered/i.test(out.say_to_owner));
+  assert.equal(out.say_to_owner,'Message saved. Your Mac will pick it up automatically when it reconnects.');
+  assert.equal(body(await rpcRaw('message_status',{operation_id:out.operation_id})).say_to_owner,out.say_to_owner);
   macSeen=true;
 });
 
