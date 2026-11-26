@@ -19,7 +19,7 @@ TIMING_TESTS = {
     "completed_history_is_visible_by_default_and_stays_responsive",
     "hundreds_of_sessions_coalesce_arrow_bursts_without_output_backlog",
     "opencode_history_budget_stays_responsive_and_limits_visible_rows",
-    "pi_launch_enters_native_foreground_and_returns_to_exact_managed_row",
+    "antigravity_login_model_selection_and_left_background_are_integrated",
     "slow_provider_refresh_does_not_block_arrow_navigation_or_exit",
 }
 
