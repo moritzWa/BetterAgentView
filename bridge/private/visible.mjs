@@ -31,9 +31,12 @@ export async function snapshotDiagnostics(gate,principal) {
   const [runtime,presence]=await Promise.all([gate.runtime(source),gate.presence(source)]),now=Date.now();
   const reasons=snapshotReasons(runtime,presence.last_seen>now-60_000,now);
   const trace=SnapshotTrace.safeParse(runtime.snapshot_trace);
+  // Older gate instances stored the dashboard in the same record as checked_at.
+  // This is proof of its write time only when that write did not retain an older list.
+  const storedAt=runtime.dashboard_stored_at??(runtime.dashboard&&!runtime.dashboard_retained?runtime.checked_at:null);
   return {state:!runtime.dashboard?'unavailable':reasons.length?'stale':'fresh',reasons,checked_at:now,
     runtime_stored_at:runtime.checked_at??null,last_mac_seen_at:presence.last_seen??null,snapshot_captured_at:runtime.dashboard?.captured_at??null,
-    snapshot_stored_at:runtime.dashboard_stored_at??null,session_count:runtime.dashboard?.sessions?.length??null,connector:trace.success?trace.data:null};
+    snapshot_stored_at:storedAt??null,session_count:runtime.dashboard?.sessions?.length??null,connector:trace.success?trace.data:null};
 }
 
 export function visibleView(runtime,freshness={},now=Date.now(),{directory,include_scheduled_and_paused=false}={}) {
