@@ -59,7 +59,9 @@ cargo build --release --locked
 ```
 
 CI runs the locked tests and release builds in parallel on Rust 1.75.0 and
-stable. Portability CI also tests and packages for Linux, macOS and Windows.
+stable. CI runs on pull requests and pushes to main. Portability CI also tests
+and packages for Linux, macOS and Windows. The macOS jobs run the terminal
+suite in two isolated processes without compiling it twice.
 Changes confined to the static site and a few prose files skip Rust CI but still
 run the Node checks. A manual CI run always runs the full suite. Release
 workflows use their own checks.
