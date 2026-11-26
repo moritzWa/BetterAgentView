@@ -64,11 +64,11 @@ async function checkLiveGate() {
   await mkdir(cwd,{recursive:true,mode:0o700});
   const location='?'+new URLSearchParams({'location[directory]':cwd});
   const owner='wallawitsch@gmail.com',reader=randomBytes(32).toString('base64url');
-  let db,hash,fixtureId,shellId,shellPid,finished=false,passed=false,cancelled=false;
+  let db,hash,fixtureId,shellId,shellPid,lastShellId,lastShellPid,finished=false,passed=false,cancelled=false;
   const cancel=()=>{cancelled=true;};
   const started=Date.now();
-  async function native(method,path,body) {
-    const response=await fetch(localBase+path,{method,headers:{authorization:nativeAuth,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30_000)});
+  async function native(method,path,body,timeoutMs=30_000) {
+    const response=await fetch(localBase+path,{method,headers:{authorization:nativeAuth,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(timeoutMs)});
     if(!response.ok)throw Object.assign(new Error(`Native release probe HTTP ${response.status}`),{status:response.status});
     return response.status===204?null:(await response.json()).data;
   }
@@ -124,13 +124,22 @@ async function checkLiveGate() {
         if(cancelled)throw new Error('Release gate interrupted');
         // The server owns this bounded process. No detached agent or model call.
         const value=await native('POST','/api/shell'+location,{command:'/bin/sleep 180',cwd,timeout:180_000,metadata:{sessionID:fixtureId}});
-        shellId=value.id;shellPid=value.pid;assert.equal(value.status,'running');assert(shellPid>1,'Missing probe process ID');return {id:shellId};
+        shellId=lastShellId=value.id;shellPid=lastShellPid=value.pid;assert.equal(value.status,'running');assert(shellPid>1,'Missing probe process ID');return {id:shellId};
       },
       stop:async work=>{
         assert.equal(work.id,shellId);
         await stopProbe();
       },
       read:mcp,
+      describe:async fixture=>{
+        const [active,shell]=await Promise.all([
+          native('GET','/api/session/active',undefined,5000).then(rows=>rows?.[fixture.id]?.type??'not_running',()=>null),
+          lastShellId?native('GET','/api/shell/'+encodeURIComponent(lastShellId)+location,undefined,5000).then(row=>row?.status??null,e=>e.status===404?'absent':null):null,
+        ]);
+        let process_alive=null;
+        if(lastShellPid)try{process.kill(lastShellPid,0);process_alive=true;}catch(error){if(error.code==='ESRCH')process_alive=false;}
+        return {active,shell,process_alive};
+      },
       remove:async fixture=>{
         assert.equal(fixture.id,fixtureId);
         const value=await native('GET',`/api/session/${fixtureId}`);

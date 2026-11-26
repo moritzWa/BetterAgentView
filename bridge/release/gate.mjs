@@ -22,30 +22,38 @@ export function matchesObservation(value,{id,status,since,now}) {
 export async function verifyTransitions(io,{timeoutMs=120_000,pollMs=1000}={}) {
   const observations=[];
   let fixture,work,originalError;
-  async function wait(status,since) {
+  async function wait(status,since,phase) {
     const deadline=io.now()+timeoutMs;
+    let last, polls=0;
     while(io.now()<deadline) {
       const value=await io.read(fixture);
+      polls++;
+      const rows=value?.sessions?.filter(row=>row.session_id===fixture.id)??[];
+      last={observed_at:value?.status_observed_at??null,fresh:value?.status_fresh??null,
+        mac_seen:value?.mac_seen_recently??null,partial:value?.partial??null,truncated:value?.truncated??null,
+        statuses:rows.map(row=>row.status),reasons:rows.map(row=>row.reason??null)};
       if(matchesObservation(value,{id:fixture.id,status,since,now:io.now()})) {
         observations.push({status,observed_at:value.status_observed_at,latency_ms:io.now()-since});
         return;
       }
       await io.sleep(pollMs);
     }
-    throw new Error(`Release gate timed out waiting for fresh ${status} status`);
+    let native=null;
+    try{native=(await io.describe?.(fixture))??null;}catch{/* Diagnostics must not mask the timeout. */}
+    throw new Error(`Release gate timed out waiting for fresh ${status} status: ${JSON.stringify({phase,since,polls,last,native})}`);
   }
   try {
     let since=io.now();fixture=await io.create();
-    await wait('done',since);
+    await wait('done',since,'after_create');
     since=io.now();work=await io.start(fixture);
-    await wait('working',since);
+    await wait('working',since,'after_start');
     since=io.now();await io.stop(work);work=null;
-    await wait('done',since);
+    await wait('done',since,'after_stop');
   } catch(error) {originalError=error;}
   const failures=[];
   if(work)try{await io.stop(work);}catch{failures.push('probe shell cleanup failed');}
   if(fixture)try{
-    const since=io.now();await io.remove(fixture);await wait('absent',since);
+    const since=io.now();await io.remove(fixture);await wait('absent',since,'after_remove');
   }catch{failures.push('probe session cleanup failed');}
   try{await io.finish();}catch{failures.push('diagnostic credential cleanup failed');}
   if(originalError||failures.length)throw new Error([originalError?.message,...failures].filter(Boolean).join('; '));

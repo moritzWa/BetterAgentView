@@ -46,6 +46,20 @@ test('seeing only idle never proves the working transition',async()=>{
   const io=driver({neverWorks:true});await assert.rejects(verifyTransitions(io,{timeoutMs:3,pollMs:1}),/fresh working/);
   assert(io.calls.includes('stop'));assert(io.calls.includes('remove'));assert.equal(io.calls.at(-1),'finish');
 });
+test('post-stop timeout identifies the phase and reports native and MCP state without session content',async()=>{
+  const io=driver();
+  io.stop=async()=>{io.calls.push('stop');};
+  io.describe=async()=>({active:'not_running',shell:'absent',process_alive:false});
+  await assert.rejects(verifyTransitions(io,{timeoutMs:3,pollMs:1}),error=>{
+    const diagnostic=JSON.parse(error.message.slice(error.message.indexOf('{')));
+    assert.equal(diagnostic.phase,'after_stop');
+    assert.deepEqual(diagnostic.last.statuses,['working']);
+    assert.deepEqual(diagnostic.native,{active:'not_running',shell:'absent',process_alive:false});
+    assert(!error.message.includes('ses_fixture'));
+    return true;
+  });
+  assert.equal(io.calls.at(-1),'finish');
+});
 test('cleanup failure blocks a green gate, without skipping credential cleanup',async()=>{
   for(const options of [{stopFails:true},{removeFails:true}]) {
     const io=driver(options);await assert.rejects(verifyTransitions(io,{timeoutMs:3,pollMs:1}),/cleanup failed/);
