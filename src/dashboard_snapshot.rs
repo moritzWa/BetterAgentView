@@ -294,7 +294,11 @@ impl Drop for Publisher {
     }
 }
 
-pub(crate) fn latest() -> (Option<DashboardSnapshot>, ReadResult) {
+pub fn latest() -> Option<DashboardSnapshot> {
+    read_latest().0
+}
+
+pub(crate) fn read_latest() -> (Option<DashboardSnapshot>, ReadResult) {
     let Some(path) = directory() else {
         return (None, ReadResult::Missing);
     };

@@ -78,7 +78,7 @@ pub(super) fn snapshot(config: &Config) -> Result<Snapshot> {
     if config.supervisor_state.is_some() {
         return Ok(snapshot);
     }
-    let (mut dashboard, mut read_result) = crate::dashboard_snapshot::latest();
+    let (mut dashboard, mut read_result) = crate::dashboard_snapshot::read_latest();
     let mut read_source = ReadSource::Desktop;
     if dashboard.is_none() {
         match crate::dashboard_snapshot::refresh_in_background() {
