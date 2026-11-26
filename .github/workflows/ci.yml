@@ -2,6 +2,7 @@ name: ci
 
 on:
   push:
+    branches: [main] # The PR merge-commit run covers pushes to open PRs.
   pull_request:
   workflow_dispatch:
 
@@ -106,8 +107,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.75.0
-      - name: Use lighter debug info for Intel macOS tests
-        if: matrix.platform.runner == 'macos-15-intel' && matrix.check == 'test'
+      - name: Use lighter debug info for macOS tests
+        if: runner.os == 'macOS' && matrix.check == 'test'
         shell: bash
         run: |
           # Keep line tables and debug assertions. Keep Cargo's default test
@@ -119,7 +120,14 @@ jobs:
           cache-bin: "false"
           # Keep OS images, targets and build profiles in separate caches.
           key: ${{ matrix.platform.runner }}-${{ matrix.platform.target }}-${{ matrix.check }}
-      - if: matrix.check == 'test'
+      - if: matrix.check == 'test' && runner.os != 'macOS'
+        run: cargo test --locked
+        timeout-minutes: 15
+      - name: Run Rust tests with two isolated terminal shards
+        if: matrix.check == 'test' && runner.os == 'macOS'
+        env:
+          CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER: python3 scripts/ci-test-runner.py
+          CARGO_TARGET_X86_64_APPLE_DARWIN_RUNNER: python3 scripts/ci-test-runner.py
         run: cargo test --locked
         timeout-minutes: 15
       - if: matrix.check == 'package'
