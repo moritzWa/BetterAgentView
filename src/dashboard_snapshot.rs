@@ -1,11 +1,76 @@
 //! The actual dashboard model, not a second discovery of provider history.
 use crate::app::{App, SelectionKey, ViewMode};
 use crate::bridge::contract::{
-    DashboardCategory as Category, DashboardGroup, DashboardSession, DashboardSnapshot, View,
+    DashboardCategory as Category, DashboardGroup, DashboardSession, DashboardSnapshot,
+    DesktopPublishResult, ReadResult, View,
 };
 use crate::domain::SessionState;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+const MAX_BYTES: usize = 100_000;
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct DiscoverySettings {
+    args: Vec<String>,
+    cwd: PathBuf,
+}
+
+/// Remember the user's actual discovery flags. Never widen their providers,
+/// directory or external-history scope just because no terminal is running.
+pub fn remember_discovery_args() -> anyhow::Result<()> {
+    let root = directory().ok_or_else(|| anyhow::anyhow!("no state directory"))?;
+    crate::fs_util::write_private_json(
+        &root.join("discovery-settings"),
+        &DiscoverySettings {
+            args: std::env::args().skip(1).collect(),
+            cwd: std::env::current_dir()?,
+        },
+    )
+}
+
+pub fn last_list_preferences() -> Option<(String, bool)> {
+    let bytes = std::fs::read(directory()?.join("list-preferences")).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+pub(crate) fn last_desktop_publish() -> Option<(i64, i64, DesktopPublishResult)> {
+    let bytes = std::fs::read(directory()?.join("publish-trace")).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+pub(crate) fn refresh_in_background() -> Result<DashboardSnapshot, ReadResult> {
+    use crate::process::{CommandRequest, CommandRunner, ProcessRunner};
+    let root = directory().ok_or(ReadResult::Missing)?;
+    let settings: DiscoverySettings = match std::fs::read(root.join("discovery-settings")) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| ReadResult::Invalid)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(ReadResult::Missing),
+        Err(_) => return Err(ReadResult::ReadError),
+    };
+    let program = std::env::current_exe().map_err(|_| ReadResult::ReadError)?;
+    let mut args = vec!["--bridge-dashboard-json".to_owned(), "--json".to_owned()];
+    args.extend(settings.args);
+    let mut request = CommandRequest::new(program.to_string_lossy(), args);
+    request.current_dir = Some(settings.cwd);
+    request.timeout = Duration::from_secs(12);
+    let output = ProcessRunner
+        .run(&request)
+        .map_err(|_| ReadResult::RefreshFailed)?;
+    if output.status != 0 {
+        return Err(ReadResult::RefreshFailed);
+    }
+    if output.stdout.len() > MAX_BYTES {
+        return Err(ReadResult::Oversized);
+    }
+    serde_json::from_slice(&output.stdout).map_err(|_| ReadResult::Invalid)
+}
+
+pub(crate) fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
 
 pub fn capture(app: &App) -> DashboardSnapshot {
     let keys = app.selectable_keys();
@@ -85,10 +150,7 @@ pub fn capture(app: &App) -> DashboardSnapshot {
     DashboardSnapshot {
         dashboard_id: format!("dashboard:{}", std::process::id()),
         terminal_title: crate::ui::terminal_title(app),
-        captured_at: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64,
+        captured_at: now_ms(),
         filter: app.filter.clone(),
         view: if app.view_mode == ViewMode::Status {
             View::Status
@@ -112,6 +174,7 @@ fn directory() -> Option<PathBuf> {
 pub struct Publisher {
     last: Option<Instant>,
     path: Option<PathBuf>,
+    preferences: Option<(String, bool)>,
 }
 impl Default for Publisher {
     fn default() -> Self {
@@ -123,6 +186,7 @@ impl Publisher {
         Self {
             last: None,
             path: directory().map(|d| d.join(format!("{}.json", std::process::id()))),
+            preferences: None,
         }
     }
     pub fn publish(&mut self, app: &App) {
@@ -133,15 +197,74 @@ impl Publisher {
             return;
         }
         self.last = Some(Instant::now());
-        let _ = self.write(app);
-    }
-    fn write(&self, app: &App) -> anyhow::Result<()> {
-        use std::io::Write;
-        let path = self
-            .path
+        if !self
+            .preferences
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("no state directory"))?;
-        std::fs::create_dir_all(path.parent().unwrap())?;
+            .is_some_and(|(filter, completed)| {
+                filter == &app.filter && *completed == app.includes_completed
+            })
+        {
+            if let Some(root) = self.path.as_ref().and_then(|p| p.parent()) {
+                let preferences = (app.filter.clone(), app.includes_completed);
+                match crate::fs_util::write_private_json(
+                    &root.join("list-preferences"),
+                    &preferences,
+                ) {
+                    Ok(()) => self.preferences = Some(preferences),
+                    Err(_) => crate::perf_log::event(
+                        "bridge-dashboard-settings",
+                        format_args!("result=preferences_write_failed"),
+                    ),
+                }
+            }
+        }
+        let snapshot = capture(app);
+        crate::perf_log::event(
+            "bridge-dashboard-generated",
+            format_args!(
+                "captured_at={} session_count={}",
+                snapshot.captured_at,
+                snapshot.sessions.len()
+            ),
+        );
+        let result = self.write(&snapshot);
+        let label = result.as_ref().err().copied().unwrap_or("ok");
+        if let Some(root) = self.path.as_ref().and_then(|p| p.parent()) {
+            let temp = root.join(format!("publish-trace.{}.tmp", std::process::id()));
+            if let Ok(bytes) =
+                serde_json::to_vec(&(snapshot.captured_at, snapshot.sessions.len(), label))
+            {
+                let mut options = std::fs::OpenOptions::new();
+                options.write(true).create(true).truncate(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    options.mode(0o600);
+                }
+                use std::io::Write;
+                if options
+                    .open(&temp)
+                    .and_then(|mut f| f.write_all(&bytes))
+                    .is_ok()
+                {
+                    let _ = crate::fs_util::replace_file(&temp, &root.join("publish-trace"));
+                }
+            }
+        }
+        crate::perf_log::event(
+            "bridge-dashboard-publish",
+            format_args!(
+                "captured_at={} session_count={} result={}",
+                snapshot.captured_at,
+                snapshot.sessions.len(),
+                result.as_ref().err().copied().unwrap_or("ok")
+            ),
+        );
+    }
+    fn write(&self, snapshot: &DashboardSnapshot) -> Result<(), &'static str> {
+        use std::io::Write;
+        let path = self.path.as_ref().ok_or("no_state_directory")?;
+        std::fs::create_dir_all(path.parent().unwrap()).map_err(|_| "mkdir_failed")?;
         let temp = path.with_extension("tmp");
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create(true).truncate(true);
@@ -150,13 +273,16 @@ impl Publisher {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        let bytes = serde_json::to_vec(&capture(app))?;
+        let bytes = serde_json::to_vec(snapshot).map_err(|_| "serialize_failed")?;
         // WakeGate metadata has a per-value limit. Never silently cut rows.
-        if bytes.len() > 100_000 {
-            anyhow::bail!("dashboard snapshot exceeds transport budget");
+        if bytes.len() > MAX_BYTES {
+            return Err("oversized");
         }
-        options.open(&temp)?.write_all(&bytes)?;
-        std::fs::rename(temp, path)?;
+        options
+            .open(&temp)
+            .and_then(|mut f| f.write_all(&bytes))
+            .map_err(|_| "write_failed")?;
+        crate::fs_util::replace_file(&temp, path).map_err(|_| "rename_failed")?;
         Ok(())
     }
 }
@@ -168,24 +294,53 @@ impl Drop for Publisher {
     }
 }
 
-pub fn latest() -> Option<DashboardSnapshot> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()?
-        .as_millis() as i64;
-    std::fs::read_dir(directory()?)
-        .ok()?
+pub(crate) fn latest() -> (Option<DashboardSnapshot>, ReadResult) {
+    let Some(path) = directory() else {
+        return (None, ReadResult::Missing);
+    };
+    latest_in(&path, now_ms())
+}
+
+fn latest_in(path: &std::path::Path, now: i64) -> (Option<DashboardSnapshot>, ReadResult) {
+    let entries = match std::fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (None, ReadResult::Missing),
+        Err(_) => return (None, ReadResult::ReadError),
+    };
+    let mut best: Option<DashboardSnapshot> = None;
+    let mut failure = (None, ReadResult::Missing);
+    for entry in entries
         .flatten()
-        .filter_map(|entry| {
-            if entry.path().extension()?.to_str()? != "json" {
-                return None;
-            }
-            let bytes = std::fs::read(entry.path()).ok()?;
-            if bytes.len() > 100_000 {
-                return None;
-            }
-            let snapshot: DashboardSnapshot = serde_json::from_slice(&bytes).ok()?;
-            (snapshot.captured_at <= now && now - snapshot.captured_at < 15_000).then_some(snapshot)
-        })
-        .max_by_key(|s| s.captured_at)
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+    {
+        let modified = entry.metadata().and_then(|m| m.modified()).ok();
+        let rejected = match std::fs::read(entry.path()) {
+            Ok(bytes) if bytes.len() > MAX_BYTES => ReadResult::Oversized,
+            Ok(bytes) => match serde_json::from_slice::<DashboardSnapshot>(&bytes) {
+                Ok(snapshot) if snapshot.captured_at > now => ReadResult::ClockAhead,
+                Ok(snapshot) if now.saturating_sub(snapshot.captured_at) >= 15_000 => {
+                    ReadResult::Expired
+                }
+                Ok(snapshot) => {
+                    if best
+                        .as_ref()
+                        .map_or(true, |other| other.captured_at < snapshot.captured_at)
+                    {
+                        best = Some(snapshot);
+                    }
+                    continue;
+                }
+                Err(_) => ReadResult::Invalid,
+            },
+            Err(_) => ReadResult::ReadError,
+        };
+        if modified >= failure.0 {
+            failure = (modified, rejected);
+        }
+    }
+    if best.is_some() {
+        (best, ReadResult::Accepted)
+    } else {
+        (None, failure.1)
+    }
 }

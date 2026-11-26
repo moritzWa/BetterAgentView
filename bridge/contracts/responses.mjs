@@ -1,6 +1,6 @@
 // Generated. Edit the .mts source, not this file.
 import { z } from 'zod';
-import { ReadContext, Status, Health, Reason, DashboardCategory, VisibilityAction, routes } from './contract.mjs';
+import { ReadContext, SnapshotTrace, Status, Health, Reason, DashboardCategory, VisibilityAction, routes } from './contract.mjs';
 const id = z.string().min(1).max(200), counter = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 // Consumers tolerate additive response fields, but known fields never change type.
 const object = (shape) => z.object(shape);
@@ -45,6 +45,7 @@ const voiceSession = z.object({ id, title: z.string(), status: DashboardCategory
 const directoryGroup = z.object({ path: z.string(), label: z.string(), counts: categoryCounts, sessions: z.array(voiceSession), working: z.array(voiceSession) }).strict();
 export const toolOutputs = {
     list_visible_sessions: z.object({ counts: categoryCounts.nullable(), directories: z.array(directoryGroup), warning: z.string().optional() }).strict(),
+    snapshot_diagnostics: z.object({ state: z.enum(['fresh', 'stale', 'unavailable']), reasons: z.array(z.string()), checked_at: counter, runtime_stored_at: counter.nullable(), last_mac_seen_at: counter.nullable(), snapshot_captured_at: counter.nullable(), snapshot_stored_at: counter.nullable(), session_count: counter.nullable(), connector: SnapshotTrace.nullable() }).strict(),
     list_artifacts: extensible({ artifacts: z.array(artifactMetadata) }),
     mac_presence: extensible({ bridge: z.enum(['online', 'offline', 'unknown']), internet: z.enum(['reachable', 'unknown']), history_sync: z.enum(['fresh', 'stale', 'partial', 'unknown']), last_heartbeat_at: counter.nullable(), last_successful_sync_at: counter.nullable() }),
     new_since_last_check: extensible({ available: z.boolean(), changes: z.array(extensible({ session_id: id, change: z.enum(['needs_you', 'finished']), reason: Reason.nullable() })), note: z.string() }),

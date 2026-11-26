@@ -47,6 +47,11 @@
     "type": "object",
     "properties": {}
   },
+  "snapshot_diagnostics": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {}
+  },
   "new_since_last_check": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",

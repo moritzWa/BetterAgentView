@@ -26,10 +26,11 @@ export const DashboardCategory=z.enum(['needs_input','working','task_done','proj
 export const DashboardSession=z.object({id,session_id:id,title:z.string().max(1000),provider:z.string().max(100),directory:z.string().max(4096),directory_id:z.string().max(4100),directory_path:z.string().max(4096),directory_label:z.string().max(4096),category:DashboardCategory,group_key:z.string().max(4096),listed:z.boolean()}).strict().meta({id:'DashboardSession'});
 export const DashboardGroup=z.object({key:z.string().max(4096),label:z.string().max(4096),total:counter,listed:counter}).strict().meta({id:'DashboardGroup'});
 export const DashboardSnapshot=z.object({dashboard_id:id,captured_at:counter,terminal_title:z.string().max(4096),filter:z.string().max(4096),view:z.enum(['status','directory']),partial:z.boolean(),sessions:z.array(DashboardSession).max(1000),groups:z.array(DashboardGroup).max(1000)}).strict().meta({id:'DashboardSnapshot'});
-export const RuntimeSnapshot=z.object({available:z.boolean(),partial:z.boolean(),truncated:z.boolean().default(false),statuses:z.array(RuntimeStatus).max(limits.snapshotStatuses),dashboard:DashboardSnapshot.optional()}).strict().meta({id:'RuntimeSnapshot'});
+export const SnapshotTrace=z.object({read_at:counter,read_source:z.enum(['desktop','connector']),desktop_generated_at:counter.optional(),desktop_session_count:counter.optional(),desktop_publish_result:z.enum(['ok','no_state_directory','mkdir_failed','serialize_failed','oversized','write_failed','rename_failed']).optional(),read_result:z.enum(['accepted','missing','expired','invalid','oversized','clock_ahead','read_error','refresh_failed']),previous_upload_at:counter.optional(),previous_upload_result:z.enum(['ok','failed','legacy_retry']).optional()}).strict().meta({id:'SnapshotTrace'});
+export const RuntimeSnapshot=z.object({available:z.boolean(),partial:z.boolean(),truncated:z.boolean().default(false),statuses:z.array(RuntimeStatus).max(limits.snapshotStatuses),dashboard:DashboardSnapshot.optional(),snapshot_trace:SnapshotTrace.optional()}).strict().meta({id:'RuntimeSnapshot'});
 export type RuntimeStatus=z.output<typeof RuntimeStatus>;
 export type RuntimeSnapshot=z.output<typeof RuntimeSnapshot>;
-export const ObservedRuntimeSnapshot=RuntimeSnapshot.extend({checked_at:counter.nullable().default(null)}).meta({id:'ObservedRuntimeSnapshot'});
+export const ObservedRuntimeSnapshot=RuntimeSnapshot.extend({checked_at:counter.nullable().default(null)}).strip().meta({id:'ObservedRuntimeSnapshot'});
 
 export const Role=z.enum(['user','assistant']).meta({id:'Role'});
 export const BatchKind=z.enum(['baseline','delta','replace']).meta({id:'BatchKind'});
@@ -82,7 +83,7 @@ export const toolInputs={
   list_visible_sessions:z.object({directory:z.string().min(1).max(4100).optional(),include_scheduled_and_paused:z.boolean().default(false)}),
   list_artifacts:z.object({session_id:id}),
   preview_artifact:z.object({artifact_id:id}),
-  mac_presence:z.object({}),new_since_last_check:z.object({}),
+  mac_presence:z.object({}),snapshot_diagnostics:z.object({}),new_since_last_check:z.object({}),
   list_sessions:z.object({status:z.enum(['all','active',...Status.options]).default('all'),view:z.enum(['recent','all']).default('recent'),query:z.string().max(100).default(''),after:z.string().max(200).default(''),limit:z.number().int().min(1).max(50).default(14),detail:z.boolean().default(false)}),
   session_health:z.object({session_id:id}),
   session_brief:z.object({session_id:id.optional(),query:z.string().min(1).max(100).optional()}),

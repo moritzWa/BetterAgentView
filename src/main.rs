@@ -323,6 +323,9 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
+    #[arg(long, hide = true, requires = "json")]
+    bridge_dashboard_json: bool,
+
     /// Dashboard colors. Auto follows the terminal background, then the OS appearance.
     #[arg(long, value_enum, default_value = "auto")]
     theme: ThemePreference,
@@ -601,6 +604,9 @@ fn command_name() -> &'static str {
 fn main() -> Result<()> {
     configure_platform_environment()?;
     let mut cli = Cli::parse();
+    if cli.bridge_dashboard_json && cli.command.is_some() {
+        bail!("dashboard discovery does not run subcommands");
+    }
     if let Some(Commands::Sessions {
         command: SessionCommand::Open { session_id },
     }) = &cli.command
@@ -795,7 +801,14 @@ fn main() -> Result<()> {
         run_getting_started(&mut cli)?;
         resolve_default_provider_bins(&mut cli);
     }
-    let request = discovery_request(&cli);
+    let mut request = discovery_request(&cli);
+    let list_preferences = cli
+        .bridge_dashboard_json
+        .then(agentview::dashboard_snapshot::last_list_preferences)
+        .flatten();
+    if let Some((_, completed)) = &list_preferences {
+        request.include_completed = *completed;
+    }
     // Secure the shared state root before any provider supervisor creates a
     // child directory. With a conventional 0022 umask, create_dir_all on a
     // provider path would otherwise leave the common parent at 0755 and the
@@ -1366,6 +1379,34 @@ fn main() -> Result<()> {
         }
         hidden_sessions.filter_snapshot(&mut snapshot);
         session_aliases.apply_snapshot(&mut snapshot);
+        if cli.bridge_dashboard_json {
+            agentview::adapters::apply_background_screens(&mut snapshot);
+            agentview::turn_classifier::apply_saved(&mut snapshot);
+            let incomplete = snapshot
+                .warnings
+                .iter()
+                .any(|warning| !warning.contains("history window"));
+            let mut app =
+                agentview::app::App::with_completed_visibility(snapshot, request.include_completed);
+            app.set_paused(paused_sessions.paused());
+            app.set_sort_keys(agentview::order::SessionOrder::load_default()?.sort_keys());
+            if let Ok(links) = agentview::session_tree::ParentLinks::load_default() {
+                app.session_parents_from(links);
+            }
+            app.set_view_mode(LastView::load_default()?.startup_view());
+            app.work_roots = agentview::work_view::WorkRoots::load_default()?;
+            app.set_work_only(
+                agentview::work_view::WorkViewStore::load_default()?.read()?,
+                None,
+            );
+            if let Some((filter, _)) = list_preferences {
+                app.set_filter(filter);
+            }
+            let mut dashboard = agentview::dashboard_snapshot::capture(&app);
+            dashboard.partial |= incomplete;
+            serde_json::to_writer(io::stdout().lock(), &dashboard)?;
+            return Ok(());
+        }
         serde_json::to_writer_pretty(io::stdout().lock(), &snapshot)?;
         println!();
         return Ok(());
@@ -1382,6 +1423,14 @@ fn main() -> Result<()> {
         }
     }
 
+    if control.provider_io_enabled()
+        && agentview::dashboard_snapshot::remember_discovery_args().is_err()
+    {
+        agentview::perf_log::event(
+            "bridge-dashboard-settings",
+            format_args!("result=discovery_settings_write_failed"),
+        );
+    }
     run_dashboard(
         &engine,
         &request,

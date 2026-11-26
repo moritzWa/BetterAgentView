@@ -80,6 +80,18 @@ internet, not a claimed outage, because sleep looks the same.
 including questions and approvals. It excludes hidden and paused rows. Status
 snapshots contain IDs and typed states, not tool output or conversation text.
 Offline results are last-known, not proof that a session is still working.
+
+If the desktop list is stale or missing, call `snapshot_diagnostics`. It shows
+when Agent View generated the list, what the Mac connector read, and when the
+backend last stored it. These records contain counts and timestamps, not
+session names or messages. A failed upload stays in the Mac log until the
+connector can reach the backend again.
+
+Open the updated Agent View dashboard once to save its discovery settings.
+After that, the connector can rebuild the list without a terminal when the
+on-screen list stops updating or closes. It uses the saved settings and the
+same discovery and grouping code, not the historical inventory in Neon. It
+cannot refresh while the Mac sleeps or is offline.
 The default list is a small human-recent overview, not a page of old completed
 sessions. `status="active"` returns working/waiting sessions and recent replies
 whose need for input has not been assessed. Rows include the last two visible

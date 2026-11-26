@@ -666,7 +666,7 @@ fn publish_runtime(dir: &Path, config: &Config, credential: &str) -> Result<()> 
     }
     let started = std::time::Instant::now();
     // One quick retry: a native read can fail for a moment while OpenCode writes.
-    let snapshot = match runtime::snapshot(config) {
+    let mut snapshot = match runtime::snapshot(config) {
         Ok(snapshot) => snapshot,
         Err(first) => {
             log_unavailable("runtime", &first);
@@ -674,6 +674,16 @@ fn publish_runtime(dir: &Path, config: &Config, credential: &str) -> Result<()> 
             runtime::snapshot(config)?
         }
     };
+    let trace_path = dir.join("snapshot-upload.json");
+    if let Some(trace) = &mut snapshot.snapshot_trace {
+        if let Ok(bytes) = std::fs::read(&trace_path) {
+            if let Ok((at, result)) = serde_json::from_slice(&bytes) {
+                trace.previous_upload_at = Some(at);
+                trace.previous_upload_result = Some(result);
+            }
+        }
+    }
+    let dashboard_at = snapshot.dashboard.as_ref().map(|s| s.captured_at);
     let mut payload = serde_json::to_value(snapshot)?;
     if crate::perf_log::enabled() {
         crate::perf_log::event(
@@ -689,26 +699,63 @@ fn publish_runtime(dir: &Path, config: &Config, credential: &str) -> Result<()> 
         Some(&payload),
         35,
     );
-    match published {
-        // A rolling upgrade may still reach the previous strict Worker. Keep
-        // native status publishing intact; never substitute inventory for UI.
+    let (published, legacy_retry) = match published {
+        // Retry without trace first so old Workers keep receiving the dashboard.
+        Err(error)
+            if error.to_string() == "bridge HTTP 400 invalid_runtime_snapshot"
+                && payload.get("snapshot_trace").is_some() =>
+        {
+            payload.as_object_mut().unwrap().remove("snapshot_trace");
+            (
+                http::request::<contract::OkResponse>(
+                    &config.endpoint,
+                    contract::ROUTE_RUNTIME,
+                    Some(credential),
+                    Some(&payload),
+                    35,
+                ),
+                true,
+            )
+        }
+        other => (other, false),
+    };
+    let (published, legacy_retry) = match published {
         Err(error)
             if error.to_string() == "bridge HTTP 400 invalid_runtime_snapshot"
                 && payload.get("dashboard").is_some() =>
         {
             payload.as_object_mut().unwrap().remove("dashboard");
-            http::request::<contract::OkResponse>(
-                &config.endpoint,
-                contract::ROUTE_RUNTIME,
-                Some(credential),
-                Some(&payload),
-                35,
-            )?;
+            (
+                http::request::<contract::OkResponse>(
+                    &config.endpoint,
+                    contract::ROUTE_RUNTIME,
+                    Some(credential),
+                    Some(&payload),
+                    35,
+                ),
+                true,
+            )
         }
-        other => {
-            other?;
-        }
-    }
+        other => (other, legacy_retry),
+    };
+    use contract::PreviousUploadResult;
+    let upload_result = if published.is_err() {
+        PreviousUploadResult::Failed
+    } else if legacy_retry {
+        PreviousUploadResult::LegacyRetry
+    } else {
+        PreviousUploadResult::PreviousUploadResultOk
+    };
+    let upload_at = crate::dashboard_snapshot::now_ms();
+    crate::perf_log::event(
+        "bridge-dashboard-upload",
+        format_args!(
+            "finished_at={} captured_at={:?} result={:?}",
+            upload_at, dashboard_at, upload_result
+        ),
+    );
+    let _ = crate::fs_util::write_private_json(&trace_path, &(upload_at, upload_result));
+    published?;
     crate::fs_util::write_private_json(&stamp, &json!({"checked":true}))?;
     log_recovered("runtime");
     if started.elapsed() > Duration::from_secs(3) {

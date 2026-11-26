@@ -622,6 +622,9 @@ pub struct RuntimeSnapshot {
 
     pub partial: bool,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_trace: Option<SnapshotTrace>,
+
     pub statuses: Vec<RuntimeStatus>,
 
     pub truncated: bool,
@@ -717,6 +720,98 @@ pub enum View {
     Directory,
 
     Status,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotTrace {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub desktop_generated_at: Option<i64>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub desktop_publish_result: Option<DesktopPublishResult>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub desktop_session_count: Option<i64>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_upload_at: Option<i64>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_upload_result: Option<PreviousUploadResult>,
+
+    pub read_at: i64,
+
+    pub read_result: ReadResult,
+
+    pub read_source: ReadSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopPublishResult {
+    #[serde(rename = "ok")]
+    DesktopPublishResultOk,
+
+    #[serde(rename = "mkdir_failed")]
+    MkdirFailed,
+
+    #[serde(rename = "no_state_directory")]
+    NoStateDirectory,
+
+    Oversized,
+
+    #[serde(rename = "rename_failed")]
+    RenameFailed,
+
+    #[serde(rename = "serialize_failed")]
+    SerializeFailed,
+
+    #[serde(rename = "write_failed")]
+    WriteFailed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviousUploadResult {
+    Failed,
+
+    #[serde(rename = "legacy_retry")]
+    LegacyRetry,
+
+    #[serde(rename = "ok")]
+    PreviousUploadResultOk,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadResult {
+    Accepted,
+
+    #[serde(rename = "clock_ahead")]
+    ClockAhead,
+
+    Expired,
+
+    Invalid,
+
+    Missing,
+
+    Oversized,
+
+    #[serde(rename = "read_error")]
+    ReadError,
+
+    #[serde(rename = "refresh_failed")]
+    RefreshFailed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadSource {
+    Connector,
+
+    Desktop,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

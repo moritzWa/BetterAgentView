@@ -7,8 +7,31 @@ export async function listVisibleSessions({db,gate,principal},{directory,include
   const source=`${principal.device_id}|${principal.database_epoch}`;
   const freshness=await gate.activity(source,true,'runtime',{max_wait:8000});
   const runtime=await gate.runtime(source);
-  const view=visibleView(runtime,freshness,Date.now(),{directory,include_scheduled_and_paused});
+  const now=Date.now();
+  const view=visibleView(runtime,freshness,now,{directory,include_scheduled_and_paused});
+  if(!view.exact)console.info('bridge_dashboard_read_not_fresh',{checked_at:now,reasons:snapshotReasons(runtime,freshness.mac_seen_recently,now)});
   return voiceView(view.available?await addVisibleContext({db,principal,runtime,freshness},view):view);
+}
+
+function snapshotReasons(runtime,macSeen,now) {
+  const reasons=[];
+  if(!runtime.dashboard)reasons.push('no_stored_snapshot');
+  if(runtime.dashboard_retained)reasons.push('latest_upload_omitted_snapshot');
+  if(!macSeen)reasons.push('mac_not_seen_recently');
+  if(!(runtime.checked_at>now-30_000))reasons.push('runtime_upload_not_recent');
+  if(runtime.dashboard?.captured_at<=now-30_000)reasons.push('snapshot_capture_not_recent');
+  if(runtime.dashboard?.captured_at>now)reasons.push('snapshot_clock_ahead');
+  if(runtime.dashboard?.partial)reasons.push('snapshot_partial');
+  return reasons;
+}
+
+/** @returns {Promise<import('../contracts/responses.mjs').ToolOutput<'snapshot_diagnostics'>>} */
+export async function snapshotDiagnostics(gate,principal) {
+  const runtime=await gate.snapshotDiagnostics(`${principal.device_id}|${principal.database_epoch}`),now=Date.now();
+  const reasons=snapshotReasons(runtime,runtime.last_seen>now-60_000,now);
+  return {state:!runtime.dashboard?'unavailable':reasons.length?'stale':'fresh',reasons,checked_at:now,
+    runtime_stored_at:runtime.checked_at,last_mac_seen_at:runtime.last_seen,snapshot_captured_at:runtime.dashboard?.captured_at??null,
+    snapshot_stored_at:runtime.dashboard_stored_at,session_count:runtime.dashboard?.session_count??null,connector:runtime.snapshot_trace};
 }
 
 export function visibleView(runtime,freshness={},now=Date.now(),{directory,include_scheduled_and_paused=false}={}) {
