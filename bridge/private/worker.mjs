@@ -3,7 +3,7 @@ import { openDatabase } from './database.mjs';
 import { gateClient } from './gate.mjs';
 import { Outbox } from './outbox.mjs';
 import { Starts } from './starts.mjs';
-import { privateMcp } from './mcp.mjs';
+import { isEnqueueTool, privateMcp } from './mcp.mjs';
 import { Timing } from './timing.mjs';
 import { SyncStore } from '../sync/store.mjs';
 import { privateHandler } from '../sync/http.mjs';
@@ -31,7 +31,7 @@ async function bounded(request,limit) {
   return new Request(request.url,{method:request.method,headers:request.headers,body:bytes});
 }
 export function application({database=openDatabase}={}) {
-  const app={async fetch(request,env) {
+  const app={async fetch(request,env,envelope,defer) {
     const url=new URL(request.url),path=url.pathname;
     if(path==='/health')return json({ok:true,private:true});
     if(path==='/oauth/test-callback')return html('<h1>Authorization callback received</h1><p>The integration test can finish exchanging its one-use code. You can close this tab.</p>');
@@ -86,8 +86,9 @@ export function application({database=openDatabase}={}) {
       }
       if(path==='/mcp') {
         const principal=await timing.time('auth',()=>store.authenticate(token,'read'));
-        const initialPresence=await timing.time('touch',()=>gate.activity(`${principal.device_id}|${principal.database_epoch}`));
-        return await privateMcp(request,{db,store,principal,gate,timing,initialPresence});
+        const enqueue=envelope?.method==='tools/call'&&isEnqueueTool(envelope.params?.name);
+        const initialPresence=enqueue?undefined:await timing.time('touch',()=>gate.activity(`${principal.device_id}|${principal.database_epoch}`));
+        return await privateMcp(request,{db,store,principal,gate,timing,initialPresence,defer});
       }
       if(path===routes.lease && request.method==='POST') {
         await wire(EmptyRequest,request);
@@ -134,7 +135,7 @@ export function application({database=openDatabase}={}) {
     // Which tool a call named, from the JSON-RPC envelope only; never its arguments.
     const envelope=url.pathname==='/mcp'&&request.method==='POST'&&Number(request.headers.get('content-length')??0)<=1_000_000
       ?await request.clone().json().catch(()=>null):null;
-    const response=await app.fetch(request,env),schema=responseByRoute[url.pathname];
+    const response=await app.fetch(request,env,envelope,ctx?.waitUntil?.bind(ctx)),schema=responseByRoute[url.pathname];
     // Authenticated MCP calls only: they are the ones that carry Server-Timing.
     if(envelope&&env.GATE&&ctx?.waitUntil&&response.headers.has('server-timing')) {
       const header=response.headers.get('server-timing')??'',note=name=>header.match(new RegExp(`${name};desc="([^"]*)"`))?.[1]??null;

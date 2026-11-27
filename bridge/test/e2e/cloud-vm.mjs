@@ -67,7 +67,7 @@ try {
  console.log('PASS real source history uploaded; visible text searchable; actual tool canary excluded');
  const operation=randomToken(12),text='E2E_REMOTE_MESSAGE_'+operation;
  const queued=await rpc('send_session_message',{operation_id:operation,session_id:session,text,base_cursor:Number(history.cursor),confirmed:true});
- assert.equal(queued.status,'queued');
+ assert.equal(queued.enqueued,true);assert.equal(queued.say_to_owner,null);
  const dup=await rpc('send_session_message',{operation_id:operation,session_id:session,text,base_cursor:Number(history.cursor),confirmed:true});assert.equal(dup.message_id,queued.message_id);
  const delivery=vm(`AGENTVIEW_OPENCODE_SERVICE_FILE=${quote(root+'/service.json')} ${quote(binary)} bridge --state-dir ${quote(root+'/bridge')} deliver-once`);
  assert(delivery.includes('true'));

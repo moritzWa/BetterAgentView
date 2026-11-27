@@ -1460,98 +1460,40 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",
     "properties": {
+      "enqueued": {
+        "type": "boolean",
+        "const": true
+      },
       "operation_id": {
         "type": "string",
         "minLength": 1,
         "maxLength": 200
+      },
+      "say_to_owner": {
+        "type": [
+          "string",
+          "null"
+        ]
       },
       "session_id": {
         "type": "string",
         "minLength": 1,
         "maxLength": 200
       },
-      "status": {
-        "$ref": "#/definitions/DeliveryStatus"
-      },
       "message_id": {
         "type": "string",
         "minLength": 1,
         "maxLength": 200
-      },
-      "expires_at": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 9007199254740991
-      },
-      "delivery_confirmed": {
-        "type": "boolean"
-      },
-      "next_action": {
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "delivery_state": {
-        "type": "string"
-      },
-      "claim_ceiling": {
-        "type": "string"
-      },
-      "say_to_owner": {
-        "type": "string"
-      },
-      "report_rule": {
-        "type": "string"
-      },
-      "source_checked_at": {
-        "anyOf": [
-          {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
-      "mac_seen_recently": {
-        "type": "boolean"
-      },
-      "history_fresh": {
-        "type": "boolean"
       }
     },
     "required": [
+      "enqueued",
       "operation_id",
-      "session_id",
-      "status",
-      "message_id",
-      "expires_at",
-      "delivery_confirmed",
-      "next_action",
-      "delivery_state",
-      "claim_ceiling",
       "say_to_owner",
-      "report_rule"
+      "session_id",
+      "message_id"
     ],
-    "additionalProperties": {},
-    "definitions": {
-      "DeliveryStatus": {
-        "type": "string",
-        "enum": [
-          "queued",
-          "leased",
-          "accepted",
-          "needs_confirmation",
-          "failed",
-          "expired",
-          "uncertain",
-          "cancelled"
-        ]
-      }
-    }
+    "additionalProperties": false
   },
   "message_status": {
     "$schema": "http://json-schema.org/draft-07/schema#",
@@ -1898,114 +1840,28 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",
     "properties": {
+      "enqueued": {
+        "type": "boolean",
+        "const": true
+      },
       "operation_id": {
         "type": "string",
         "minLength": 1,
         "maxLength": 200
       },
-      "status": {
-        "$ref": "#/definitions/StartStatus"
-      },
-      "directory": {
-        "type": "string"
-      },
-      "session_id": {
-        "anyOf": [
-          {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
-      "started": {
-        "type": "boolean"
-      },
-      "prompt_accepted": {
-        "type": "boolean"
-      },
-      "reason": {
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "expires_at": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 9007199254740991
-      },
-      "next_action": {
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "delivery_state": {
-        "type": "string"
-      },
-      "claim_ceiling": {
-        "type": "string"
-      },
       "say_to_owner": {
-        "type": "string"
-      },
-      "report_rule": {
-        "type": "string"
-      },
-      "source_checked_at": {
-        "anyOf": [
-          {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          {
-            "type": "null"
-          }
+        "type": [
+          "string",
+          "null"
         ]
-      },
-      "mac_seen_recently": {
-        "type": "boolean"
-      },
-      "history_fresh": {
-        "type": "boolean"
       }
     },
     "required": [
+      "enqueued",
       "operation_id",
-      "status",
-      "directory",
-      "session_id",
-      "started",
-      "prompt_accepted",
-      "reason",
-      "expires_at",
-      "next_action",
-      "delivery_state",
-      "claim_ceiling",
-      "say_to_owner",
-      "report_rule"
+      "say_to_owner"
     ],
-    "additionalProperties": {},
-    "definitions": {
-      "StartStatus": {
-        "type": "string",
-        "enum": [
-          "queued",
-          "leased",
-          "started",
-          "created_not_started",
-          "failed",
-          "expired",
-          "uncertain",
-          "cancelled"
-        ]
-      }
-    }
+    "additionalProperties": false
   },
   "start_status": {
     "$schema": "http://json-schema.org/draft-07/schema#",

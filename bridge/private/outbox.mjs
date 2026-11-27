@@ -1,5 +1,6 @@
 import { digest, SyncError } from '../sync/projection.mjs';
 import { ReadContext,readContext,sameContext } from './context.mjs';
+import { wakeQueue } from './queue-wake.mjs';
 import { requireGrant } from './grant.mjs';
 const scope=p=>[p.owner_id,p.device_id,p.database_epoch];
 const where='owner_id=$1 AND device_id=$2 AND database_epoch=$3';
@@ -9,7 +10,7 @@ const visibilityPrefix='visibility_agentvoice_';
 const isVisibility=column=>`starts_with(${column},'${visibilityPrefix}')`;
 
 export class Outbox {
-  constructor(db,gate) { this.db=db;this.gate=gate; }
+  constructor(db,gate,defer) { this.db=db;this.gate=gate;this.defer=defer; }
   send(principal,args) {return this.enqueue(principal,args);}
   setVisibility(principal,{operation_id,session_id,confirmed},action) {
     if(confirmed!==true || !['hide','unhide'].includes(action) || typeof session_id!=='string' || !/^[^\p{Cc}]+$/u.test(session_id))throw new SyncError('invalid_visibility_request',400);
@@ -45,8 +46,7 @@ export class Outbox {
     });
     // Wake only after commit. The connector also reconciles the durable queue.
     if (['queued','leased'].includes(receipt.status)) {
-      try { await this.gate.signal(`${principal.device_id}|${principal.database_epoch}`);}
-      catch { console.error('bridge_queue_signal_failed'); }
+      await wakeQueue(this.gate,principal,visibility?undefined:this.defer);
     }
     return receipt;
   }

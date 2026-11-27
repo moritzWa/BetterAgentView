@@ -37,6 +37,7 @@ const row=extensible({session_id:id,title:z.string(),status:Status,health:Health
 const message=extensible({message_id:id,role:z.enum(['user','assistant']),message_order:counter,text:z.string(),truncated:z.boolean().optional(),offset:counter.optional()});
 const delivery=ReceiptResponse.extend({delivery_state:z.string(),claim_ceiling:z.string(),say_to_owner:z.string(),report_rule:z.string(),...freshness}).passthrough();
 const start=StartReceiptResponse.extend({delivery_state:z.string(),claim_ceiling:z.string(),say_to_owner:z.string(),report_rule:z.string(),...freshness}).passthrough();
+const enqueue=object({enqueued:z.literal(true),operation_id:id,say_to_owner:z.string().nullable()});
 const visibility=object({operation_id:id,session_id:id,action:VisibilityAction,status:z.enum(['queued','applied','failed','expired','uncertain']),say_to_owner:z.string()});
 const categoryCounts=z.record(z.string(),counter);
 const messageTruncation=object({truncated:z.literal(true),message_id:id,offset:counter});
@@ -54,9 +55,9 @@ export const toolOutputs={
   search_history:extensible({matches:z.array(extensible({session_id:id,message_id:id,role:z.enum(['user','assistant']),excerpt:z.string(),excerpt_offset:counter})),...freshness}),
   read_session:extensible({messages:z.array(message),cursor:counter,context:ReadContext,page_kind:z.enum(['older','newer','latest']),next_after:counter.nullable(),next_before:counter.nullable(),...freshness}),
   read_message:extensible({message_id:id,role:z.enum(['user','assistant']),text:z.string(),offset:counter,next_offset:counter.nullable(),...freshness}),
-  send_session_message:delivery,message_status:delivery,cancel_message:delivery,
+  send_session_message:enqueue.extend({session_id:id,message_id:id}),message_status:delivery,cancel_message:delivery,
   hide_session:visibility,unhide_session:visibility,session_visibility_status:visibility,
-  start_session:start,start_status:start,cancel_start:start,
+  start_session:enqueue,start_status:start,cancel_start:start,
 } as const;
 export type OutputName=keyof typeof toolOutputs;
 export type ToolOutput<K extends OutputName>=z.output<(typeof toolOutputs)[K]>;

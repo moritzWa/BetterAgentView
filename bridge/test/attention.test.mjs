@@ -109,7 +109,7 @@ test('a deep dive writes nothing; the send path still queues only through send_s
  const brief=await rpc('session_brief',{session_id:'diagram-bench'});
  assert.equal((await db.query('SELECT count(*)::int AS n FROM av_outbox')).rows[0].n,before);
  const sent=await rpc('send_session_message',{operation_id:'deepdive_send_1',session_id:'diagram-bench',text:'Use option b.',confirmed:true,...brief.send_params});
- assert.equal(sent.session_id,'diagram-bench');assert(['queued','leased','accepted'].includes(sent.status));
+ assert.equal(sent.session_id,'diagram-bench');assert.equal(sent.enqueued,true);assert.equal(sent.say_to_owner,null);
  assert.equal((await db.query('SELECT count(*)::int AS n FROM av_outbox')).rows[0].n,before+1);
 });
 

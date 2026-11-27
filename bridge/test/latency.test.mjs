@@ -153,12 +153,15 @@ test('authenticated MCP calls leave a durations-only record the owner can read, 
  assert.notEqual(stranger.status,200);
 });
 
-test('a send result is the status, so nothing tells the model to always call message_status after it',async()=>{
+test('send and start descriptions tell the voice client not to announce or poll successful writes',async()=>{
  const {SERVER_INSTRUCTIONS}=await import('../private/mcp.mjs');
  const response=await privateMcp(new Request('https://test.invalid/mcp',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list',params:{}})}),{db,store,principal:reader,outbox,gate});
- const send=(await response.json()).result.tools.find(t=>t.name==='send_session_message').description;
- for(const text of [send,SERVER_INSTRUCTIONS])assert(!/ALWAYS check message_status|check message_status\./.test(text),text.slice(0,120));
- assert(/say_to_owner/.test(send)&&/claim_ceiling/.test(send),'the honesty fields stay in the instruction');
+ const {tools}=(await response.json()).result;
+ for(const text of [SERVER_INSTRUCTIONS,...tools.filter(t=>['send_session_message','start_session'].includes(t.name)).map(t=>t.description)]) {
+  assert.match(text,/without a spoken or written acknowledgment/);
+  assert.match(text,/or call a status tool just to check a successful write/);
+  assert.match(text,/only if the save fails or a known problem needs/);
+ }
 });
 
 const fakeStorage=()=>{const map=new Map();const st={get:async k=>Array.isArray(k)?new Map(k.filter(x=>map.has(x)).map(x=>[x,structuredClone(map.get(x))])):structuredClone(map.get(k)),put:async(k,v)=>{if(k&&typeof k==='object')for(const [a,b] of Object.entries(k))map.set(a,structuredClone(b));else map.set(k,structuredClone(v));},delete:async k=>{map.delete(k);},transaction:async fn=>fn(st)};return st;};
@@ -229,4 +232,54 @@ test('the call log is bucketed by hour, keeps no text, and drops hours past rete
  assert.deepEqual(day.calls.map(c=>c.tool),['session_brief','list_sessions']);
  assert.equal((await g.callLog(2)).calls.length,1);
  assert.equal(day.retention_days,14);
+});
+
+test('worker returns both enqueue receipts while its connector wake is still pending', {timeout:5000},async()=>{
+ await seed('enqueue-latency',[]);
+ const pending=[],gateCalls=[];
+ let failWake,failCommit=false;
+ const blockedWake=new Promise((_,reject)=>{failWake=reject;});
+ const namespace={idFromName:x=>x,get:()=>({fetch:async url=>{
+   const path=new URL(url).pathname;gateCalls.push(path);
+   if(path==='/signal')return blockedWake;
+   assert.equal(path,'/call-log','enqueue must not touch presence or check delivery');
+   return Response.json({ok:true});
+ }})};
+ const app=application({database:async()=>({query:(...a)=>db.query(...a),transaction:fn=>db.transaction(async tx=>{const result=await fn(tx);if(failCommit)throw new Error('database commit failed');return result;}),close:async()=>{}})});
+ const env={ISSUER:'https://bridge.invalid',GATE:namespace,DATABASE_URL:'synthetic',GOOGLE_CLIENT_ID:'x',GOOGLE_CLIENT_SECRET:'y'};
+ const ctx={waitUntil:p=>pending.push(p)};
+ const sendArgs={operation_id:'enqueue_latency_send',session_id:'enqueue-latency',text:'exact send'};
+ const startArgs={operation_id:'enqueue_latency_start',directory:'/work/fixture',text:'exact start'};
+ const call=(name,args)=>app.fetch(new Request('https://bridge.invalid/mcp',{method:'POST',headers:{authorization:'Bearer '+'r'.repeat(43),'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}})}),env,ctx);
+ try {
+  for(const [name,args] of [['send_session_message',sendArgs],['start_session',startArgs]]) {
+   const response=await call(name,args);
+   const rpc=await response.json();assert(!rpc.result.isError,rpc.result.content[0].text);
+   const result=JSON.parse(rpc.result.content[0].text);
+   assert.equal(result.enqueued,true);assert.equal(result.say_to_owner,null);
+   assert.equal(result.operation_id,args.operation_id);
+  }
+  assert.deepEqual(gateCalls,['/signal','/call-log','/signal','/call-log']);
+  assert.equal(pending.length,4,'the Worker keeps each wake and each timing write alive');
+  for(const [table,args] of [['av_outbox',sendArgs],['av_starts',startArgs]]) {
+   const {rows}=await db.query('SELECT state,text FROM '+table+' WHERE operation_id=$1',[args.operation_id]);
+   assert.deepEqual(rows,[{state:'queued',text:args.text}],'enqueue is committed even without a wake response');
+  }
+  failCommit=true;
+  for(const [name,table,args] of [['send_session_message','av_outbox',sendArgs],['start_session','av_starts',startArgs]]) {
+   const operation_id=args.operation_id+'_rollback';
+   const rpc=await (await call(name,{...args,operation_id})).json();
+   assert.equal(rpc.result.isError,true);
+   const error=JSON.parse(rpc.result.content[0].text);
+   assert.equal(error.error,'operation_failed');
+   assert.match(error.say_to_owner,/could not confirm the request was saved/);
+   assert.equal(error.retry_same_operation,true);
+   assert.equal((await db.query('SELECT 1 FROM '+table+' WHERE operation_id=$1',[operation_id])).rows.length,0);
+  }
+  assert.equal(gateCalls.filter(path=>path==='/signal').length,2,'failed commits do not wake the connector');
+ } finally {
+  failWake(new Error('connector wake unavailable'));
+  await blockedWake.catch(()=>{});
+  await Promise.all(pending);
+ }
 });

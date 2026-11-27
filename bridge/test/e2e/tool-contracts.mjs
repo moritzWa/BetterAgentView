@@ -41,14 +41,11 @@ try{
  // This fixture has not published a heartbeat. Verify production queue receipts before it comes online.
  const offlineSend='offline_send_'+device,offlineStart='offline_start_'+device;
  const send=await rpc('send_session_message',{operation_id:offlineSend,session_id:ids[0],text:'Cloud-only offline fixture. Never execute.'});
- assert.equal(send.status,'queued');assert.equal(send.delivery_state,'queued_mac_offline');
- assert.equal(send.claim_ceiling,'queued');assert.equal(send.delivery_confirmed,false);
- assert.equal(send.say_to_owner,'Message saved for automatic pickup when your Mac reconnects.');
- assert.equal((await rpc('message_status',{operation_id:offlineSend})).say_to_owner,send.say_to_owner);
+ assert.equal(send.enqueued,true);assert.equal(send.say_to_owner,null);
+ assert.equal((await rpc('message_status',{operation_id:offlineSend})).delivery_state,'queued_mac_offline');
  const start=await rpc('start_session',{operation_id:offlineStart,directory:'/Users/m/OfflineFixture',text:'Cloud-only offline fixture. Never execute.'});
- assert.equal(start.status,'queued');assert.equal(start.delivery_state,'queued_offline');assert.equal(start.session_id,null);
- assert.equal(start.say_to_owner,'Start request saved for automatic pickup when your Mac reconnects.');
- assert.equal((await rpc('start_status',{operation_id:offlineStart})).say_to_owner,start.say_to_owner);
+ assert.deepEqual(start,{enqueued:true,operation_id:offlineStart,say_to_owner:null});
+ assert.equal((await rpc('start_status',{operation_id:offlineStart})).delivery_state,'queued_offline');
  assert.equal((await rpc('cancel_message',{operation_id:offlineSend,confirmed:true})).status,'cancelled');
  assert.equal((await rpc('cancel_start',{operation_id:offlineStart,confirmed:true})).status,'cancelled');
  console.log('PASS production offline send and start saved; follow-up status agrees.');
@@ -75,7 +72,7 @@ try{
  statuses[2].status='working';await refresh();const changed=await rpc('list_sessions',{limit:1,after:first.next_after},true);assert(changed.isError);assert.equal(changed.content[0].text,'session_list_changed_restart_pagination');
  console.log('PASS deployed session-list cursor detects a changed snapshot');
  const view=await rpc('read_session',{session_id:ids[0]});const operation='op_'+device;
- const queued=await rpc('send_session_message',{operation_id:operation,session_id:ids[0],text:'Cloud-only fixture. Never execute.',base_cursor:Number(view.cursor),context:view.context,confirmed:true});assert.equal(queued.status,'queued');assert.equal(queued.delivery_confirmed,false);
+ const queued=await rpc('send_session_message',{operation_id:operation,session_id:ids[0],text:'Cloud-only fixture. Never execute.',base_cursor:Number(view.cursor),context:view.context,confirmed:true});assert.equal(queued.enqueued,true);assert.equal(queued.say_to_owner,null);
  assert.equal((await rpc('message_status',{operation_id:operation})).status,'queued');
  assert.equal((await rpc('cancel_message',{operation_id:operation,confirmed:true})).status,'cancelled');
  console.log('PASS cloud-only queued receipt and cancellation; no native admission was simulated');

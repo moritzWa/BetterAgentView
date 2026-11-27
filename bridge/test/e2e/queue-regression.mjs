@@ -55,7 +55,7 @@ try {
  // offline, so the phone is reading a valid but older mirrored revision.
  await prompt('msg_reg_desktop_'+suffix,'An ordinary appended desktop turn');await wait(async()=>(await replies()).length>=2,'desktop reply');
  const input={operation_id:'offline_append_'+suffix,session_id:session,text:'Phone instruction after reconnect',base_cursor:Number(view.cursor),context:view.context,confirmed:true};
- const queued=await rpc('send_session_message',input);assert.equal(queued.status,'queued');assert.equal(queued.delivery_confirmed,false);
+ const queued=await rpc('send_session_message',input);assert.equal(queued.enqueued,true);assert.equal(queued.say_to_owner,null);
  await wait(async()=>{await bridge('deliver-once');return (await rpc('message_status',{operation_id:input.operation_id})).status==='accepted';},'native admission after reconnect');
  await wait(async()=>(await replies()).length>=3,'phone reply');
  await wait(async()=>{await bridge('sync-once');return (await rpc('message_status',{operation_id:input.operation_id})).completion_confirmed;},'correlated native completion');

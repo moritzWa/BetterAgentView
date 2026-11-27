@@ -47,28 +47,26 @@ expire after 24 hours. Only `applied` means the Mac confirmed the change.
 
 ### Delivery contract
 
-Every `send_session_message`, `message_status` and `cancel_message` result starts with
-`delivery_state`, `say_to_owner`, `claim_ceiling` and `owner_action`. The model says
-`say_to_owner` and claims no more than `claim_ceiling` (`none`, `queued`, `accepted`,
-`completed`). States: `not_sent`, `queued_mac_offline`, `queued_waiting_for_mac`,
-`accepted_by_session`, `completed_confirmed`, `needs_confirmation`,
-`rejected_stale_context`, `cancelled`, `failed`, `expired`, `uncertain`. Failed sends
-return a JSON body (`error` keeps the old code, plus `sent`, `say_to_owner`, `next_step`).
-`sent: null` means unknown, so check `message_status` before claiming anything.
-`message_status` for an operation that was never sent returns `not_sent`, which is how a
-skipped send is caught. If queued, retain the operation ID and check it on the next relevant
-turn, without resending. Send and start need the write grant but no per-action
-approval. Cancellation and visibility changes still require confirmation.
-Stale context still stops delivery. Read-tool errors stay bare codes.
+`send_session_message` and `start_session` return once the database commits the
+request. A successful save returns `enqueued: true` and `say_to_owner: null`.
+Voice does not announce the save or poll delivery. The connector handles pickup,
+retries and receipts in the background, even if the Mac is offline at enqueue.
+A failed save returns a structured error. If the outcome is unknown, reuse the
+same operation ID and arguments on retry. A retry never creates a second
+request and may surface a known failure that needs the owner's action.
 
-`queued` means the bridge saved the message for automatic pickup. `accepted`
-means OpenCode accepted the message for processing in queue mode. It does not
-prove OpenCode wrote a user turn. In MCP results, `delivery_confirmed` is true
-only when the exact user turn is in synced history. The connector ACK keeps
-its legacy admission bit for compatibility. `message_status` mentions a
-running turn only if a fresh native snapshot identifies a different, earlier
-turn and the exact new input is not yet in synced history. Only
-`completion_confirmed` proves a completed native turn and a correlated reply.
+Use `message_status` and `start_status` only for an explicit follow-up or when
+the outcome is needed for the owner's next instruction. OpenCode acceptance
+means it accepted the request for processing, not that it wrote a user turn.
+In a message status result, `delivery_confirmed` requires the exact user turn
+in synced history. The connector ACK keeps its legacy admission bit for
+compatibility. Only `completion_confirmed` proves a completed native turn and
+a correlated reply. A start receipt cannot supply a new session ID. Use
+`start_status` if the owner needs that ID later.
+
+Send and start need the write grant but no per-action approval. Cancellation
+and visibility changes still require confirmation. Stale context still stops
+delivery. Read-tool errors stay bare codes.
 
 ### November 25–26 voice incident
 
@@ -221,10 +219,8 @@ them has not been observed here; do not rely on text alone.
   than presented as proof that nothing needs attention. Context freshness and
   runtime freshness are reported separately. New sessions without mirrored
   history still appear in active counts; their context is explicitly unavailable.
-- All authenticated MCP requests already renew mobile activity at the router.
-  Sends return the durable delivery receipt without waiting for history or native
-  status to refresh. A later message status check reports completion and freshness.
-  A missing or stale native status cannot confirm completion.
+- Authenticated MCP reads renew mobile activity at the router. Sends and starts
+  skip that round trip and schedule a connector wake after commit.
 - Revocation is rechecked after tool waits and inside queue mutations. Expired,
   never-admitted confirmation requests no longer block later operations forever.
 

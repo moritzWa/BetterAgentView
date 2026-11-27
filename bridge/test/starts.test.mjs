@@ -61,12 +61,9 @@ test('cloud path checks reject traversal and system roots before a row exists', 
 
 test('queueing a start does not invent a session, and the id appears only after the Mac ack', async () => {
   const queued = body(await rpc('start_session', {operation_id:'start_queue_1', directory:'/Users/m/Code/agentview', text:'Add a health tool'}));
-  assert.equal(queued.status, 'queued');
-  assert.equal(queued.session_id, null);
-  assert.equal(queued.started, false);
-  assert.match(queued.say_to_owner, /^Start request saved for automatic pickup/);
+  assert.deepEqual(queued,{enqueued:true,operation_id:'start_queue_1',say_to_owner:null});
   const again = body(await rpc('start_session', {operation_id:'start_queue_1', directory:'/Users/m/Code/agentview', text:'Add a health tool'}));
-  assert.equal(again.operation_id, queued.operation_id);
+  assert.deepEqual(again,queued);
   const conflict = await rpc('start_session', {operation_id:'start_queue_1', directory:'/Users/m/Code/other', text:'Add a health tool'});
   assert.equal(conflict.result.isError, true);
   assert.match(conflict.result.content[0].text, /operation_id_conflict/);
@@ -74,6 +71,9 @@ test('queueing a start does not invent a session, and the id appears only after 
   assert.equal(leased.operation_id, 'start_queue_1');
   assert.equal(leased.text, 'Add a health tool');
   await starts.ack(writer, {operation_id:'start_queue_1', status:'started', session_id:'ses_created_1'});
+  const afterAck=body(await rpc('start_session',{operation_id:'start_queue_1',directory:'/Users/m/Code/agentview',text:'Add a health tool'}));
+  assert.deepEqual(afterAck,queued);
+  assert.equal(await starts.lease(writer),null,'retry does not schedule another start');
   const done = body(await rpc('start_status', {operation_id:'start_queue_1'}));
   assert.equal(done.delivery_state, 'started');
   assert.equal(done.session_id, 'ses_created_1');

@@ -92,13 +92,14 @@ async function rpcRaw(name,args,rpcGate=gate){
 const body=raw=>JSON.parse(raw.result.content[0].text);
 const input=id=>({operation_id:id,session_id:'ses_delivery',text:'Synthetic approved text',base_cursor:100});
 
-test('send with the Mac offline reports saved for automatic pickup and claims at most queued',async()=>{
+test('send with the Mac offline silently returns after a durable save',async()=>{
   macSeen=false;
-  const raw=await rpcRaw('send_session_message',input('delivery_offline_1'));
-  assert(!raw.result.isError);const out=body(raw);
-  assert.equal(out.delivery_state,'queued_mac_offline');assert.equal(out.claim_ceiling,'queued');assert.equal(out.status,'queued');
-  assert.equal(out.say_to_owner,'Message saved for automatic pickup when your Mac reconnects.');
-  assert.equal(body(await rpcRaw('message_status',{operation_id:out.operation_id})).say_to_owner,out.say_to_owner);
+  const args=input('delivery_offline_1');
+  const raw=await rpcRaw('send_session_message',args);
+  assert(!raw.result.isError);
+  assert.deepEqual(body(raw),{enqueued:true,operation_id:args.operation_id,session_id:args.session_id,message_id:'msg_agentvoice_'+args.operation_id,say_to_owner:null});
+  const status=body(await rpcRaw('message_status',{operation_id:args.operation_id}));
+  assert.equal(status.status,'queued');assert.equal(status.delivery_confirmed,false);
   macSeen=true;
 });
 
@@ -143,38 +144,31 @@ test('status only reports the running turn when fresh evidence identifies an ear
   }
 });
 
-test('send returns the durable admission receipt without waiting for history or runtime',async()=>{
-  const args=input('delivery_fast_receipt_1'),calls=[];
-  const receiptGate={...gate,
-    activity:async(_source,wait)=>{assert(!wait,'send must not wait for freshness');calls.push('presence');return {mac_seen_recently:true};},
-    waitReceipt:async(_source,operation_id)=>{
-      calls.push('receipt');
-      const lease=await outbox.lease(writer);
-      assert.equal(lease.operation_id,operation_id);
-      await outbox.ack(writer,{operation_id,message_id:lease.message_id,status:'accepted'});
-    },
-    runtime:async()=>assert.fail('send must not fetch runtime'),
-  };
-  for(const expected of [['presence','receipt'],[]]){
-    calls.length=0;
-    const raw=await rpcRaw('send_session_message',args,receiptGate);
-    assert(!raw.result.isError,raw.result.content[0].text);const out=body(raw);
-    assert.equal(out.delivery_state,'accepted_by_session');assert.equal(out.delivery_confirmed,false);
-    assert.equal(out.say_to_owner,'OpenCode queued your message for processing.');
-    assert.equal(out.claim_ceiling,'accepted');assert.equal(out.next_action,null);
-    assert(!('completion_confirmed' in out));assert.deepEqual(calls,expected);
-  }
-});
-
-test('a failed receipt wait preserves the queued result and later status confirms admission',async()=>{
-  const args=input('delivery_wait_unavailable_1');
-  const raw=await rpcRaw('send_session_message',args,{...gate,waitReceipt:async()=>{throw new Error('unavailable');}});
-  assert(!raw.result.isError);
-  assert.equal(body(raw).delivery_state,'queued_waiting_for_mac');
+test('send does not ask the online Mac for delivery, and a retry after admission stays silent',async()=>{
+  const args=input('delivery_fast_receipt_1');
+  const checks=[];
+  const unexpected=async()=>{checks.push('unexpected');throw new Error('unexpected status check');};
+  const receiptGate={...gate,activity:unexpected,waitReceipt:unexpected,runtime:unexpected};
+  const first=await rpcRaw('send_session_message',args,receiptGate);
+  assert(!first.result.isError);
   const leased=await outbox.lease(writer);
   assert.equal(leased.operation_id,args.operation_id);
   await outbox.ack(writer,{operation_id:leased.operation_id,message_id:leased.message_id,status:'accepted'});
-  assert.equal(body(await rpcRaw('message_status',{operation_id:args.operation_id})).delivery_state,'accepted_by_session');
+  assert.deepEqual(body(await rpcRaw('send_session_message',args,receiptGate)),body(first));
+  assert.equal(body(first).say_to_owner,null);
+  assert.deepEqual(checks,[],'send must not check presence, history, or local delivery');
+  assert.equal(await outbox.lease(writer),null,'retry does not schedule another delivery');
+});
+
+test('retrying a send that needs reconfirmation surfaces the hold without requeueing it',async()=>{
+  const args=input('delivery_action_needed_1');
+  await rpcRaw('send_session_message',args);
+  const leased=await outbox.lease(writer);
+  await outbox.ack(writer,{operation_id:args.operation_id,message_id:leased.message_id,status:'needs_confirmation'});
+  const retried=body(await rpcRaw('send_session_message',args));
+  assert.match(retried.say_to_owner,/need your OK/);
+  assert.equal(await outbox.lease(writer),null);
+  await outbox.cancel(reader,args.operation_id);
 });
 
 test('a stale cursor is still rejected, now with a structured body that says nothing was sent',async()=>{

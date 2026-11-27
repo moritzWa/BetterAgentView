@@ -1,7 +1,7 @@
 // Pure helpers: what the model may honestly say about one send. No I/O.
 // claim_ceiling is the strongest claim allowed: none < queued < accepted < completed.
 
-export const REPORT_RULE='Say say_to_owner. Never claim more than claim_ceiling. Queued means saved for automatic pickup. Accepted means OpenCode queued it for processing, not that it appeared as a user turn or finished. Only report a completed turn after confirmed completion.';
+export const REPORT_RULE='Report status only when asked or when the owner needs to act. Never claim more than claim_ceiling. Queued means saved for automatic pickup. Accepted means OpenCode queued it for processing, not that it appeared as a user turn or finished. Only report a completed turn after confirmed completion.';
 
 const SAYS={
   not_sent:'Not sent. Nothing reached the session.',
@@ -66,7 +66,8 @@ const ERRORS={
 };
 
 /** Structured body for a failed send, cancel or status call. Unknown codes are uncertain, never "not sent". */
-export function errorView(code) {
+export function errorView(code,enqueue=false) {
+  if(enqueue&&!Object.hasOwn(ERRORS,code))return {error:code,...err('uncertain','I could not confirm the request was saved.','If retrying, reuse the exact operation_id and arguments. Do not submit a new operation.',{sent:null,retry_same_operation:true})};
   const build=ERRORS[code]??(()=>err('uncertain','Something failed and I do not know if it was sent.','Call message_status for this operation_id before saying anything else.',{sent:null}));
   return {error:code,...build(),report_rule:REPORT_RULE};
 }

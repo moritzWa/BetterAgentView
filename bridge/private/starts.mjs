@@ -1,4 +1,5 @@
 import { digest, SyncError } from '../sync/projection.mjs';
+import { wakeQueue } from './queue-wake.mjs';
 import { requireGrant } from './grant.mjs';
 
 const scope = p => [p.owner_id, p.device_id, p.database_epoch];
@@ -17,7 +18,7 @@ export function directoryShape(path) {
 }
 
 export class Starts {
-  constructor(db, gate) { this.db = db; this.gate = gate; }
+  constructor(db, gate, defer) { this.db = db; this.gate = gate; this.defer = defer; }
   async enqueue(principal, { operation_id, directory, text }) {
     if (!principal.scopes?.split(' ').includes('messages:send')) throw new SyncError('write_permission_required', 403);
     if (!/^[A-Za-z0-9_-]{8,160}$/.test(operation_id ?? '') || typeof text !== 'string' || !text.trim() || text.length > 50_000) throw new SyncError('invalid_start', 400);
@@ -37,8 +38,7 @@ export class Starts {
     });
     // Wake only after commit. The connector also reconciles the durable queue.
     if (['queued','leased'].includes(receipt.status)) {
-      try { await this.gate.signal(`${principal.device_id}|${principal.database_epoch}`);}
-      catch { console.error('bridge_queue_signal_failed'); }
+      await wakeQueue(this.gate,principal,this.defer);
     }
     return receipt;
   }
@@ -104,7 +104,7 @@ function publicReceipt(row) {
   };
 }
 
-export const START_RULE = 'Say say_to_owner. Never claim a session exists unless session_id is set. Queued means the start request is saved for automatic pickup. started means OpenCode accepted the task for processing, not that a user turn appeared or the work finished.';
+export const START_RULE = 'Report status only when asked or when the owner needs to act. Never claim a session exists unless session_id is set. Queued means the start request is saved for automatic pickup. started means OpenCode accepted the task for processing, not that a user turn appeared or the work finished.';
 
 const SAYS = {
   not_started: 'Not started. No session was created.',

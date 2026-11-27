@@ -41,8 +41,8 @@ test('the visible dashboard ID routes to the same native session and operation a
   const args={operation_id:'visible_send_fixture',text:'Exact synthetic instruction'};
   const sent=await rpc('send_session_message',{...args,session_id:listed.id});
   assert.equal(sent.session_id,nativeId);
-  assert.equal(sent.status,'queued');
-  assert.equal(sent.delivery_confirmed,false);
+  assert.equal(sent.enqueued,true);
+  assert.equal(sent.say_to_owner,null);
   const retried=await rpc('send_session_message',{...args,session_id:nativeId});
   assert.equal(retried.message_id,sent.message_id);
   const leased=await outbox.lease(writer);
