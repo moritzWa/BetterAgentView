@@ -583,6 +583,9 @@ pub fn run_dashboard(
                                 })
                         });
                     }
+                    // A refresh whose worker filtered it before a hide was
+                    // saved must not bring the hidden row back.
+                    hidden_sessions.filter_snapshot(&mut snapshot);
                     crate::adapters::apply_background_screens(&mut snapshot);
                     // A refresh that read a session just before its turn
                     // started must not put the row back to idle.
