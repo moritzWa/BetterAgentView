@@ -446,15 +446,29 @@ fn text_rows(db: &Connection, session_id: &str, limit: i64) -> Result<(Vec<TextR
         } else {
             ""
         };
+        // Older V2 databases embed content in the message. Current ones keep
+        // the payload in session_part and leave an empty content array behind.
+        let split_text = if has_table(db, "session_part")? {
+            ", (SELECT group_concat(text, char(10)) FROM (
+                SELECT json_extract(p.data, '$.text') AS text
+                FROM main.session_part p
+                WHERE p.message_id = m.id AND p.type = 'text'
+                  AND COALESCE(json_extract(p.data, '$.synthetic'), 0) = 0
+                  AND COALESCE(json_extract(p.data, '$.state.phase'), '') != 'commentary'
+                ORDER BY p.ordinal
+            ))"
+        } else {
+            ""
+        };
         let mut statement = db.prepare(&format!(
             "SELECT type,
                     CASE type WHEN 'user' THEN json_extract(data, '$.text')
-                    ELSE (SELECT group_concat(json_extract(c.value, '$.text'), char(10))
+                    ELSE COALESCE((SELECT group_concat(json_extract(c.value, '$.text'), char(10))
                           FROM json_each(data, '$.content') c
                            WHERE json_extract(c.value, '$.type') = 'text'
                              AND COALESCE(json_extract(c.value, '$.synthetic'), 0) = 0
-                             AND COALESCE(json_extract(c.value, '$.state.phase'), '') != 'commentary') END
-             FROM main.session_message
+                             AND COALESCE(json_extract(c.value, '$.state.phase'), '') != 'commentary'){split_text}, '') END
+             FROM main.session_message m
               WHERE session_id = ?1 AND type IN ('user', 'assistant')
                 {visible}
               ORDER BY seq DESC LIMIT ?2"
@@ -1487,6 +1501,52 @@ mod tests {
             }],
             "even a window without the original question must expose the latest reply"
         );
+    }
+
+    #[test]
+    fn v2_split_parts_restore_the_full_reply_after_a_preview_only_read() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            r#"
+            CREATE TABLE session_v2(id TEXT PRIMARY KEY, revert TEXT);
+            CREATE TABLE session_message(id TEXT PRIMARY KEY, session_id TEXT, type TEXT, seq INTEGER, data TEXT);
+            CREATE TABLE session_part(message_id TEXT, ordinal INTEGER, type TEXT, data TEXT, PRIMARY KEY(message_id, ordinal));
+            INSERT INTO session_v2 VALUES ('s', NULL);
+            INSERT INTO session_message VALUES
+                ('u', 's', 'user', 1, '{"text":"give me the full answer"}'),
+                ('a', 's', 'assistant', 2, '{"content":[]}'),
+                ('b', 's', 'assistant', 3, '{"content":[{"type":"text","text":"inline reply"}]}');
+            INSERT INTO session_part VALUES
+                ('a', 5, 'text', '{"text":"This is prompt-only."}'),
+                ('a', 1, 'reasoning', '{"text":"private"}'),
+                ('a', 2, 'tool', '{"text":"tool output"}'),
+                ('a', 3, 'text', '{"text":"progress","state":{"phase":"commentary"}}'),
+                ('a', 4, 'text', '{"text":"synthetic","synthetic":true}'),
+                ('b', 0, 'text', '{"text":"do not duplicate inline content"}');
+            "#,
+        ).unwrap();
+        let beginning = format!(
+            "Two edits to one paragraph. {}",
+            "Full inventory. ".repeat(280)
+        );
+        db.execute(
+            "INSERT INTO session_part VALUES ('a', 0, 'text', ?1)",
+            [serde_json::json!({"text": beginning}).to_string()],
+        )
+        .unwrap();
+        let turns = recent_turns_from_db(&db, "s", 1).unwrap();
+        assert_eq!(turns[0].you, "give me the full answer");
+        assert_eq!(
+            turns[0].replies,
+            [
+                format!("{beginning}\nThis is prompt-only."),
+                "inline reply".to_owned()
+            ]
+        );
+        db.execute_batch(r#"UPDATE session_v2 SET revert = '{"messageID":"b"}'"#)
+            .unwrap();
+        let turns = recent_turns_from_db(&db, "s", 1).unwrap();
+        assert_eq!(turns[0].it, format!("{beginning}\nThis is prompt-only."));
     }
 
     #[test]

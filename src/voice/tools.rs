@@ -211,6 +211,38 @@ fn clip_replies(replies: &[String], max: usize) -> String {
     }
 }
 
+/// Keep the latest reply contiguous. A cursor is tied to its session and
+/// content, so a new exchange cannot silently change the text mid-read.
+fn reply_page(id: &str, turn: &Turn, cursor: Option<&str>) -> Result<(String, Option<String>)> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let text = if turn.replies.is_empty() {
+        turn.it.clone()
+    } else {
+        turn.replies.join("\n\n")
+    };
+    let mut hash = DefaultHasher::new();
+    (id, &turn.you, &text).hash(&mut hash);
+    let key = format!("{:016x}", hash.finish());
+    let start: usize = if let Some(cursor) = cursor {
+        cursor
+            .split_once(':')
+            .filter(|(prefix, _)| *prefix == key)
+            .and_then(|(_, offset)| offset.parse().ok())
+            .filter(|offset| text.is_char_boundary(*offset))
+            .ok_or_else(|| anyhow::anyhow!("invalid reply cursor or the latest exchange changed; read_session again without reply_cursor"))?
+    } else {
+        0
+    };
+    let end = text[start..]
+        .char_indices()
+        .nth(REPLY_PAGE_CHARS)
+        .map_or(text.len(), |(offset, _)| start + offset);
+    let next = (end < text.len()).then(|| format!("{key}:{end}"));
+    Ok((text[start..end].to_owned(), next))
+}
+
 pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -227,6 +259,7 @@ const READ_YOU_CHARS: usize = 700;
 /// How a turn ended: the end holds the result or the question.
 const READ_IT_CHARS: usize = 1800;
 const READ_TOTAL_CHARS: usize = 7000;
+const REPLY_PAGE_CHARS: usize = 6000;
 const SEARCH_LIMIT: usize = 8;
 /// Messages returned when one session is searched and no limit is given.
 const SESSION_MATCHES: usize = 3;
@@ -522,29 +555,51 @@ impl Tools {
             let mut reads = self.reads.lock().unwrap();
             reads.retain(|_, at| now.saturating_sub(*at) < READ_WINDOW_MS);
             if !reads.contains_key(&id) && reads.len() >= READS_PER_WINDOW {
-                bail!("enough sessions have been read for one request: answer from what you have; list_sessions already carries what each session last said");
+                bail!("enough sessions have been read for one request; list_sessions only has previews, not full replies");
             }
             // Bound broad history sweeps, not freshness checks on a session
             // already being discussed. Those must still reach the database.
             reads.insert(id.clone(), now);
         }
+        let cursor = args.get("reply_cursor").and_then(Value::as_str);
         let count = args
             .get("turns")
             .or_else(|| args.get("last_n"))
             .and_then(Value::as_u64)
             .map_or(READ_DEFAULT, |n| (n as usize).clamp(1, READ_MAX));
-        let turns = self.host.recent_turns(&id, count)?;
+        let skip = args.get("skip_turns").and_then(Value::as_u64).unwrap_or(0);
+        if skip >= READ_MAX as u64 {
+            bail!("skip_turns must be between 0 and {}", READ_MAX - 1);
+        }
+        let skip = skip as usize;
+        let page_turns = if cursor.is_some() { 1 } else { count };
+        let mut turns = self
+            .host
+            .recent_turns(&id, (page_turns + skip).min(READ_MAX))?;
+        if skip > 0 && skip >= turns.len() {
+            bail!("no exchange at that skip_turns offset");
+        }
+        turns.truncate(turns.len() - skip);
+        let (reply, next_cursor) = match turns.last() {
+            Some(turn) => reply_page(&id, turn, cursor)?,
+            None if cursor.is_some() => {
+                bail!("the latest exchange changed; read_session again without reply_cursor")
+            }
+            None => (String::new(), None),
+        };
         // The newest turns matter most: when the total is too long, the oldest go.
         let mut kept: Vec<Value> = Vec::new();
         let mut total = 0;
-        for turn in turns.iter().rev() {
+        for (index, turn) in turns.iter().rev().enumerate() {
             let you = clip_start(&turn.you, READ_YOU_CHARS);
-            let it = if turn.replies.len() > 1 {
+            let it = if index == 0 {
+                reply.clone()
+            } else if turn.replies.len() > 1 {
                 clip_replies(&turn.replies, READ_IT_CHARS)
             } else {
                 clip_reply(&turn.it, READ_IT_CHARS)
             };
-            total += you.len() + it.len();
+            total += you.chars().count() + it.chars().count();
             if total > READ_TOTAL_CHARS && !kept.is_empty() {
                 break;
             }
@@ -553,12 +608,18 @@ impl Tools {
         kept.reverse();
         let infos = self.host.infos();
         let info = infos.iter().find(|info| info.id == id);
-        if let Some(turn) = turns.last() {
+        if let Some(turn) = turns.last().filter(|_| skip == 0) {
             self.seen.lock().unwrap().told(&id, &turn.it);
         }
         let mut out = json!({ "turns": kept });
-        // Make the newest exchange explicit, ahead of the older history in the
-        // serialized result. Dashboard previews can lag behind this fresh read.
+        if skip > 0 {
+            out["historical"] = json!(true);
+        }
+        if let Some(cursor) = next_cursor {
+            out["next_reply_cursor"] = json!(cursor);
+        }
+        // The newest exchange in this window gets a full, pageable reply.
+        // Dashboard previews can lag behind this fresh read.
         let latest_has_reply = turns.last().is_some_and(|turn| !turn.it.trim().is_empty());
         out["latest_turn"] = out["turns"]
             .as_array()
@@ -586,12 +647,13 @@ impl Tools {
                 .get(&id)
                 .is_some_and(|sent| *sent >= info.updated_ms);
             out["answer_ready"] = json!(
-                info.state.task_finished()
+                skip == 0
+                    && info.state.task_finished()
                     && !info.busy()
                     && !awaiting_new_reply
                     && latest_has_reply
             );
-            if info.busy() || awaiting_new_reply {
+            if skip == 0 && (info.busy() || awaiting_new_reply) {
                 out["still_working"] =
                     json!("the requested reply is not confirmed complete; this content may be stale or unfinished. Wait for done before reporting it as the answer");
             }
@@ -948,32 +1010,29 @@ impl Tools {
                 Until::NeedsYou => info.needs_you(),
             };
             if fired {
-                let said = if info.tail.is_empty() {
-                    String::new()
-                } else {
-                    format!(" It ends: {}", info.tail)
-                };
+                let handle = self.handles.lock().unwrap().handle(&info.id);
                 let line = match (watch.until, info.state) {
                     (Until::NeedsYou, _)
                     | (_, SessionState::NeedsInput | SessionState::ReadyForReview) => {
-                        format!("\"{}\" now needs the developer.{said}", info.title)
+                        format!("\"{}\" now needs the developer.", info.title)
                     }
                     (_, SessionState::TaskDone) => format!(
-                        "\"{}\" finished the task; the workstream is still open.{said}",
+                        "\"{}\" finished the task; the workstream is still open.",
                         info.title
                     ),
                     (_, SessionState::ProjectDone) => format!(
-                        "\"{}\" finished the project; nothing remains to review or decide.{said}",
+                        "\"{}\" finished the project; nothing remains to review or decide.",
                         info.title
                     ),
                     _ => format!(
-                        "\"{}\" is no longer busy; completion is not confirmed.{said}",
+                        "\"{}\" is no longer busy; completion is not confirmed.",
                         info.title
                     ),
                 };
-                self.seen.lock().unwrap().told(&info.id, &info.tail);
                 self.known.lock().unwrap().record(info);
-                polled.spoken.push(line);
+                polled.spoken.push(format!(
+                    "{line} Before reporting what this session said, use read_session with id {handle}. This notification is status only."
+                ));
             }
             !fired
         });
@@ -1481,10 +1540,10 @@ mod tests {
     }
 
     #[test]
-    fn a_long_answer_before_a_short_status_message_is_clipped_not_dropped() {
+    fn a_long_answer_before_a_short_status_message_is_read_in_full() {
         let (host, tools) = tools(two());
         tools.run("list_sessions", &json!({}));
-        let narration = "old narration ".repeat(200);
+        let narration = "old narration ".repeat(10);
         let answer = format!(
             "Decision: reward is not possible. {}",
             "detail ".repeat(600)
@@ -1493,11 +1552,8 @@ mod tests {
         *host.turns.lock().unwrap() = Some(vec![replies_turn(&[&narration, &answer, status])]);
         let read = tools.run("read_session", &json!({"id":"s1"}));
         let it = read["latest_turn"]["it"].as_str().unwrap();
-        assert!(it.contains("Decision: reward is not possible."));
-        assert!(it.ends_with(status));
-        assert!(!it.contains("old narration"), "the oldest goes first");
-        assert!(it.starts_with('…'));
-        assert!(it.chars().count() <= READ_IT_CHARS + 8);
+        assert_eq!(it, format!("{narration}\n\n{answer}\n\n{status}"));
+        assert!(read.get("next_reply_cursor").is_none());
     }
 
     #[test]
@@ -1507,6 +1563,53 @@ mod tests {
         *host.turns.lock().unwrap() = Some(vec![replies_turn(&["only one"])]);
         let read = tools.run("read_session", &json!({"id":"s1"}));
         assert_eq!(read["latest_turn"]["it"], "only one");
+    }
+
+    #[test]
+    fn a_full_older_reply_can_be_read_after_a_short_follow_up() {
+        let (host, tools) = tools(two());
+        tools.run("list_sessions", &json!({}));
+        let answer = format!(
+            "Two prompt edits were made. {}\n\nThis is prompt-only.",
+            "inventory ".repeat(420)
+        );
+        *host.turns.lock().unwrap() = Some(vec![
+            replies_turn(&[&answer]),
+            replies_turn(&["Shorter follow-up."]),
+        ]);
+        let read = tools.run("read_session", &json!({"id":"s1", "skip_turns":1}));
+        assert_eq!(read["historical"], true);
+        assert_eq!(read["latest_turn"]["it"], answer);
+        assert!(read.get("next_reply_cursor").is_none());
+    }
+
+    #[test]
+    fn reply_pages_preserve_every_character_and_reject_a_changed_exchange() {
+        let (host, tools) = tools(two());
+        tools.run("list_sessions", &json!({}));
+        let reply = format!("Start\n\n{}\n\nEnd", "á🙂".repeat(REPLY_PAGE_CHARS));
+        *host.turns.lock().unwrap() = Some(vec![replies_turn(&[&reply])]);
+        let first = tools.run("read_session", &json!({"id":"s1"}));
+        let mut read = first.clone();
+        let mut joined = String::new();
+        for _ in 0..3 {
+            joined.push_str(read["latest_turn"]["it"].as_str().unwrap());
+            let Some(cursor) = read.get("next_reply_cursor") else {
+                break;
+            };
+            read = tools.run("read_session", &json!({"id":"s1", "reply_cursor":cursor}));
+        }
+        assert_eq!(joined, reply);
+        assert!(read.get("next_reply_cursor").is_none());
+        *host.turns.lock().unwrap() = Some(vec![replies_turn(&["new reply"])]);
+        let stale = tools.run(
+            "read_session",
+            &json!({"id":"s1", "reply_cursor":first["next_reply_cursor"]}),
+        );
+        assert!(stale["error"]
+            .as_str()
+            .unwrap()
+            .contains("exchange changed"));
     }
 
     #[test]
@@ -1940,7 +2043,9 @@ mod tests {
         }
         let polled = tools.poll();
         assert_eq!(polled.spoken.len(), 1);
-        assert!(polled.spoken[0].contains("voice mode") && polled.spoken[0].contains("Merged."));
+        assert!(polled.spoken[0].contains("voice mode"));
+        assert!(polled.spoken[0].contains("read_session with id s2"));
+        assert!(!polled.spoken[0].contains("Merged."));
         assert!(!tools.watching());
         assert!(tools.poll().spoken.is_empty());
     }
@@ -1979,7 +2084,7 @@ mod tests {
         }
         let polled = tools.poll();
         assert_eq!(polled.spoken.len(), 1);
-        assert!(polled.spoken[0].contains("Wrote it."));
+        assert!(polled.spoken[0].contains("read_session with id s1"));
     }
 
     #[test]
@@ -2287,7 +2392,7 @@ mod tests {
         host.infos.lock().unwrap()[0].tail = "New answer.".into();
         let polled = tools.poll();
         assert_eq!(polled.spoken.len(), 1);
-        assert!(polled.spoken[0].contains("New answer."));
+        assert!(polled.spoken[0].contains("read_session with id s1"));
     }
 
     #[test]

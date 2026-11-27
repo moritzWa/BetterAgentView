@@ -2160,7 +2160,7 @@ mod tests {
     }
 
     #[test]
-    fn finishing_a_watched_session_is_said_aloud() {
+    fn finishing_a_watched_session_points_the_frontend_to_the_full_reply() {
         let rig = rig(Settings::default(), Some("sk-test"));
         let (id, inbox) = page(&rig);
         say(
@@ -2193,10 +2193,19 @@ mod tests {
             );
             thread::sleep(Duration::from_millis(200));
         }
+        let answer = format!(
+            "Full answer: {}\n\nThis is prompt-only.",
+            "Inventory. ".repeat(385)
+        );
+        *rig.host.turns.lock().unwrap() = Some(vec![super::super::tools::Turn {
+            you: "Please provide your complete answer.".into(),
+            it: answer.clone(),
+            ..Default::default()
+        }]);
         {
             let mut infos = rig.host.infos.lock().unwrap();
             infos[1].state = SessionState::TaskDone;
-            infos[1].tail = "Merged.".into();
+            infos[1].tail = "This is prompt-only.".into();
         }
         let spoken = (0..40).find_map(|_| {
             thread::sleep(Duration::from_millis(100));
@@ -2206,10 +2215,35 @@ mod tests {
             })
         });
         let spoken = spoken.expect("the finished session is announced");
-        assert!(spoken["event"]["content"]
-            .as_str()
-            .unwrap()
-            .contains("Merged."));
+        let notice = spoken["event"]["content"].as_str().unwrap();
+        assert!(notice.contains("read_session with id s2"));
+        assert!(!notice.contains("This is prompt-only."));
+
+        say(
+            &rig,
+            id,
+            json!({"type": "event", "event": {"type": "response.event", "delegation_id": "c3",
+            "event": {"type": "response.output_item.done", "item": {"type": "function_call", "call_id": "c3", "name": "read_session", "arguments": r#"{"id":"s2"}"#}}}}),
+        );
+        say(
+            &rig,
+            id,
+            json!({"type": "event", "event": {"type": "response.event", "delegation_id": "c3", "event": {"type": "response.completed"}}}),
+        );
+        let mut read = None;
+        until(|| {
+            read = inbox.try_iter().find_map(|message| {
+                let value: Value = serde_json::from_str(&message).ok()?;
+                let item = &value["event"]["item"];
+                if item["type"] == "function_call_output" && item["call_id"] == "c3" {
+                    serde_json::from_str::<Value>(item["output"].as_str()?).ok()
+                } else {
+                    None
+                }
+            });
+            read.is_some()
+        });
+        assert_eq!(read.unwrap()["latest_turn"]["it"], answer);
     }
 
     #[cfg(unix)]

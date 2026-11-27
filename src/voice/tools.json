@@ -24,7 +24,7 @@
   {
     "type": "function",
     "name": "read_session",
-    "description": "Read fresh session messages directly from history, not the dashboard preview. latest_turn is the newest exchange: you is the developer's request, it is the latest assistant text after it. An empty it with awaiting_reply means no reply is recorded yet, even if state is done. turns contains older context in chronological order. Re-read when the developer says a newer reply exists. Includes up to six running shells; shells_note means live status was unavailable. Scripts, tool output and reasoning are left out.",
+    "description": "Read fresh session messages directly from history, not the dashboard preview. latest_turn is the newest exchange in the requested window: you is the developer's request, it is the assistant reply after it, starting at the beginning. If next_reply_cursor is present, call again with the same id and skip_turns and its value as reply_cursor, then append latest_turn.it. Keep going until no cursor remains when asked for the full answer. An empty it with awaiting_reply means no reply is recorded yet, even if state is done. turns contains older excerpts in chronological order. Re-read when the developer says a newer reply exists. Includes up to six running shells; shells_note means live status was unavailable. Scripts, tool output and reasoning are left out.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -35,6 +35,16 @@
         "turns": {
           "type": "integer",
           "description": "How many exchanges, 1 to 10, default 3. Two or three is usually enough."
+        },
+        "skip_turns": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9,
+          "description": "Skip newer exchanges to read an older reply in full. 0 is the latest, 1 is the one before it. Use the same value for each reply page."
+        },
+        "reply_cursor": {
+          "type": "string",
+          "description": "Pass next_reply_cursor from the previous read of this same session to retrieve the next part of its latest reply."
         }
       },
       "required": [
