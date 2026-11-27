@@ -7,9 +7,8 @@ use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::app::{
-    hidden_picker_rows_for_height, is_active_session_state, App, ComposerMode,
-    ConfirmTarget, Overlay, SelectionKey, ViewMode, MIGRATION_PICKER_PAGE_SIZE,
-    MODEL_PICKER_PAGE_SIZE,
+    hidden_picker_rows_for_height, is_active_session_state, App, ComposerMode, ConfirmTarget,
+    Overlay, SelectionKey, ViewMode, MIGRATION_PICKER_PAGE_SIZE, MODEL_PICKER_PAGE_SIZE,
 };
 use crate::domain::{AgentSession, Capability, Provider, SessionState};
 use crate::usage::Pace;
@@ -2714,8 +2713,11 @@ fn render_directory_picker(frame: &mut Frame<'_>, app: &App, area: Rect) {
                     let label = sanitize_inline(&choice.label);
                     // Only local folders can be created on confirm; a remote
                     // folder must already exist on its host.
-                    let suffix =
-                        if choice.host.is_none() && !choice.path.exists() { "  (new folder)" } else { "" };
+                    let suffix = if choice.host.is_none() && !choice.path.exists() {
+                        "  (new folder)"
+                    } else {
+                        ""
+                    };
                     let label = truncate(
                         &label,
                         inner_width

@@ -20,7 +20,9 @@ use crate::domain::{
     SessionState,
 };
 use crate::migration::MigrationRegistry;
-use crate::process::{CancellableProcessRunner, CommandOutput, CommandRequest, CommandRunner, ProcessRunner};
+use crate::process::{
+    CancellableProcessRunner, CommandOutput, CommandRequest, CommandRunner, ProcessRunner,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LaunchRequest {
@@ -817,8 +819,12 @@ impl ControlHub {
         // Completed when idle and both dashboards agree. Hosts running an
         // agentview without the subcommand fall back to the interactive TUI.
         if provider == Provider::OpenCode && !prompt.trim().is_empty() && cwd.is_some() {
-            let request =
-                remote_managed_launch_command(host, prompt.trim(), cwd.as_deref().unwrap(), &self.ssh_bin);
+            let request = remote_managed_launch_command(
+                host,
+                prompt.trim(),
+                cwd.as_deref().unwrap(),
+                &self.ssh_bin,
+            );
             let output = CancellableProcessRunner::default().run(&request)?;
             if output.status == 0 {
                 let (id, title) = parse_remote_managed_launch(&output.stdout)?;
@@ -848,7 +854,8 @@ impl ControlHub {
                 crate::adapters::OPENCODE_READY_MARKER,
             )?
         } else {
-            let command = remote_launch_command(provider.clone(), &prompt, cwd, host, &self.ssh_bin)?;
+            let command =
+                remote_launch_command(provider.clone(), &prompt, cwd, host, &self.ssh_bin)?;
             crate::native_session::run(command, &format!("ssh:{host}:launch:{label}"))?
         };
         match exit {
@@ -2438,10 +2445,7 @@ fn parse_remote_managed_launch(stdout: &[u8]) -> Result<(String, String)> {
 /// (an older agentview without the subcommand, or no agentview on PATH), which
 /// is worth a fallback rather than a failure.
 fn managed_launch_unavailable(output: &CommandOutput) -> bool {
-    output.status == 127
-        || output
-            .stderr_lossy()
-            .contains("unrecognized subcommand")
+    output.status == 127 || output.stderr_lossy().contains("unrecognized subcommand")
 }
 
 /// One interactive SSH command: force a remote PTY, never prompt, fail fast on
@@ -2519,7 +2523,11 @@ fn is_remote_attach_fallback_error(error: &anyhow::Error) -> bool {
 /// host. `opencode export` truncates at 64 KiB when stdout is a pipe, so the
 /// export lands in a temp file first and a bounded tail is returned; the
 /// newest messages sit at the end.
-fn remote_inspect_command(session: &AgentSession, host: &str, ssh_bin: &str) -> Result<CommandRequest> {
+fn remote_inspect_command(
+    session: &AgentSession,
+    host: &str,
+    ssh_bin: &str,
+) -> Result<CommandRequest> {
     if session.provider != Provider::OpenCode {
         bail!(
             "remote transcript inspection is not supported for {} yet; read it on {host}",
@@ -2590,9 +2598,7 @@ fn inspect_remote(session: &AgentSession, host: &str, ssh_bin: &str) -> Result<S
         );
     }
     let value = parse_remote_export(&output.stdout)?;
-    let messages = value
-        .get("messages")
-        .unwrap_or(&value);
+    let messages = value.get("messages").unwrap_or(&value);
     crate::opencode_supervisor::render_messages(messages)
         .or_else(|_| crate::opencode_supervisor::render_messages(&value))
 }
@@ -3582,8 +3588,8 @@ exit 0
                 None,
                 None,
             )
-                .unwrap_err()
-                .to_string(),
+            .unwrap_err()
+            .to_string(),
             "Pi does not expose model selection"
         );
 
@@ -3709,9 +3715,7 @@ exit 0
 
     fn remote_session(provider: Provider, raw_state: Option<&str>) -> AgentSession {
         AgentSession {
-            runtime: Runtime::Ssh {
-                host: "176".into(),
-            },
+            runtime: Runtime::Ssh { host: "176".into() },
             provider,
             provider_session_id: "11111111-2222-3333-4444-555555555555".into(),
             raw_state: raw_state.map(str::to_owned),
@@ -3744,9 +3748,12 @@ exit 0
 
     #[test]
     fn remote_open_attaches_a_live_claude_session_over_ssh() {
-        let command =
-            remote_open_command(&remote_session(Provider::Claude, Some("working")), "ssh", false)
-                .unwrap();
+        let command = remote_open_command(
+            &remote_session(Provider::Claude, Some("working")),
+            "ssh",
+            false,
+        )
+        .unwrap();
         assert_eq!(command.get_program().to_string_lossy(), "ssh");
         assert_eq!(
             command_argv(&command),
@@ -3803,7 +3810,8 @@ exit 0
                 "cd '/home/bpang/my work' && opencode --session '{session_id}'"
             ))
         );
-        let codex = remote_open_command(&remote_session(Provider::Codex, None), "ssh", false).unwrap();
+        let codex =
+            remote_open_command(&remote_session(Provider::Codex, None), "ssh", false).unwrap();
         assert_eq!(
             command_argv(&codex).pop().unwrap(),
             remote_command_line(&format!(
@@ -3827,11 +3835,7 @@ exit 0
         assert_eq!(remote_shell_quote("a'b"), "'a'\\''b'");
     }
 
-    fn launch_command_argv(
-        provider: Provider,
-        prompt: &str,
-        cwd: Option<PathBuf>,
-    ) -> Vec<String> {
+    fn launch_command_argv(provider: Provider, prompt: &str, cwd: Option<PathBuf>) -> Vec<String> {
         let command = remote_launch_command(provider, prompt, cwd, "176", "ssh").unwrap();
         command
             .get_args()
@@ -3876,8 +3880,7 @@ exit 0
 
     #[test]
     fn remote_launch_refuses_unsupported_harnesses() {
-        let error = remote_launch_command(Provider::Terminal, "", None, "176", "ssh")
-            .unwrap_err();
+        let error = remote_launch_command(Provider::Terminal, "", None, "176", "ssh").unwrap_err();
         assert!(
             error.to_string().contains("not supported"),
             "unexpected error: {error:#}"
@@ -3981,10 +3984,9 @@ exit 0
     fn remote_inspect_salvages_a_truncated_tail() {
         // OpenCode's export is pretty-printed: message objects open at a
         // four-space indent, which is what the tail salvage cuts at.
-        let full = serde_json::to_string_pretty(&serde_json::from_str::<serde_json::Value>(
-            &export_fixture(),
+        let full = serde_json::to_string_pretty(
+            &serde_json::from_str::<serde_json::Value>(&export_fixture()).unwrap(),
         )
-        .unwrap())
         .unwrap();
         // Cut into the middle of the second message: the tail holds only the
         // last complete message plus the trailing close of the document.

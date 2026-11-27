@@ -103,7 +103,10 @@ JSON
 fn ssh_host_merges_remote_agentview_sessions_as_inspect_only() {
     let (_directory, ssh) = ssh_script();
     let mut engine = DiscoveryEngine::new();
-    engine.add_source(SshHostSource::with_ssh_bin("176", ssh.display().to_string()));
+    engine.add_source(SshHostSource::with_ssh_bin(
+        "176",
+        ssh.display().to_string(),
+    ));
 
     let snapshot = engine.discover(&DiscoveryRequest::default());
 
@@ -114,9 +117,7 @@ fn ssh_host_merges_remote_agentview_sessions_as_inspect_only() {
     assert_eq!(session.provider, Provider::OpenCode);
     assert_eq!(
         session.runtime,
-        agentview::domain::Runtime::Ssh {
-            host: "176".into()
-        }
+        agentview::domain::Runtime::Ssh { host: "176".into() }
     );
     assert_eq!(session.pid, None);
     assert_eq!(session.capabilities.len(), 1);
