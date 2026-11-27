@@ -2482,7 +2482,7 @@ const HIDDEN_PICKER_MIN_NAME_WIDTH: usize = 8;
 
 fn render_hidden_picker(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let choices = app.hidden_choices();
-    let popup_width = area.width.saturating_sub(2).min(84).max(30);
+    let popup_width = area.width.saturating_sub(4).min(120).max(30);
     let visible_rows = app.hidden_rows_per_page(hidden_picker_rows_for_height(area.height));
     let start = if choices.is_empty() {
         0
@@ -2497,7 +2497,7 @@ fn render_hidden_picker(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .take(visible_rows)
         .map(|record| app.hidden_snippet_for(&record.id, snippet_width))
         .collect::<Vec<_>>();
-    let result_lines = (snippets.len() + snippets.iter().flatten().count()).max(1);
+    let result_lines = (snippets.len() + 2 * snippets.iter().flatten().count()).max(1);
     let popup_height = (result_lines as u16 + 3)
         .min(area.height.saturating_sub(2))
         .max(5);
@@ -2593,6 +2593,9 @@ fn render_hidden_picker(frame: &mut Frame<'_>, app: &App, area: Rect) {
             });
             if let Some((snippet, range)) = snippet {
                 lines.push(hidden_snippet_line(&snippet, range, inner_width, row_style));
+                lines.push(
+                    Line::from(" ".repeat(inner_width)).style(Style::default().bg(palette().bg)),
+                );
             }
         }
     }
@@ -2662,7 +2665,8 @@ fn render_directory_picker(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let choices = app.directory_choices();
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     let popup_width = area.width.saturating_sub(2).min(84).max(30);
-    let visible_rows = hidden_picker_rows_for_height(area.height);
+    let visible_rows =
+        hidden_picker_rows_for_height(area.height).min(crate::app::HIDDEN_PICKER_PAGE_SIZE);
     let result_rows = choices.len().clamp(1, visible_rows);
     let popup_height = (result_rows as u16 + 4)
         .min(area.height.saturating_sub(2))
@@ -4482,6 +4486,43 @@ mod tests {
             .position(|line| line.contains("Bored games"))
             .expect("name match row");
         assert!(!lines[label_only + 1].contains("bored"), "{rendered}");
+    }
+
+    #[test]
+    fn text_matches_list_ten_spaced_results_when_the_terminal_is_tall() {
+        let mut app = App::new(SessionSnapshot::default());
+        app.open_restore_picker(Vec::new());
+        let sessions = (0..14)
+            .map(|index| crate::control::RestorableSession {
+                id: format!("opencode:host:s{index}"),
+                provider_session_id: format!("s{index}"),
+                provider: Provider::OpenCode,
+                name: format!("Session {index:02}"),
+                cwd: "/work".into(),
+                updated_at_ms: 0,
+                transcript: format!("we talked about bored topic {index}"),
+            })
+            .collect();
+        app.add_restorable_sessions(sessions, &[]);
+        for character in "bored".chars() {
+            app.push_input(character);
+        }
+        app.set_hidden_picker_rows(crate::app::hidden_picker_rows_for_height(50));
+        let backend = TestBackend::new(120, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let rendered = buffer_text(terminal.backend().buffer());
+        let lines = rendered.lines().collect::<Vec<_>>();
+        let names = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.contains("Session "))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        assert_eq!(names.len(), 10, "{rendered}");
+        for pair in names.windows(2) {
+            assert_eq!(pair[1] - pair[0], 3, "name, text, blank line: {rendered}");
+        }
     }
 
     #[test]

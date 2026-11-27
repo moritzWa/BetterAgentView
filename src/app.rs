@@ -39,13 +39,18 @@ pub const SESSION_PAGE_SIZE: usize = 25;
 pub const MODEL_PICKER_PAGE_SIZE: usize = 10;
 pub const MIGRATION_PICKER_PAGE_SIZE: usize = 10;
 pub const HIDDEN_PICKER_PAGE_SIZE: usize = 10;
+/// A result that shows its matching text takes a name line, a text line and a
+/// blank line, so the results breathe.
+const HIDDEN_PICKER_LINES_PER_TEXT_RESULT: usize = 3;
+const HIDDEN_PICKER_MAX_LINES: usize =
+    HIDDEN_PICKER_PAGE_SIZE * HIDDEN_PICKER_LINES_PER_TEXT_RESULT;
 const PAUSED_GROUP_KEY: &str = "paused";
 pub const SCHEDULED_GROUP_KEY: &str = "scheduled";
 
-/// Result rows the hidden-session picker can show in a terminal of `height`
-/// rows. Rendering and PageUp/PageDown share it so a page is what fits.
+/// Lines the hidden-session picker can fill in a terminal of `height` rows.
+/// Rendering and PageUp/PageDown share it so a page is what fits.
 pub fn hidden_picker_rows_for_height(height: u16) -> usize {
-    HIDDEN_PICKER_PAGE_SIZE
+    HIDDEN_PICKER_MAX_LINES
         .min(usize::from(height.saturating_sub(7).max(1)))
         .max(1)
 }
@@ -3356,13 +3361,14 @@ impl App {
         self.hidden_filter.trim().chars().count() >= 3
     }
 
-    /// Picker rows per page for `lines` of result space: half as many while
-    /// the filter searches message text, as each row may take two lines.
+    /// Picker rows per page for `lines` of result space: a third as many while
+    /// the filter searches message text, as each row takes a name, the text
+    /// and a blank line.
     pub fn hidden_rows_per_page(&self, lines: usize) -> usize {
         if self.hidden_filter_searches_text() {
-            (lines / 2).max(1)
+            (lines / HIDDEN_PICKER_LINES_PER_TEXT_RESULT).clamp(1, HIDDEN_PICKER_PAGE_SIZE)
         } else {
-            lines.max(1)
+            lines.clamp(1, HIDDEN_PICKER_PAGE_SIZE)
         }
     }
 
@@ -3395,7 +3401,7 @@ impl App {
     /// Record how many result rows the picker renders for the current
     /// terminal height, so paging moves by what is actually on screen.
     pub fn set_hidden_picker_rows(&mut self, rows: usize) {
-        self.hidden_picker_rows = rows.clamp(1, HIDDEN_PICKER_PAGE_SIZE);
+        self.hidden_picker_rows = rows.clamp(1, HIDDEN_PICKER_MAX_LINES);
     }
 
     pub fn move_hidden_page(&mut self, delta: isize) {
@@ -3893,7 +3899,7 @@ impl App {
             return;
         }
         self.directory_selection = (self.directory_selection as isize
-            + delta * self.hidden_picker_rows as isize)
+            + delta * self.hidden_picker_rows.min(HIDDEN_PICKER_PAGE_SIZE) as isize)
             .clamp(0, len.saturating_sub(1) as isize) as usize;
     }
 
