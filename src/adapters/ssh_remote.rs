@@ -224,15 +224,33 @@ impl SshTargetList {
     }
 }
 
+/// A watched host is asked again no sooner than this after its last answer.
+const MIN_REFETCH: Duration = Duration::from_secs(3);
+
+/// What the dashboard last learned from one host.
+#[derive(Default)]
+struct HostCache {
+    result: Option<std::result::Result<SourceDiscovery, String>>,
+    in_flight: bool,
+    finished_at: Option<std::time::Instant>,
+}
+
 /// One dashboard source for every watched SSH host. The host list is read on
-/// each refresh, so `/remote add` and `/remote remove` change what the next
+/// each refresh, so /remote add and /remote remove change what the next
 /// refresh reports without restarting agentview. Runners stay per host so an
 /// in-flight SSH discovery can still be cancelled on exit.
+///
+/// In the dashboard a refresh never waits for a host: it reports each host's
+/// last answer and starts a new fetch in the background, so a slow or dead
+/// host cannot delay the status of local sessions. One-shot callers such as
+/// --json wait for the hosts instead.
 pub struct SshHostsSource {
     label: String,
     hosts: SshTargetList,
     ssh_bin: String,
     runners: Mutex<BTreeMap<String, Arc<dyn CommandRunner>>>,
+    background: bool,
+    cache: Arc<Mutex<BTreeMap<String, HostCache>>>,
 }
 
 impl SshHostsSource {
@@ -242,7 +260,16 @@ impl SshHostsSource {
             hosts,
             ssh_bin: ssh_bin.into(),
             runners: Mutex::new(BTreeMap::new()),
+            background: false,
+            cache: Arc::new(Mutex::new(BTreeMap::new())),
         }
+    }
+
+    /// Report each host's last answer and refetch in the background, instead
+    /// of waiting for the hosts on every refresh.
+    pub fn in_background(mut self) -> Self {
+        self.background = true;
+        self
     }
 
     fn host_source(&self, host: &str) -> SshHostSource {
@@ -251,9 +278,64 @@ impl SshHostsSource {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .entry(host.to_owned())
-            .or_insert_with(|| Arc::new(CancellableProcessRunner::default()) as Arc<dyn CommandRunner>)
+            .or_insert_with(|| {
+                Arc::new(CancellableProcessRunner::default()) as Arc<dyn CommandRunner>
+            })
             .clone();
         SshHostSource::with_runner_and_bin(host, &self.ssh_bin, runner)
+    }
+
+    fn discover_in_background(
+        &self,
+        hosts: &std::collections::BTreeSet<String>,
+        request: &DiscoveryRequest,
+    ) -> SourceDiscovery {
+        let mut merged = SourceDiscovery::default();
+        for host in hosts {
+            let start = {
+                let mut cache = self
+                    .cache
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let entry = cache.entry(host.clone()).or_default();
+                let due = !entry.in_flight
+                    && entry
+                        .finished_at
+                        .map_or(true, |finished| finished.elapsed() >= MIN_REFETCH);
+                if due {
+                    entry.in_flight = true;
+                }
+                due
+            };
+            if start {
+                let source = self.host_source(host);
+                let cache = Arc::clone(&self.cache);
+                let request = request.clone();
+                let host = host.clone();
+                std::thread::spawn(move || {
+                    let result = fetch_host(&source, &request);
+                    let mut cache = cache
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let entry = cache.entry(host).or_default();
+                    entry.result = Some(result);
+                    entry.in_flight = false;
+                    entry.finished_at = Some(std::time::Instant::now());
+                });
+            }
+        }
+        let cache = self
+            .cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for host in hosts {
+            match cache.get(host).and_then(|entry| entry.result.as_ref()) {
+                Some(Ok(discovered)) => merge_host(&mut merged, discovered.clone()),
+                Some(Err(warning)) => merged.warnings.push(warning.clone()),
+                None => {}
+            }
+        }
+        merged
     }
 }
 
@@ -272,8 +354,15 @@ impl SessionSource for SshHostsSource {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .retain(|host, _| hosts.contains(host));
+        self.cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain(|host, _| hosts.contains(host));
         if hosts.is_empty() {
             return Ok(SourceDiscovery::default());
+        }
+        if self.background {
+            return Ok(self.discover_in_background(&hosts, request));
         }
         let sources = hosts
             .iter()
@@ -294,60 +383,61 @@ impl SessionSource for SshHostsSource {
     }
 }
 
-/// Discover every host concurrently and merge the results. Each host keeps its
-/// own completed-history budget, exactly as one-source-per-host did, so adding
-/// a host never steals another host's completed rows.
+/// Ask one host and apply its own completed-history budget. Each host keeps
+/// its own budget, so adding a host never steals another host's completed
+/// rows.
+fn fetch_host(
+    source: &SshHostSource,
+    request: &DiscoveryRequest,
+) -> std::result::Result<SourceDiscovery, String> {
+    let label = source.label().to_owned();
+    let mut discovered = source
+        .discover_remote(request)
+        .map_err(|error| format!("{label}: {error:#}"))?;
+    let mut kept = std::mem::take(&mut discovered.kept);
+    if super::bound_completed_history(&mut discovered.sessions, &kept, request) {
+        discovered.warnings.push(format!(
+            "{label} completed history is limited to {} records for this refresh; increase --history-limit to load more",
+            request.history_limit.max(1)
+        ));
+    }
+    // The rows that survive each host's own budget are listed on purpose, so
+    // the engine-level budget over the merged list never drops one host's
+    // rows for another host's.
+    for session in &discovered.sessions {
+        if session.state == crate::domain::SessionState::Completed {
+            kept.insert(session.id.clone());
+        }
+    }
+    discovered.kept = kept;
+    Ok(discovered)
+}
+
+fn merge_host(merged: &mut SourceDiscovery, mut discovered: SourceDiscovery) {
+    merged.sessions.append(&mut discovered.sessions);
+    merged.warnings.append(&mut discovered.warnings);
+    merged.kept.extend(discovered.kept);
+}
+
+/// Discover every host concurrently and merge the results, waiting for all of
+/// them.
 fn aggregate_host_discoveries(
     sources: &[SshHostSource],
     request: &DiscoveryRequest,
 ) -> Result<SourceDiscovery> {
     let mut merged = SourceDiscovery::default();
     std::thread::scope(|scope| {
-        let results = sources
+        let workers = sources
             .iter()
-            .map(|source| {
-                scope.spawn(move || {
-                    let result = source.discover_remote(request);
-                    (source.label().to_owned(), result)
-                })
-            })
+            .map(|source| scope.spawn(move || fetch_host(source, request)))
             .collect::<Vec<_>>();
-        for worker in results {
-            let (label, result) = worker.join().unwrap_or_else(|_| {
-                (
-                    "SSH host".to_owned(),
-                    Err(anyhow::anyhow!("provider discovery panicked")),
-                )
-            });
-            match result {
-                Ok(mut discovered) => {
-                    let kept = std::mem::take(&mut discovered.kept);
-                    if super::bound_completed_history(
-                        &mut discovered.sessions,
-                        &kept,
-                        request,
-                    ) {
-                        discovered.warnings.push(format!(
-                            "{label} completed history is limited to {} records for this refresh; increase --history-limit to load more",
-                            request.history_limit.max(1)
-                        ));
-                    }
-                    // The rows that survive each host's own budget are listed
-                    // on purpose, so the engine-level budget over the merged
-                    // list never drops one host's rows for another host's.
-                    let mut kept = kept;
-                    for session in &discovered.sessions {
-                        if session.state == crate::domain::SessionState::Completed {
-                            kept.insert(session.id.clone());
-                        }
-                    }
-                    merged.sessions.append(&mut discovered.sessions);
-                    merged.warnings.append(&mut discovered.warnings);
-                    merged.kept.extend(kept);
-                }
-                Err(error) => merged
+        for worker in workers {
+            match worker.join() {
+                Ok(Ok(discovered)) => merge_host(&mut merged, discovered),
+                Ok(Err(warning)) => merged.warnings.push(warning),
+                Err(_) => merged
                     .warnings
-                    .push(format!("{label}: {error:#}")),
+                    .push("SSH host: provider discovery panicked".into()),
             }
         }
     });
@@ -472,10 +562,7 @@ pub fn save_ssh_targets(hosts: &BTreeSet<String>) -> Result<()> {
     save_ssh_targets_at(&default_ssh_targets_path()?, hosts)
 }
 
-pub fn save_ssh_targets_at(
-    path: &std::path::Path,
-    hosts: &BTreeSet<String>,
-) -> Result<()> {
+pub fn save_ssh_targets_at(path: &std::path::Path, hosts: &BTreeSet<String>) -> Result<()> {
     for host in hosts {
         validate_host(host)?;
     }
@@ -613,22 +700,17 @@ mod tests {
         assert_eq!(rows.len(), 2);
         let opencode = &rows[0];
         assert_eq!(opencode.id, "ssh:176:opencode:host:ses_one");
-        assert_eq!(
-            opencode.runtime,
-            Runtime::Ssh {
-                host: "176".into()
-            }
-        );
+        assert_eq!(opencode.runtime, Runtime::Ssh { host: "176".into() });
         assert_eq!(opencode.pid, None);
-        assert_eq!(
-            opencode.capabilities,
-            BTreeSet::from([Capability::Inspect])
-        );
+        assert_eq!(opencode.capabilities, BTreeSet::from([Capability::Inspect]));
         assert_eq!(opencode.name, "Fix the parser");
         assert_eq!(opencode.state, crate::domain::SessionState::Working);
 
         let claude = &rows[1];
-        assert_eq!(claude.id, "ssh:176:claude:host:11111111-2222-3333-4444-555555555555");
+        assert_eq!(
+            claude.id,
+            "ssh:176:claude:host:11111111-2222-3333-4444-555555555555"
+        );
         assert_eq!(
             claude.runtime,
             Runtime::Ssh {
@@ -636,10 +718,7 @@ mod tests {
             }
         );
 
-        assert_eq!(
-            discovered.warnings,
-            vec!["176: Docker: permission denied"]
-        );
+        assert_eq!(discovered.warnings, vec!["176: Docker: permission denied"]);
     }
 
     #[test]
@@ -768,10 +847,7 @@ mod tests {
 
         assert!(list.insert("176").unwrap());
         assert_eq!(list.hosts(), ["176".to_owned()].into_iter().collect());
-        assert_eq!(
-            load_ssh_targets_at(&registry).unwrap().hosts,
-            list.hosts()
-        );
+        assert_eq!(load_ssh_targets_at(&registry).unwrap().hosts, list.hosts());
         assert!(!list.insert("176").unwrap());
         assert!(list.insert("bad host").is_err());
         assert!(!list.remove("177").unwrap());
@@ -788,6 +864,79 @@ mod tests {
             .unwrap();
         assert!(discovered.sessions.is_empty());
         assert!(discovered.warnings.is_empty());
+    }
+
+    struct SlowRunner {
+        delay: Duration,
+        output: String,
+    }
+
+    impl CommandRunner for SlowRunner {
+        fn run(&self, _request: &CommandRequest) -> Result<CommandOutput> {
+            std::thread::sleep(self.delay);
+            Ok(CommandOutput {
+                status: 0,
+                stdout: self.output.clone().into_bytes(),
+                stderr: Vec::new(),
+            })
+        }
+    }
+
+    fn slow_hosts_source(delay: Duration, background: bool) -> SshHostsSource {
+        let source = SshHostsSource::new(
+            SshTargetList::enabled(
+                vec!["176".into()],
+                std::env::temp_dir().join("agentview-test-unused.json"),
+            ),
+            "ssh",
+        );
+        source.runners.lock().unwrap().insert(
+            "176".into(),
+            Arc::new(SlowRunner {
+                delay,
+                output: snapshot_fixture(),
+            }),
+        );
+        if background {
+            source.in_background()
+        } else {
+            source
+        }
+    }
+
+    #[test]
+    fn a_slow_host_does_not_delay_a_dashboard_refresh() {
+        let source = slow_hosts_source(Duration::from_millis(600), true);
+        let request = DiscoveryRequest::default();
+
+        let started = std::time::Instant::now();
+        let first = source.discover_with_warnings(&request).unwrap();
+        assert!(started.elapsed() < Duration::from_millis(300));
+        assert!(first.sessions.is_empty());
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let started = std::time::Instant::now();
+            let next = source.discover_with_warnings(&request).unwrap();
+            assert!(started.elapsed() < Duration::from_millis(300));
+            if next.sessions.len() == 2 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "remote rows never arrived"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    #[test]
+    fn one_shot_discovery_still_waits_for_the_host() {
+        let source = slow_hosts_source(Duration::from_millis(200), false);
+        let discovered = source
+            .discover_with_warnings(&DiscoveryRequest::default())
+            .unwrap();
+        assert_eq!(discovered.sessions.len(), 2);
     }
 
     fn completed_fixture(host: &str, count: usize) -> String {
