@@ -49,7 +49,9 @@ test('the visible dashboard ID routes to the same native session and operation a
   assert.equal(leased.session_id,nativeId);
   assert.equal(leased.text,args.text);
   await outbox.ack(writer,{operation_id:leased.operation_id,message_id:leased.message_id,status:'accepted'});
-  assert.equal((await rpc('message_status',{operation_id:args.operation_id})).delivery_confirmed,true);
+  const receipt=await rpc('message_status',{operation_id:args.operation_id});
+  assert.equal(receipt.status,'accepted');
+  assert.equal(receipt.delivery_confirmed,false);
   const read=await rpc('read_session',{session_id:listed.id});
   assert.equal(read.messages[0].text,'Synthetic prompt');
   for(const badId of [collision,'opencode:remote:'+nativeId,'opencode:host:ses_missing']) {

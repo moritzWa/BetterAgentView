@@ -39,11 +39,11 @@ test('every receipt status maps to one state, one honest line and a claim ceilin
 test('queued and accepted lines never claim delivery or completion',()=>{
   for(const mac_seen_recently of [true,false]) {
     const queued=deliveryView({status:'queued'},{mac_seen_recently}).say_to_owner;
-    assert.match(queued,/^Message saved[.].*automatically/);
+    assert.match(queued,/^Message saved for automatic pickup/);
     assert.doesNotMatch(queued,/not delivered|couldn.t deliver|undelivered|failed|the session has it|finished/i);
     if(!mac_seen_recently)assert.match(queued,/reconnects/);
   }
-  assert.equal(deliveryView({status:'accepted'}).say_to_owner,'The session has your message.');
+  assert.equal(deliveryView({status:'accepted'}).say_to_owner,'OpenCode queued your message for processing.');
   assert.equal(deliveryView({status:'accepted'},{}).claim_ceiling,'accepted');
   assert(ORDER[deliveryView({status:'queued'},{}).claim_ceiling]<ORDER[deliveryView({status:'accepted'},{}).claim_ceiling]);
 });
@@ -97,12 +97,12 @@ test('send with the Mac offline reports saved for automatic pickup and claims at
   const raw=await rpcRaw('send_session_message',input('delivery_offline_1'));
   assert(!raw.result.isError);const out=body(raw);
   assert.equal(out.delivery_state,'queued_mac_offline');assert.equal(out.claim_ceiling,'queued');assert.equal(out.status,'queued');
-  assert.equal(out.say_to_owner,'Message saved. Your Mac will pick it up automatically when it reconnects.');
+  assert.equal(out.say_to_owner,'Message saved for automatic pickup when your Mac reconnects.');
   assert.equal(body(await rpcRaw('message_status',{operation_id:out.operation_id})).say_to_owner,out.say_to_owner);
   macSeen=true;
 });
 
-test('after the Mac accepts it, status says the session has it but is not finished',async()=>{
+test('native acceptance without history does not confirm a user turn or completion',async()=>{
   const sent=await outbox.send(reader,{operation_id:'delivery_accepted_1',session_id:'ses_delivery',text:'Another approved text',base_cursor:100});
   for(const [operation_id,message_id] of [['delivery_offline_1','msg_agentvoice_delivery_offline_1'],[sent.operation_id,sent.message_id]]) {
     assert.equal((await outbox.lease(writer)).operation_id,operation_id);
@@ -110,6 +110,37 @@ test('after the Mac accepts it, status says the session has it but is not finish
   }
   const out=body(await rpcRaw('message_status',{operation_id:'delivery_accepted_1'}));
   assert.equal(out.delivery_state,'accepted_by_session');assert.equal(out.claim_ceiling,'accepted');assert.equal(out.completion_confirmed,false);
+  assert.equal(out.say_to_owner,'OpenCode queued your message for processing.');
+  assert.equal(out.delivery_confirmed,false);assert.equal(out.input_in_history,false);
+});
+
+test('status only reports the running turn when fresh evidence identifies an earlier turn',async()=>{
+  const args=input('delivery_busy_turn_1'),beforeEnqueue=Date.now()-1;
+  const receipt=await outbox.send(reader,args);
+  assert.equal((await outbox.lease(writer)).operation_id,args.operation_id);
+  await outbox.ack(writer,{operation_id:args.operation_id,message_id:receipt.message_id,status:'accepted'});
+  const now=Date.now();
+  const previous={session_id:args.session_id,status:'working',reason:null,updated_at:now,can_message:true,
+    health:'running',last_user_message_id:'msg_1',turn_started_at:beforeEnqueue-2000};
+  const snapshot={available:true,partial:false,checked_at:now,statuses:[previous]};
+  const check=async(runtime=snapshot)=>body(await rpcRaw('message_status',{operation_id:args.operation_id},{...gate,runtime:async()=>runtime}));
+  const busy=await check();
+  assert.equal(busy.status,'accepted');assert.equal(busy.claim_ceiling,'accepted');
+  assert.equal(busy.say_to_owner,'OpenCode accepted your message. At the last check it was queued behind the running turn.');
+  assert.equal(busy.delivery_confirmed,false);assert.equal(busy.completion_confirmed,false);
+  for(const runtime of [
+    {...snapshot,checked_at:beforeEnqueue},
+    {...snapshot,checked_at:now-60_000},
+    {...snapshot,partial:true},
+    {...snapshot,statuses:[{...previous,last_user_message_id:receipt.message_id}]},
+    {...snapshot,statuses:[{...previous,turn_started_at:now+1000}]},
+    {...snapshot,statuses:[{...previous,last_user_message_id:null}]},
+    {...snapshot,statuses:[{...previous,health:'unknown'}]},
+  ]) {
+    const result=await check(runtime);
+    assert.equal(result.say_to_owner,'OpenCode queued your message for processing.');
+    assert.equal(result.delivery_confirmed,false);
+  }
 });
 
 test('send returns the durable admission receipt without waiting for history or runtime',async()=>{
@@ -128,13 +159,14 @@ test('send returns the durable admission receipt without waiting for history or 
     calls.length=0;
     const raw=await rpcRaw('send_session_message',args,receiptGate);
     assert(!raw.result.isError,raw.result.content[0].text);const out=body(raw);
-    assert.equal(out.delivery_state,'accepted_by_session');assert.equal(out.delivery_confirmed,true);
+    assert.equal(out.delivery_state,'accepted_by_session');assert.equal(out.delivery_confirmed,false);
+    assert.equal(out.say_to_owner,'OpenCode queued your message for processing.');
     assert.equal(out.claim_ceiling,'accepted');assert.equal(out.next_action,null);
     assert(!('completion_confirmed' in out));assert.deepEqual(calls,expected);
   }
 });
 
-test('a failed receipt wait preserves the queued result and later status confirms delivery',async()=>{
+test('a failed receipt wait preserves the queued result and later status confirms admission',async()=>{
   const args=input('delivery_wait_unavailable_1');
   const raw=await rpcRaw('send_session_message',args,{...gate,waitReceipt:async()=>{throw new Error('unavailable');}});
   assert(!raw.result.isError);
