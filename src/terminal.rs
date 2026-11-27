@@ -388,6 +388,7 @@ pub fn run_dashboard(
         control.default_launch_provider(),
         control.launch_targets(),
     );
+    app.load_directory_groups()?;
     app.start_loading();
     if control.provider_io_enabled() && crate::onboarding::take_first_task().unwrap_or(false) {
         app.start_new_session(None);

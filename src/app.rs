@@ -365,6 +365,7 @@ pub struct App {
     pub update_available: Option<String>,
     pub work_only: bool,
     pub work_roots: crate::work_view::WorkRoots,
+    directory_groups: crate::directory_groups::DirectoryGroups,
     work_return: Option<WorkReturn>,
     pub scope_native_return: Option<String>,
     pub last_work_session: Option<String>,
@@ -539,6 +540,7 @@ impl App {
             update_available: None,
             work_only: false,
             work_roots: Default::default(),
+            directory_groups: Default::default(),
             work_return: None,
             scope_native_return: None,
             last_work_session: None,
@@ -2925,8 +2927,8 @@ impl App {
             let session = &self.snapshot.sessions[index];
             let raw = crate::session_tree::raw_opencode_id(&session.id)?;
             let parent = *by_raw_id.get(self.session_parents.get(raw)?.as_str())?;
-            (project_group_path(&self.snapshot.sessions[parent].cwd)
-                == project_group_path(&session.cwd))
+            (self.directory_group_path(&self.snapshot.sessions[parent])
+                == self.directory_group_path(session))
             .then_some(parent)
         };
         if !sessions.iter().any(|index| parent_of(*index).is_some()) {
@@ -2960,6 +2962,27 @@ impl App {
         })
     }
 
+    pub fn load_directory_groups(&mut self) -> anyhow::Result<()> {
+        self.directory_groups = crate::directory_groups::DirectoryGroups::load_default()?;
+        self.rebuild_group_cache();
+        Ok(())
+    }
+
+    pub(crate) fn directory_group_path(&self, session: &AgentSession) -> PathBuf {
+        if matches!(session.runtime, crate::domain::Runtime::Host) {
+            if let Some(path) = self.directory_groups.path(&session.cwd) {
+                return path.to_path_buf();
+            }
+        }
+        project_group_path(&session.cwd)
+    }
+
+    pub(crate) fn directory_group_label(&self, path: &Path) -> String {
+        self.directory_groups
+            .label(path)
+            .map_or_else(|| abbreviate_home(path), str::to_owned)
+    }
+
     pub(crate) fn directory_groups(&self) -> Vec<Group> {
         let needle = self.filter.to_ascii_lowercase();
         let mut paused = Vec::new();
@@ -2977,7 +3000,7 @@ impl App {
                 scheduled.push(index);
             } else {
                 groups
-                    .entry(project_group_path(&session.cwd))
+                    .entry(self.directory_group_path(session))
                     .or_default()
                     .push(index);
             }
@@ -3002,7 +3025,7 @@ impl App {
             let (sessions, depths) = self.arrange_tree(sessions);
             Group {
                 key: format!("cwd:{}", path.display()),
-                label: abbreviate_home(&path),
+                label: self.directory_group_label(&path),
                 sessions,
                 depths,
             }
@@ -6351,6 +6374,81 @@ mod tests {
 
         assert_eq!(app.activate(), AppAction::None);
         assert_eq!(app.selection, Some(SelectionKey::Session("two".into())));
+    }
+
+    #[test]
+    fn directory_aliases_share_one_label_without_changing_session_paths_or_open_ids() {
+        let root = tempfile::tempdir().unwrap();
+        let old = root.path().join("agentview");
+        let alias = root.path().join("betteragentview");
+        let worktree = root.path().join("agentview-topic");
+        let mut existing = session("existing", SessionState::Working);
+        existing.cwd = old.clone();
+        let mut nested = session("nested", SessionState::Working);
+        nested.cwd = old.join(".claude/worktrees/topic");
+        let mut separate = session("separate", SessionState::Working);
+        separate.cwd = worktree.clone();
+        let initial = vec![existing, nested, separate];
+        let mut app = app_with(initial.clone());
+        app.directory_groups = crate::directory_groups::DirectoryGroups::parse(
+            &serde_json::to_vec(&serde_json::json!({"groups":[{
+                "path":old,"aliases":[alias],"label":"BetterAgentView"
+            }]}))
+            .unwrap(),
+        )
+        .unwrap();
+        app.toggle_view();
+        assert_eq!(
+            app.groups()
+                .iter()
+                .filter(|g| g.label == "BetterAgentView")
+                .count(),
+            1
+        );
+        let mut new = session("new", SessionState::Working);
+        new.cwd = alias.join("src");
+        let mut sessions = initial;
+        sessions.push(new.clone());
+        app.replace_snapshot(SessionSnapshot {
+            sessions,
+            warnings: vec![],
+        });
+
+        assert_eq!(
+            app.groups().len(),
+            2,
+            "no alias group and no folded external worktree"
+        );
+        let group = app
+            .groups()
+            .iter()
+            .find(|g| g.label == "BetterAgentView")
+            .unwrap();
+        assert_eq!(group.key, format!("cwd:{}", old.display()));
+        assert_eq!(group.sessions.len(), 3);
+        for (id, cwd) in [("existing", old), ("new", new.cwd), ("separate", worktree)] {
+            app.selection = Some(SelectionKey::Session(id.into()));
+            assert_eq!(app.selected_session().unwrap().cwd, cwd);
+            assert_eq!(
+                app.activate(),
+                AppAction::Open {
+                    session_id: id.into()
+                }
+            );
+        }
+        for view in [ViewMode::Directory, ViewMode::Status] {
+            app.set_view_mode(view);
+            let captured = crate::dashboard_snapshot::capture(&app);
+            let old = captured
+                .sessions
+                .iter()
+                .find(|s| s.id == "existing")
+                .unwrap();
+            let new = captured.sessions.iter().find(|s| s.id == "new").unwrap();
+            assert_eq!(old.directory_label, "BetterAgentView");
+            assert_eq!(old.directory_id, new.directory_id);
+            assert_ne!(old.directory, new.directory);
+        }
     }
 
     #[test]

@@ -114,11 +114,11 @@ pub fn capture(app: &App) -> DashboardSnapshot {
             };
             let (directory_id, directory_path, directory_label) =
                 directories.get(index).cloned().unwrap_or_else(|| {
-                    let path = crate::app::project_group_path(&s.cwd);
+                    let path = app.directory_group_path(s);
                     (
                         format!("cwd:{}", path.display()),
                         path.to_string_lossy().into_owned(),
-                        crate::app::abbreviate_home(&path),
+                        app.directory_group_label(&path),
                     )
                 });
             sessions.push(DashboardSession {

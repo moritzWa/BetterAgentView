@@ -1436,6 +1436,7 @@ fn main() -> Result<()> {
                 .any(|warning| !warning.contains("history window"));
             let mut app =
                 agentview::app::App::with_completed_visibility(snapshot, request.include_completed);
+            app.load_directory_groups()?;
             app.set_paused(paused_sessions.paused());
             app.set_sort_keys(agentview::order::SessionOrder::load_default()?.sort_keys());
             if let Ok(links) = agentview::session_tree::ParentLinks::load_default() {

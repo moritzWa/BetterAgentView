@@ -956,3 +956,16 @@ They do not contain collected Codex structured answers. Copilot's registry does
 not preserve ACP connection authority or permission requests. Removal or repair
 has safety consequences; follow [troubleshooting and recovery](troubleshooting.md)
 instead of deleting state speculatively.
+
+### Local directory display groups
+
+To give local sessions from several paths one directory header, create
+`~/.config/agentview/directory-groups.json` (or use `$XDG_CONFIG_HOME`):
+
+```json
+{"groups":[{"path":"/home/me/Code/old-name","label":"ProjectName","aliases":["/home/me/Code/new-name"]}]}
+```
+
+Use absolute paths. The rule covers each path and its descendants. It changes
+only the overview; session paths, worktrees, and launch locations stay intact.
+Restart the dashboard to load changes.
