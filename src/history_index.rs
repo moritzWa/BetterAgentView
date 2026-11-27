@@ -13,6 +13,10 @@ use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 
 pub const REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
+/// Bump when the indexed content changes, so unchanged sessions are reindexed.
+/// 2: assistant text and tool calls that OpenCode now stores in `session_part`.
+const TOOL_TEXT_VERSION: i64 = 2;
+
 /// A picker text match. `distance` is the span of the tightest cluster of
 /// the query words; zero means the query itself appears as a substring.
 #[derive(Clone, Debug)]
@@ -686,14 +690,16 @@ impl HistoryIndex {
                     |r| r.get(0),
                 )
                 .optional()?;
-            if version != Some(1) {
-                // Reindex unchanged sessions too. This is only a derived cache;
-                // provider history is never modified and WAL readers keep the old snapshot.
-                tx.execute_batch(
-                    "DELETE FROM documents; DELETE FROM sessions;
+            if version != Some(TOOL_TEXT_VERSION) {
+                // Reindex unchanged sessions too, one at a time, newest first.
+                // The old documents keep answering searches until each session
+                // is replaced, and every finished session stays committed even
+                // if the dashboard exits before the whole pass is done.
+                tx.execute_batch(&format!(
+                    "UPDATE sessions SET updated='';
                     DELETE FROM meta WHERE key='refreshed';
-                    INSERT OR REPLACE INTO meta VALUES ('tool_text_version',1);",
-                )?;
+                    INSERT OR REPLACE INTO meta VALUES ('tool_text_version',{TOOL_TEXT_VERSION});"
+                ))?;
             }
         }
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
@@ -718,13 +724,24 @@ impl HistoryIndex {
             tx.commit()?;
             return Ok(true);
         }
+        // The setup above is committed. From here every session is its own
+        // transaction, so a long backfill is never lost to a restart.
+        tx.commit()?;
         let source = read_only(&self.source)?;
         source.busy_timeout(Duration::from_millis(100))?;
         let stop = cancelled.clone();
         source.progress_handler(1000, Some(move || stop.load(Ordering::Relaxed)));
         let v2 = crate::adapters::opencode_db::install_compatibility_views(&source)?;
+        // Newer OpenCode keeps assistant text and tool calls in session_part.
+        // The compatibility view only reads the message's own content array.
+        let has_session_part: bool = v2
+            && source.query_row(
+                "SELECT EXISTS(SELECT 1 FROM main.sqlite_master WHERE type='table' AND name='session_part')",
+                [],
+                |r| r.get(0),
+            )?;
         let versions = {
-            let mut q = tx.prepare("SELECT id, updated, root FROM sessions")?;
+            let mut q = db.prepare("SELECT id, updated, root FROM sessions")?;
             let rows = q.query_map([], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -746,13 +763,14 @@ impl HistoryIndex {
             )?;
             let legacy_query = if has_sequences {
                 "SELECT s.id, CAST(s.time_updated AS TEXT)||':'||COALESCE(CAST(e.seq AS TEXT),'0'),
-                        COALESCE(s.parent_id,s.id)
+                        COALESCE(s.parent_id,s.id), s.time_updated
                  FROM session s LEFT JOIN event_sequence e ON e.aggregate_id=s.id
                  ORDER BY s.time_updated DESC"
             } else {
                 "SELECT s.id, CAST(s.time_updated AS TEXT)||':'||
                         COALESCE((SELECT CAST(max(time_updated) AS TEXT) FROM part WHERE session_id=s.id),'0')||':'||
-                        (SELECT count(*) FROM part WHERE session_id=s.id), COALESCE(s.parent_id,s.id)
+                        (SELECT count(*) FROM part WHERE session_id=s.id), COALESCE(s.parent_id,s.id),
+                        s.time_updated
                  FROM session s ORDER BY s.time_updated DESC"
             };
             let query = if v2 {
@@ -766,12 +784,17 @@ impl HistoryIndex {
                 } else {
                     "0"
                 };
+                let part_version = if has_session_part {
+                    "||':'||(SELECT count(*)||'.'||COALESCE(max(time_updated),0) FROM main.session_part WHERE session_id=s.id)"
+                } else {
+                    ""
+                };
                 let mut query = format!(
                     "SELECT s.id, 'v2:'||s.time_updated||':'||{event_counter}||':'||
                             COALESCE((SELECT max(time_updated) FROM main.session_message WHERE session_id=s.id),0)||':'||
                             (SELECT count(*) FROM main.session_message WHERE session_id=s.id)||':'||
-                            COALESCE((SELECT max(seq) FROM main.session_message WHERE session_id=s.id),0),
-                            COALESCE(s.parent_id,s.id)
+                            COALESCE((SELECT max(seq) FROM main.session_message WHERE session_id=s.id),0){part_version},
+                            COALESCE(s.parent_id,s.id), s.time_updated
                      FROM main.session_v2 s"
                 );
                 let has_legacy: bool = source.query_row(
@@ -797,17 +820,21 @@ impl HistoryIndex {
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
                     r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
                 ))
             })?;
-            rows.collect::<rusqlite::Result<Vec<_>>>()?
+            let mut rows = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+            // Newest first, so what Moritz is looking for is searchable early.
+            rows.sort_by_key(|row| std::cmp::Reverse(row.3));
+            rows
         };
         // A nested subagent must restore the actual top-level conversation,
         // not an intermediate child that has no row in the restore picker.
         let ancestry: BTreeMap<_, _> = sessions
             .iter()
-            .map(|(id, _, parent)| (id.clone(), parent.clone()))
+            .map(|(id, _, parent, _)| (id.clone(), parent.clone()))
             .collect();
-        for (id, _, root) in &mut sessions {
+        for (id, _, root, _) in &mut sessions {
             let mut seen = BTreeSet::new();
             while let Some(parent) = ancestry.get(root) {
                 if parent == root {
@@ -820,75 +847,58 @@ impl HistoryIndex {
                 *root = parent.clone();
             }
         }
-        let live: BTreeSet<_> = sessions.iter().map(|s| s.0.as_str()).collect();
-        for id in versions.keys().filter(|id| !live.contains(id.as_str())) {
-            tx.execute("DELETE FROM documents WHERE source=?1", [id])?;
-            tx.execute("DELETE FROM sessions WHERE id=?1", [id])?;
+        {
+            let live: BTreeSet<_> = sessions.iter().map(|s| s.0.as_str()).collect();
+            let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            for id in versions.keys().filter(|id| !live.contains(id.as_str())) {
+                tx.execute("DELETE FROM documents WHERE source=?1", [id])?;
+                tx.execute("DELETE FROM sessions WHERE id=?1", [id])?;
+            }
+            tx.commit()?;
         }
         let mut changed = 0;
-        for (id, updated, root) in sessions {
+        for (id, updated, root, _) in sessions {
             if cancelled.load(Ordering::Relaxed) {
                 bail!("history indexing cancelled");
             }
             if versions.get(&id) == Some(&(updated.clone(), root.clone())) {
                 continue;
             }
-            tx.execute("DELETE FROM documents WHERE source=?1", [&id])?;
-            // Keep each read snapshot short, so a backfill does not pin the
-            // OpenCode WAL for its entire duration. The earlier metadata
-            // version is conservative if this session changes during a scan.
-            let query = "SELECT p.data,p.message_id,COALESCE(m.time_created,p.time_created),
-                COALESCE(json_extract(m.data,'$.role'),'unknown')
-                FROM part p LEFT JOIN message m ON m.id=p.message_id
-                WHERE p.session_id=?1 AND json_extract(p.data,'$.type') IN ('text','tool')
-                AND json_extract(p.data,'$.synthetic') IS NOT 1
-                ORDER BY COALESCE(m.time_created,p.time_created),p.message_id,p.id";
-            // Older minimal stores may not have message records. Their text is
-            // still searchable; mark role unknown rather than inventing metadata.
-            let mut q = source.prepare(query).or_else(|_| {
-                source.prepare(
-                    "SELECT data,id,time_created,'unknown' FROM part
-                 WHERE session_id=?1 AND json_extract(data,'$.type') IN ('text','tool')
-                 AND json_extract(data,'$.synthetic') IS NOT 1
-                  ORDER BY time_created,id",
-                )
-            })?;
-            let mut rows = q.query([&id])?;
-            while let Some(row) = rows.next()? {
-                if cancelled.load(Ordering::Relaxed) {
-                    bail!("history indexing cancelled");
+            let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let indexed = index_session(&tx, &source, &id, &root, has_session_part, &cancelled);
+            match indexed {
+                Ok(()) => {
+                    tx.execute(
+                        "INSERT OR REPLACE INTO sessions VALUES (?1, ?2, ?3)",
+                        params![id, updated, root],
+                    )?;
+                    tx.commit()?;
                 }
-                let data: String = row.get(0)?;
-                let part: serde_json::Value = serde_json::from_str(&data)?;
-                let text = searchable_part_text(&part);
-                if text.trim().is_empty() {
-                    continue;
+                Err(error) => {
+                    drop(tx);
+                    if cancelled.load(Ordering::Relaxed) {
+                        return Err(error);
+                    }
+                    // One unreadable session must not stop every other one
+                    // from being searchable. Its earlier documents stay, and
+                    // it is tried again when it next changes.
+                    crate::perf!("history-index", "skipped session {id}: {error:#}");
+                    db.execute(
+                        "INSERT OR REPLACE INTO sessions VALUES (?1, ?2, ?3)",
+                        params![id, updated, root],
+                    )?;
                 }
-                let message: Option<String> = row.get(1)?;
-                let created: Option<u64> = row.get(2)?;
-                let role: String = row.get(3)?;
-                tx.execute(
-                    "INSERT INTO documents(source,root,text,message_id,created_ms,role) VALUES (?1,?2,?3,?4,?5,?6)",
-                    params![id,root,text,message,created,role],
-                )?;
             }
-            drop(rows);
-            drop(q);
-            tx.execute(
-                "INSERT OR REPLACE INTO sessions VALUES (?1, ?2, ?3)",
-                params![id, updated, root],
-            )?;
             changed += 1;
             // Yield between sessions rather than competing continuously with
             // interactive work, especially during the one-time backfill.
             std::thread::sleep(Duration::from_millis(5));
         }
         let finished = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
-        tx.execute(
+        db.execute(
             "INSERT OR REPLACE INTO meta VALUES ('refreshed', ?1)",
             [finished],
         )?;
-        tx.commit()?;
         crate::perf!("history-index", "updated_sessions={changed}");
         Ok(true)
     }
@@ -970,6 +980,92 @@ impl HistoryIndex {
     }
 }
 
+/// Replaces one session's documents. The caller owns the transaction, so a
+/// failure or cancellation leaves the session's earlier documents untouched.
+fn index_session(
+    tx: &rusqlite::Transaction<'_>,
+    source: &Connection,
+    id: &str,
+    root: &str,
+    has_session_part: bool,
+    cancelled: &AtomicBool,
+) -> Result<()> {
+    fn copy_parts(
+        tx: &rusqlite::Transaction<'_>,
+        statement: &mut rusqlite::Statement<'_>,
+        id: &str,
+        root: &str,
+        cancelled: &AtomicBool,
+    ) -> Result<()> {
+        let mut rows = statement.query([id])?;
+        while let Some(row) = rows.next()? {
+            if cancelled.load(Ordering::Relaxed) {
+                bail!("history indexing cancelled");
+            }
+            let data: String = row.get(0)?;
+            let Ok(part) = serde_json::from_str::<serde_json::Value>(&data) else {
+                continue;
+            };
+            let text = searchable_part_text(&part);
+            if text.trim().is_empty() {
+                continue;
+            }
+            let message: Option<String> = row.get(1)?;
+            let created: Option<u64> = row.get(2)?;
+            let role: String = row.get(3)?;
+            tx.execute(
+                "INSERT INTO documents(source,root,text,message_id,created_ms,role) VALUES (?1,?2,?3,?4,?5,?6)",
+                params![id, root, text, message, created, role],
+            )?;
+        }
+        Ok(())
+    }
+    tx.execute("DELETE FROM documents WHERE source=?1", [id])?;
+    // Keep each read snapshot short, so a backfill does not pin the
+    // OpenCode WAL for its entire duration. The earlier metadata
+    // version is conservative if this session changes during a scan.
+    let query = "SELECT p.data,p.message_id,COALESCE(m.time_created,p.time_created),
+        COALESCE(json_extract(m.data,'$.role'),'unknown')
+        FROM part p LEFT JOIN message m ON m.id=p.message_id
+        WHERE p.session_id=?1 AND json_extract(p.data,'$.type') IN ('text','tool')
+        AND json_extract(p.data,'$.synthetic') IS NOT 1
+        ORDER BY COALESCE(m.time_created,p.time_created),p.message_id,p.id";
+    // Older minimal stores may not have message records. Their text is
+    // still searchable; mark role unknown rather than inventing metadata.
+    let mut q = source.prepare(query).or_else(|_| {
+        source.prepare(
+            "SELECT data,id,time_created,'unknown' FROM part
+         WHERE session_id=?1 AND json_extract(data,'$.type') IN ('text','tool')
+         AND json_extract(data,'$.synthetic') IS NOT 1
+          ORDER BY time_created,id",
+        )
+    })?;
+    copy_parts(tx, &mut q, id, root, cancelled)?;
+    if has_session_part {
+        let mut q = source.prepare(
+            "SELECT p.data,p.message_id,m.time_created,'assistant'
+             FROM main.session_part p JOIN main.session_message m ON m.id=p.message_id
+             WHERE p.session_id=?1 AND p.type IN ('text','tool')
+             AND COALESCE(json_array_length(m.data,'$.content'),0)=0
+             ORDER BY m.time_created,p.message_id,p.ordinal",
+        )?;
+        copy_parts(tx, &mut q, id, root, cancelled)?;
+    }
+    Ok(())
+}
+
+/// Characters of a tool call's arguments, and of its result, that are indexed.
+/// Tool results are most of OpenCode's history (page dumps, file reads). The
+/// start of each says what the call was about, at a fraction of the index size.
+const TOOL_TEXT_LIMIT: usize = 1500;
+
+fn clip(text: &str, limit: usize) -> String {
+    match text.char_indices().nth(limit) {
+        Some((end, _)) => text[..end].to_owned(),
+        None => text.to_owned(),
+    }
+}
+
 /// Include the actual tool arguments (including Code Mode source) and textual
 /// results, not opaque images, provider metadata, reasoning or injected context.
 fn searchable_part_text(part: &serde_json::Value) -> String {
@@ -999,22 +1095,26 @@ fn searchable_part_text(part: &serde_json::Value) -> String {
                 texts.push(name.to_owned());
             }
             let state = &part["state"];
-            input_text(&state["input"], &mut texts);
+            let mut input = Vec::new();
+            input_text(&state["input"], &mut input);
+            texts.push(clip(&input.join("\n"), TOOL_TEXT_LIMIT));
             // V1 uses output; V2 uses typed content blocks.
+            let mut output = Vec::new();
             for field in ["output", "error"] {
                 if let Some(text) = state[field].as_str() {
-                    texts.push(text.to_owned());
+                    output.push(text.to_owned());
                 }
             }
             if let Some(content) = state["content"].as_array() {
                 for block in content {
                     if block["type"] == "text" {
                         if let Some(text) = block["text"].as_str() {
-                            texts.push(text.to_owned());
+                            output.push(text.to_owned());
                         }
                     }
                 }
             }
+            texts.push(clip(&output.join("\n"), TOOL_TEXT_LIMIT));
             texts.join("\n")
         }
         _ => String::new(),
@@ -1652,7 +1752,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn failed_refresh_rolls_back_and_never_modifies_the_source_schema() {
+    fn a_broken_session_is_skipped_and_never_modifies_the_source_schema() {
         let (_dir, index) = fixture();
         refresh(&index);
         make_due(&index);
@@ -1663,13 +1763,73 @@ pub(crate) mod tests {
         source
             .execute("UPDATE session SET time_updated=2 WHERE id='ses_chat'", [])
             .unwrap();
-        assert!(index.refresh(Arc::new(AtomicBool::new(false))).is_err());
+        source
+            .execute("UPDATE session SET time_updated=3 WHERE id='child'", [])
+            .unwrap();
+        source
+            .execute(
+                "UPDATE part SET data='{\"type\":\"text\",\"text\":\"child changed afterwards\"}' WHERE id='p4'",
+                [],
+            )
+            .unwrap();
+        assert!(index.refresh(Arc::new(AtomicBool::new(false))).unwrap());
         assert_eq!(index.search("upload").unwrap().len(), 1);
+        assert!(index
+            .search("child changed afterwards")
+            .unwrap()
+            .contains_key("opencode:host:ses_chat"));
         let schema_count: i64 = source.query_row(
             "SELECT count(*) FROM sqlite_master WHERE name IN ('documents','messages_fts','meta','sessions') OR type='trigger'",
             [], |r| r.get(0),
         ).unwrap();
         assert_eq!(schema_count, 0);
+    }
+
+    #[test]
+    fn opencode_part_table_text_and_tool_calls_are_searchable() {
+        let (_dir, index) = v2_fixture(false, false);
+        let source = Connection::open(&index.source).unwrap();
+        source
+            .execute_batch(
+                r#"CREATE TABLE session_part(message_id TEXT, session_id TEXT, ordinal INTEGER,
+                    type TEXT, call_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
+                CREATE INDEX session_part_session_message_idx ON session_part(session_id, message_id, ordinal);
+                INSERT INTO session_message VALUES
+                    ('split', 'ses_v2', 'assistant', 8, 50, 50, '{"content":[]}');
+                INSERT INTO session_part VALUES
+                    ('split','ses_v2',0,'reasoning',NULL,50,50,'{"type":"reasoning","text":"reasoningsplitnoise"}'),
+                    ('split','ses_v2',1,'text',NULL,50,50,'{"type":"text","text":"David proposes a seventy thirty commission split"}'),
+                    ('split','ses_v2',2,'tool',NULL,50,50,'{"type":"tool","name":"execute","state":{"status":"completed","input":{"code":"Vorschlag fuer die Testphase"},"content":[{"type":"text","text":"sent to the friend"}]}}');"#,
+            )
+            .unwrap();
+        assert!(refresh(&index));
+        for query in [
+            "commission split",
+            "Vorschlag fuer die Testphase",
+            "sent to the friend",
+        ] {
+            assert!(
+                index
+                    .search(query)
+                    .unwrap()
+                    .contains_key("opencode:host:ses_v2"),
+                "{query}"
+            );
+        }
+        assert!(index.search("reasoningsplitnoise").unwrap().is_empty());
+        // New parts arriving later are noticed even though no message changed.
+        source
+            .execute(
+                "INSERT INTO session_part VALUES('split','ses_v2',3,'text',NULL,60,60,'{\"type\":\"text\",\"text\":\"a late streamed paragraph\"}')",
+                [],
+            )
+            .unwrap();
+        make_due(&index);
+        assert!(refresh(&index));
+        assert!(index
+            .search("late streamed paragraph")
+            .unwrap()
+            .contains_key("opencode:host:ses_v2"));
     }
 
     #[test]
@@ -1734,6 +1894,58 @@ pub(crate) mod tests {
             refresh(&index);
             assert!(index.search("northstar").unwrap().is_empty());
             assert!(index.file_sessions().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    #[ignore = "read-only real history benchmark into a temp index; set AGENTVIEW_INDEX_SOURCE and AGENTVIEW_INDEX_SECONDS"]
+    fn real_history_backfill_throughput() {
+        lower_worker_priority();
+        let source = PathBuf::from(std::env::var_os("AGENTVIEW_INDEX_SOURCE").unwrap());
+        let seconds: u64 = std::env::var("AGENTVIEW_INDEX_SECONDS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60);
+        let dir = tempfile::tempdir().unwrap();
+        let index = HistoryIndex {
+            source,
+            path: dir.path().join("index.db"),
+            provider: None,
+        };
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let stop = cancelled.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(seconds));
+            stop.store(true, Ordering::Relaxed);
+        });
+        let start = Instant::now();
+        let result = index.refresh(cancelled);
+        let db = Connection::open(&index.path).unwrap();
+        let (sessions, documents, chars): (i64, i64, i64) = (
+            db.query_row("SELECT count(*) FROM sessions WHERE updated!=''", [], |r| {
+                r.get(0)
+            })
+            .unwrap(),
+            db.query_row("SELECT count(*) FROM documents", [], |r| r.get(0))
+                .unwrap(),
+            db.query_row(
+                "SELECT COALESCE(sum(length(text)),0) FROM documents",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap(),
+        );
+        let size = std::fs::metadata(&index.path).unwrap().len()
+            + std::fs::metadata(index.path.with_extension("db-wal"))
+                .map(|m| m.len())
+                .unwrap_or(0);
+        println!(
+            "after {:?}: result_ok={} sessions={sessions} documents={documents} text_chars={chars} index_bytes={size}",
+            start.elapsed(),
+            result.is_ok()
+        );
+        for query in ["Testphase", "brokerage", "Taurat"] {
+            println!("{query}: {:?}", index.search(query).map(|m| m.len()));
         }
     }
 
