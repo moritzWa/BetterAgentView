@@ -106,6 +106,15 @@ test('the Worker reports phase durations in Server-Timing without any text',asyn
   assert.equal(diagnostic.state,'fresh');assert.equal(diagnostic.session_count,5);
   assert.equal(diagnostic.snapshot_stored_at,diagnostic.runtime_stored_at);
   assert.deepEqual(diagnostic.connector,trace);assert(!JSON.stringify(diagnostic).includes(dashboard.sessions[0].title));
+  const list=await app.fetch(new Request('https://bridge.invalid/mcp',{method:'POST',headers:{authorization:`Bearer ${readerToken}`,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:3,method:'tools/call',params:{name:'list_visible_sessions',arguments:{}}})}),env);
+  const listHeader=list.headers.get('server-timing');
+  for(const phase of ['fresh_wait','visible_snapshot','visible_context','visible_serialize'])assert(listHeader.includes(phase+';dur='),listHeader);
+  assert(listHeader.includes('visible_snapshot_state;desc="fresh"'));
+  assert(!listHeader.includes('db_tx;'),'one statement retrieves message previews');
+  const listReply=await list.json();assert(!listReply.result.isError,listReply.result.content[0].text);
+  const text=listReply.result.content[0].text;
+  assert(listHeader.includes(`visible_payload_bytes;desc="${Buffer.byteLength(text)}"`));
+  assert(!listHeader.includes(dashboard.sessions[0].title));
 });
 
 // The Neon driver returns bigint columns as strings; PGlite returns numbers. The

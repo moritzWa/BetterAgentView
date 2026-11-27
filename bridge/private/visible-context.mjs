@@ -16,9 +16,8 @@ export async function addVisibleContext({db,principal,runtime,freshness},view) {
  const selected=supported.slice(0,Math.floor(CONTEXT_CHARACTERS/(MESSAGES*MESSAGE_BUDGET)));
  const budget=MESSAGE_BUDGET;
  const ids=new Set(selected.map(s=>s.id));
- const contexts=selected.length?await db.transaction(async tx=>{
-  await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-   return (await tx.query(`SELECT s.session_id,s.synced_at,
+ // A single SELECT already reads one consistent PostgreSQL snapshot.
+ const contexts=selected.length?(await db.query(`SELECT s.session_id,s.synced_at,
    (SELECT m.message_id FROM av_messages m WHERE m.owner_id=s.owner_id AND m.device_id=s.device_id AND m.database_epoch=s.database_epoch
     AND m.session_id=s.session_id AND m.generation=s.generation AND m.role='user'
     AND ((s.state->>'visible_before') IS NULL OR m.message_order<(s.state->>'visible_before')::bigint)
@@ -37,8 +36,7 @@ export async function addVisibleContext({db,principal,runtime,freshness},view) {
    FROM av_sessions s WHERE s.owner_id=$1 AND s.device_id=$2 AND s.database_epoch=$3
     AND s.session_id=ANY($4::text[]) AND s.cursor IS NOT NULL
     AND (s.state->>'deleted')::boolean=false AND (s.state->>'archived')::boolean=false`,
-   [principal.owner_id,principal.device_id,principal.database_epoch,selected.map(s=>s.session_id),budget])).rows;
- }):[];
+   [principal.owner_id,principal.device_id,principal.database_epoch,selected.map(s=>s.session_id),budget])).rows:[];
  const byId=new Map(contexts.map(c=>[c.session_id,c])),native=new Map((runtime.statuses??[]).map(s=>[s.session_id,s]));
  for(const session of sessions) {
   const supported=session.id===`opencode:host:${session.session_id}`;

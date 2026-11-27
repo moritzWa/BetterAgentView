@@ -38,7 +38,7 @@ test('native-only writes retain the last dashboard for that source and mark it s
     put:async (entries,value)=>{for(const [key,item] of typeof entries==='string'?[[entries,value]]:Object.entries(entries))map.set(key,structuredClone(item));},transaction:async fn=>fn(storage)};
   const gate=gateClient({idFromName:()=>0,get:()=>({fetch:(url,init)=>new WakeGate({storage}).fetch(new Request(url,init))})},'owner');
   const principal={owner_id:'owner',device_id:'d',database_epoch:'e'},source='d|e';
-  const db={transaction:async fn=>fn({query:async()=>({rows:[]})})};
+  const db={query:async()=>({rows:[]})};
   await gate.enroll({...principal,token_hash:'hash',expires_at:Date.now()+60_000});
   const native={available:true,partial:false,statuses:[{session_id:'history-only',status:'done'}]};
   const list=args=>listVisibleSessions({db,gate,principal},args);
@@ -83,10 +83,54 @@ test('only fresh stalled/decision Working rows join the review queue, before Pro
   }
   assert.match(REVIEW_RULES,/Never ask whether to close/);
 });
+test('cached visible list has a short wait, but first snapshot and other callers keep the bootstrap budget',async t=>{
+  const now=Date.now();
+  t.mock.timers.enable({apis:['Date','setTimeout'],now});
+  const principal={owner_id:'owner',device_id:'d',database_epoch:'e'},source='d|e';
+  const metaKey='runtime_meta:'+source;
+  const map=new Map([['last_seen:'+source,now],['runtime_checked:'+source,now-40_000]]);
+  const storage={get:async key=>Array.isArray(key)?new Map():map.get(key),put:async values=>{for(const [k,v] of Object.entries(values))map.set(k,v);},transaction:async fn=>fn(storage)};
+  const object=new WakeGate({storage}),gate=gateClient({idFromName:()=>0,get:()=>({fetch:(url,init)=>object.fetch(new Request(url,init))})},'owner');
+  const db={query:async()=>({rows:[]})};
+  const flush=()=>new Promise(resolve=>setImmediate(resolve));
+  const list=()=>listVisibleSessions({db,gate,principal},{});
+
+  let firstDone=false;
+  const first=list().then(result=>{firstDone=true;return result;});
+  await flush();
+  t.mock.timers.tick(1500);
+  await flush();
+  assert.equal(firstDone,false,'the wait for the first snapshot is not shortened');
+  map.set(metaKey,{...runtime,checked_at:Date.now(),dashboard:{...dashboard,captured_at:Date.now()}});
+  map.set('runtime_checked:'+source,Date.now());
+  await gate.activity(source); // Wakes the pending read as a production upload does.
+  const fresh=await first;
+  assert.equal(fresh.counts.total,5);
+  assert.doesNotMatch(fresh.warning??'',/last observed/);
+
+  t.mock.timers.tick(40_000);
+  const cached=list();
+  await flush();
+  t.mock.timers.tick(1500);
+  const fallback=await cached;
+  assert.deepEqual(fallback.counts,fresh.counts);
+  assert.match(fallback.warning,/last observed [(]42 seconds ago[)]/);
+  assert.equal(map.get(metaKey).dashboard.captured_at,now+1500);
+
+  let otherDone=false;
+  const other=gate.activity(source,true,'runtime').then(()=>{otherDone=true;});
+  await flush();
+  t.mock.timers.tick(1500);
+  await flush();
+  assert.equal(otherDone,false);
+  t.mock.timers.tick(6500);
+  await other;
+});
+
 test('inventory stays UI-owned; history enrichment only queries the selected directory IDs',async()=>{
   const fresh={...runtime,checked_at:Date.now(),dashboard:{...dashboard,captured_at:Date.now()}};
   let selected;
-  const db={transaction:async fn=>fn({query:async(sql,args)=>{if(args)selected=args;return {rows:[]};}})};
+  const db={query:async(sql,args)=>{assert.match(sql,/^SELECT /);assert.equal(selected,undefined,'one query suffices');selected=args;return {rows:[]};}};
   const result=await listVisibleSessions({db,principal:{owner_id:'owner',device_id:'d',database_epoch:'e'},gate:{activity:async()=>({mac_seen_recently:true}),runtime:async()=>fresh}},{directory:'/work'});
   assert.equal(result.counts.total,4);
   assert.deepEqual(selected.slice(0,3),['owner','d','e']);
@@ -132,7 +176,7 @@ test('overview context has a shared Unicode budget and never leaks a matching ID
  const rows=Array.from({length:400},(_,i)=>({...dashboard.sessions[0],id:`opencode:host:s${i}`,session_id:`s${i}`}));
  rows.push({...rows[0],id:'codex:host:s0',provider:'Codex'});
  const view=visibleView({...runtime,dashboard:{...dashboard,sessions:rows}},{mac_seen_recently:true},100001);
- const db={transaction:async fn=>fn({query:async(sql,args)=>({rows:args?args[3].map(session_id=>({session_id,synced_at:new Date(100000),recent_messages:Array.from({length:2},(_,i)=>({message_id:`m${i}`,message_order:i,role:i%2?'assistant':'user',total_characters:10000,text_head:'🧪'.repeat(args[4])}))})):[]})})};
+ const db={query:async(sql,args)=>({rows:args?args[3].map(session_id=>({session_id,synced_at:new Date(100000),recent_messages:Array.from({length:2},(_,i)=>({message_id:`m${i}`,message_order:i,role:i%2?'assistant':'user',total_characters:10000,text_head:'🧪'.repeat(args[4])}))})):[]})};
  const result=await addVisibleContext({db,principal:{owner_id:'o',device_id:'d',database_epoch:'e'},runtime,freshness:{}},view);
  const sessions=result.directories.flatMap(d=>[...d.sessions,...d.working]);
  const characters=sessions.flatMap(s=>s.recent_messages).reduce((n,m)=>n+[...(m.text??'')].length,0);

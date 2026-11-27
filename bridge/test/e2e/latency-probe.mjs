@@ -4,6 +4,9 @@
  * freshness flags only, never message text.
  *   node latency-probe.mjs                         # default call set, 6 rounds
  *   ROUNDS=10 CALLS=search_history,session_brief node latency-probe.mjs
+ *   VISIBLE_ONLY=1 node latency-probe.mjs           # list and snapshot diagnostics only
+ *   VISIBLE_ONLY=1 DIRECTORY=/exact/path VOICE_START_MS=1795735348920 node latency-probe.mjs
+ *   VISIBLE_ONLY=1 IDLE_FIRST=1 node latency-probe.mjs # first call after 5.5 minutes of this probe being idle
  *   IDLE_FIRST=1 node latency-probe.mjs            # also time the first call after 5.5 min idle
  *   TOKENIZER=/path/to/node_modules/gpt-tokenizer node latency-probe.mjs   # exact o200k token counts
  */
@@ -29,7 +32,7 @@ if (process.env.TOKENIZER) {
 // Server-Timing: connect;dur=51.2;desc="n=1", auth;dur=8.1;desc="n=1", ... (present once the Worker emits it)
 const parseTiming = header => Object.fromEntries((header ?? '').split(/,\s*/).filter(Boolean).map(part => {
   const [name, ...rest] = part.split(';'), dur = rest.find(x => x.startsWith('dur='));
-  return [name, dur ? Math.round(Number(dur.slice(4))) : null];
+  return dur ? [name, Number(dur.slice(4))] : [name, rest.find(x => x.startsWith('desc='))?.slice(6, -1) ?? null];
 }));
 let nextId = 1;
 async function post(body, extra = {}) {
@@ -51,17 +54,39 @@ async function call(name, args) {
 }
 const pct = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
 const stat = xs => ({n: xs.length, min: Math.min(...xs), p50: pct(xs, .5), p90: pct(xs, .9), max: Math.max(...xs)});
-const phaseMedians = rs => { const names = new Set(rs.flatMap(r => Object.keys(r.phases ?? {}))); return names.size ? Object.fromEntries([...names].map(n => [n, pct(rs.map(r => r.phases?.[n] ?? 0), .5)])) : null; };
+const phaseMedians = rs => { const names = new Set(rs.flatMap(r => Object.keys(r.phases ?? {}).filter(n => typeof r.phases[n] === 'number'))); return names.size ? Object.fromEntries([...names].map(n => [n, pct(rs.map(r => r.phases?.[n]).filter(n => typeof n === 'number'), .5)])) : null; };
 const fresh = v => v ? {history_fresh: v.history_fresh, history_age_ms: v.history_age_ms, mac_seen_recently: v.mac_seen_recently, retry_after_ms: v.retry_after_ms, server_timing: v.timing_ms, digest_timing: v.digest?.timing} : {};
 
-try {
-  const url = execFileSync('neonctl', ['connection-string', '--project-id', 'frosty-pond-48075355', '--role-name', 'neondb_owner', '--pooled'], {encoding: 'utf8', timeout: 30_000}).trim();
-  db = await openDatabase(url);
-  const primary = (await db.query('SELECT device_id,database_epoch FROM av_owner_source WHERE owner_id=$1', [owner])).rows[0];
-  assert(primary, 'no paired source');
-  hash = await digest(reader);
-  await db.query('INSERT INTO av_credentials(token_hash,owner_id,device_id,database_epoch,audience,expires_at,scopes) VALUES($1,$2,$3,$4,$5,$6,$7)',
-    [hash, owner, primary.device_id, primary.database_epoch, 'read', Date.now() + 45 * 60_000, 'history:read']);
+async function visibleProbe() {
+  const samples = [];
+  for (let i = 0; i < rounds; i++) {
+    const r = await call('list_visible_sessions', process.env.DIRECTORY ? {directory: process.env.DIRECTORY} : {});
+    assert(r.value && !r.error, 'list_visible_sessions did not return a list');
+    const {ms, ttfb, bytes, payload_chars, tokens, cf, phases, value} = r;
+    const freshness = value.counts === null ? 'missing' : /stale or partial/i.test(value.warning ?? '') ? 'stale' : 'fresh';
+    if (phases.visible_snapshot_state) {
+      assert.equal(phases.visible_snapshot_state, freshness, 'Snapshot timing and list freshness warning disagree');
+      assert(Number(phases.visible_payload_bytes) > 0, 'Expected payload size in Server-Timing');
+    }
+    samples.push(r);
+    console.log(JSON.stringify({label: 'list_visible_sessions', i, ms, ttfb, bytes, payload_chars, tokens, tokenizer, cf, phases, total: value.counts?.total ?? null, freshness}));
+    if (i + 1 < rounds) await new Promise(resolve => setTimeout(resolve, gapMs));
+  }
+  const voiceStart = Number(process.env.VOICE_START_MS);
+  if (Number.isFinite(voiceStart)) {
+    const response = await fetch(base + '/v1/timings?hours=24', {headers: {authorization: `Bearer ${reader}`}, signal: AbortSignal.timeout(30_000)});
+    assert.equal(response.status, 200, 'Could not fetch Worker call timings');
+    const {calls} = await response.json();
+    console.log(JSON.stringify({label: 'worker_calls_near_voice_timestamp', calls: calls.filter(c => c.tool === 'list_visible_sessions' && Math.abs(c.t - voiceStart) < 15_000)}));
+  }
+  const diagnostic = await call('snapshot_diagnostics', {});
+  assert(diagnostic.value && !diagnostic.error, 'snapshot_diagnostics unavailable');
+  console.log(JSON.stringify({label: 'snapshot_diagnostics', ...diagnostic.value}));
+  const warm = samples.slice(1);
+  if (warm.length) console.log(JSON.stringify({label: 'list_visible_sessions_after_first', ms: stat(warm.map(r => r.ms)), phases_p50: phaseMedians(warm)}));
+}
+
+async function generalProbe() {
 
   // Protocol-level costs every conversation pays.
   const init = await post({jsonrpc: '2.0', id: nextId++, method: 'initialize', params: {protocolVersion: '2025-06-18', capabilities: {}, clientInfo: {name: 'latency-probe', version: '1'}}});
@@ -130,6 +155,23 @@ try {
     console.log(JSON.stringify({label, scenario: 'warm_back_to_back', errors: rs.length - ok.length, ms: stat(rs.map(r => r.ms)), bytes: ok.at(-1)?.bytes, payload_chars: ok.at(-1)?.payload_chars, tokens: ok.at(-1)?.tokens,
       history_fresh_rate: ok.filter(r => r.value?.history_fresh).length + '/' + ok.length, last_server_timing: fresh(ok.at(-1)?.value).server_timing ?? null, phases_p50: phaseMedians(rs)}));
   }
+}
+
+try {
+  if (process.env.VISIBLE_ONLY === '1' && process.env.IDLE_FIRST) {
+    // Run before minting the credential and without MCP calls of our own.
+    // Other connector use can still warm the Mac; inspect the first sample.
+    await new Promise(resolve => setTimeout(resolve, 5.5 * 60_000));
+  }
+  const url = execFileSync('neonctl', ['connection-string', '--project-id', 'frosty-pond-48075355', '--role-name', 'neondb_owner', '--pooled'], {encoding: 'utf8', timeout: 30_000}).trim();
+  db = await openDatabase(url);
+  const primary = (await db.query('SELECT device_id,database_epoch FROM av_owner_source WHERE owner_id=$1', [owner])).rows[0];
+  assert(primary, 'no paired source');
+  hash = await digest(reader);
+  await db.query('INSERT INTO av_credentials(token_hash,owner_id,device_id,database_epoch,audience,expires_at,scopes) VALUES($1,$2,$3,$4,$5,$6,$7)',
+    [hash, owner, primary.device_id, primary.database_epoch, 'read', Date.now() + (process.env.VISIBLE_ONLY === '1' ? 5 : 45) * 60_000, 'history:read']);
+  if (process.env.VISIBLE_ONLY === '1') await visibleProbe();
+  else await generalProbe();
 } finally {
   if (hash && db) try { await db.query('DELETE FROM av_credentials WHERE token_hash=$1', [hash]); console.log('credential removed'); } catch { console.log('CREDENTIAL CLEANUP FAILED'); process.exitCode = 1; }
   await fetch(base + '/revoke', {method: 'POST', body: new URLSearchParams({token: reader}), signal: AbortSignal.timeout(30_000)}).catch(() => {});

@@ -34,7 +34,12 @@ export class WakeGate {
       const historyAge=p.history_ms??5000,runtimeAge=p.runtime_ms??20_000,checks=p.kind==='both'?[['checked',historyAge],['runtime_checked',runtimeAge]]:[[p.kind==='runtime'?'runtime_checked':'checked',p.kind==='runtime'?runtimeAge:historyAge]];
       const fresh=async()=>{for(const [key,age] of checks)if((await s.get(`${key}:${p.source}`)??0)<now-age)return false;return true;};
       if(p.wait && seen>now-60_000 && !await fresh()) {
-        const deadline=Date.now()+Math.min(8000,p.max_wait??8000);
+        // Only the visible list has a last-observed dashboard to fall back to.
+        // Keep the old bootstrap budget when there is no dashboard at all.
+        const meta=p.visible_list&&p.kind==='runtime'?await s.get(`runtime_meta:${p.source}`):null;
+        const dashboard=meta?.dashboard;
+        const wait=dashboard?1500:8000;
+        const deadline=Date.now()+Math.min(wait,p.max_wait??8000);
         while(Date.now()<deadline && !await fresh()) {
           await new Promise(resolve=>{let timer;const wake=()=>{clearTimeout(timer);this.waiters.delete(wake);resolve();};this.waiters.add(wake);timer=setTimeout(wake,Math.max(1,deadline-Date.now()));});
         }
