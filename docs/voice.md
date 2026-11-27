@@ -214,6 +214,12 @@ websocket to xAI with a token betteragentview fetched with your key (good for fi
 minutes); the key stays in betteragentview. The page only relays events; the
 tools run in betteragentview, against the same sessions the dashboard shows.
 
+Voice uses the system's selected input and follows changes during a call. To
+switch to AirPods, select them under Sound > Input. You don't need to restart
+the call, and switching inputs keeps the call muted if it was already muted.
+If the new input can't open right away, voice input stays silent while the app
+retries, rather than sending audio from the old microphone.
+
 By default betteragentview runs that browser itself, **hidden**: a Chromium-based
 browser (Chrome, Chromium, Edge or Brave) in headless mode, with its own
 profile, started when a call starts and stopped when it ends. No tab or window
