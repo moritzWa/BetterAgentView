@@ -2503,7 +2503,7 @@ fn render_hidden_picker(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .take(visible_rows)
         .map(|record| app.hidden_snippet_for(&record.id, snippet_width))
         .collect::<Vec<_>>();
-    let result_lines = (snippets.len() + 2 * snippets.iter().flatten().count()).max(1);
+    let result_lines = (snippets.len() + snippets.iter().flatten().count()).max(1);
     let popup_height = (result_lines as u16 + 3)
         .min(area.height.saturating_sub(2))
         .max(5);
@@ -2599,9 +2599,6 @@ fn render_hidden_picker(frame: &mut Frame<'_>, app: &App, area: Rect) {
             });
             if let Some((snippet, range)) = snippet {
                 lines.push(hidden_snippet_line(&snippet, range, inner_width, row_style));
-                lines.push(
-                    Line::from(" ".repeat(inner_width)).style(Style::default().bg(palette().bg)),
-                );
             }
         }
     }
@@ -4580,7 +4577,7 @@ mod tests {
     }
 
     #[test]
-    fn text_matches_list_ten_spaced_results_when_the_terminal_is_tall() {
+    fn text_matches_list_ten_results_when_the_terminal_is_tall() {
         let mut app = App::new(SessionSnapshot::default());
         app.open_restore_picker(Vec::new());
         let sessions = (0..14)
@@ -4612,7 +4609,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(names.len(), 10, "{rendered}");
         for pair in names.windows(2) {
-            assert_eq!(pair[1] - pair[0], 3, "name, text, blank line: {rendered}");
+            assert_eq!(pair[1] - pair[0], 2, "name, text: {rendered}");
         }
     }
 

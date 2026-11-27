@@ -39,9 +39,8 @@ pub const SESSION_PAGE_SIZE: usize = 25;
 pub const MODEL_PICKER_PAGE_SIZE: usize = 10;
 pub const MIGRATION_PICKER_PAGE_SIZE: usize = 10;
 pub const HIDDEN_PICKER_PAGE_SIZE: usize = 10;
-/// A result that shows its matching text takes a name line, a text line and a
-/// blank line, so the results breathe.
-const HIDDEN_PICKER_LINES_PER_TEXT_RESULT: usize = 3;
+/// A result that shows its matching text takes a name line and a text line.
+const HIDDEN_PICKER_LINES_PER_TEXT_RESULT: usize = 2;
 const HIDDEN_PICKER_MAX_LINES: usize =
     HIDDEN_PICKER_PAGE_SIZE * HIDDEN_PICKER_LINES_PER_TEXT_RESULT;
 const PAUSED_GROUP_KEY: &str = "paused";
@@ -3430,9 +3429,8 @@ impl App {
         self.hidden_filter.trim().chars().count() >= 3
     }
 
-    /// Picker rows per page for `lines` of result space: a third as many while
-    /// the filter searches message text, as each row takes a name, the text
-    /// and a blank line.
+    /// Picker rows per page for `lines` of result space: half as many while
+    /// the filter searches message text, as each row takes a name and the text.
     pub fn hidden_rows_per_page(&self, lines: usize) -> usize {
         if self.hidden_filter_searches_text() {
             (lines / HIDDEN_PICKER_LINES_PER_TEXT_RESULT).clamp(1, HIDDEN_PICKER_PAGE_SIZE)
