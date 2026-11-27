@@ -4396,9 +4396,8 @@ mod tests {
         assert!(message.contains("port 49888"), "{message}");
         assert!(message.contains("busy or stalled"), "{message}");
 
-        let refused = anyhow::Error::from(std::io::Error::from(
-            std::io::ErrorKind::ConnectionRefused,
-        ));
+        let refused =
+            anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::ConnectionRefused));
         let explained = super::explain_timeout(refused, 49888);
         assert!(!super::is_timeout_error(&explained));
         assert!(!format!("{explained:#}").contains("busy"));
