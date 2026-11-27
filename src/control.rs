@@ -3747,6 +3747,7 @@ exit 0
     }
 
     #[test]
+    #[cfg(unix)]
     fn remote_open_attaches_a_live_claude_session_over_ssh() {
         let command = remote_open_command(
             &remote_session(Provider::Claude, Some("working")),
@@ -3772,6 +3773,7 @@ exit 0
     }
 
     #[test]
+    #[cfg(unix)]
     fn remote_open_resumes_an_ended_claude_session() {
         let command = remote_open_command(
             &remote_session(
@@ -3792,6 +3794,7 @@ exit 0
     }
 
     #[test]
+    #[cfg(unix)]
     fn remote_open_resumes_opencode_and_codex_sessions() {
         let session_id = "11111111-2222-3333-4444-555555555555";
         let opencode =
