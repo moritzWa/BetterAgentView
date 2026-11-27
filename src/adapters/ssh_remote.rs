@@ -865,7 +865,7 @@ mod tests {
             ..DiscoveryRequest::default()
         };
         let failing = {
-            let mut source = SshHostSource::new("177");
+            let source = SshHostSource::new("177");
             let expected = source.ssh_request();
             struct Failing {
                 expected: CommandRequest,

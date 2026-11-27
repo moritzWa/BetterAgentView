@@ -450,6 +450,19 @@ host Codex, missing Codex, active threads, external threads, Docker threads,
 and providers without a documented archive operation are refused or reported
 as ineligible. betteragentview does not call deletion an archive.
 
+## Starting a managed session from the command line
+
+```console
+agentview opencode launch "fix the flaky test" --cwd ~/work/repo
+agentview opencode launch "fix the flaky test" --cwd ~/work/repo --model anthropic/claude-opus-5-5
+```
+
+The supervisor creates the session on its own server, records ownership before
+the turn starts, and submits the task. The created session prints as JSON. This
+is the same launch path the dashboard composer uses, so the session is managed:
+it shows Completed when idle, restarts resume it, and it can be opened,
+replied to, and interrupted from any dashboard that owns it.
+
 ## Restarting the OpenCode server
 
 betteragentview runs one OpenCode server that its attached OpenCode sessions use.

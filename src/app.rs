@@ -357,7 +357,7 @@ struct WorkReturn {
     input_anchor: Option<usize>,
     pasted: PastedParts,
     native_session: Option<String>,
-    launch_directory: Option<PathBuf>,
+    launch_directory: Option<LaunchDirectory>,
 }
 
 #[derive(Debug)]
@@ -1040,7 +1040,11 @@ impl App {
     /// starts the next session there.
     pub fn launch_directory(&self) -> Option<LaunchDirectory> {
         if let Some(directory) = &self.launch_directory_override {
-            if self.scope_allows(directory) {
+            let allowed = match directory {
+                LaunchDirectory::Local(path) => self.scope_allows(path),
+                LaunchDirectory::Remote { .. } => !self.work_only,
+            };
+            if allowed {
                 return Some(directory.clone());
             }
         }
@@ -1054,7 +1058,7 @@ impl App {
                         .iter()
                         .find(|s| self.scope_allows(&s.cwd))
                 })
-                .map(|s| s.cwd.clone());
+                .map(|s| LaunchDirectory::Local(s.cwd.clone()));
         }
         if self.view_mode != ViewMode::Directory {
             return None;
@@ -4758,7 +4762,13 @@ mod tests {
             assert!(!app.select_and_reveal_session("personal-chat"));
         }
         app.directory_candidates = vec![work.clone(), dir.path().join("personal")];
-        assert_eq!(app.directory_choices(), vec![work]);
+        assert_eq!(
+            app.directory_choices()
+                .into_iter()
+                .map(|choice| choice.path)
+                .collect::<Vec<_>>(),
+            vec![work]
+        );
         app.open_restore_picker(Vec::new());
         assert!(app.hidden_choices().iter().all(|r| r.id == "work-chat"));
         app.set_work_only(false, None);
