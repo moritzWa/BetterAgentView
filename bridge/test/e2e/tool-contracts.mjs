@@ -43,11 +43,11 @@ try{
  const send=await rpc('send_session_message',{operation_id:offlineSend,session_id:ids[0],text:'Cloud-only offline fixture. Never execute.'});
  assert.equal(send.status,'queued');assert.equal(send.delivery_state,'queued_mac_offline');
  assert.equal(send.claim_ceiling,'queued');assert.equal(send.delivery_confirmed,false);
- assert.equal(send.say_to_owner,'Message saved. Your Mac will pick it up automatically when it reconnects.');
+ assert.equal(send.say_to_owner,'Message saved for automatic pickup when your Mac reconnects.');
  assert.equal((await rpc('message_status',{operation_id:offlineSend})).say_to_owner,send.say_to_owner);
  const start=await rpc('start_session',{operation_id:offlineStart,directory:'/Users/m/OfflineFixture',text:'Cloud-only offline fixture. Never execute.'});
  assert.equal(start.status,'queued');assert.equal(start.delivery_state,'queued_offline');assert.equal(start.session_id,null);
- assert.equal(start.say_to_owner,'Start request saved. Your Mac will pick it up automatically when it reconnects.');
+ assert.equal(start.say_to_owner,'Start request saved for automatic pickup when your Mac reconnects.');
  assert.equal((await rpc('start_status',{operation_id:offlineStart})).say_to_owner,start.say_to_owner);
  assert.equal((await rpc('cancel_message',{operation_id:offlineSend,confirmed:true})).status,'cancelled');
  assert.equal((await rpc('cancel_start',{operation_id:offlineStart,confirmed:true})).status,'cancelled');

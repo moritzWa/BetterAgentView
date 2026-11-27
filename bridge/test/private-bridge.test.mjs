@@ -150,13 +150,13 @@ test('MCP exposes real read/search tools but rejects ungranted sends and bypass 
   const sent=await outbox.send(reader,{operation_id:'correlated_receipt',session_id:'ses_receipt',text:'A new instruction',base_cursor:10});
   await outbox.lease(writer);await outbox.ack(writer,{operation_id:sent.operation_id,message_id:sent.message_id,status:'accepted'});
   const receiptCall=async()=>JSON.parse((await rpc('tools/call',{name:'message_status',arguments:{operation_id:sent.operation_id}})).result.content[0].text);
-  const admitted=await receiptCall();assert.equal(admitted.input_in_history,false);assert.equal(admitted.completion_confirmed,false);
+  const admitted=await receiptCall();assert.equal(admitted.input_in_history,false);assert.equal(admitted.delivery_confirmed,false);assert.equal(admitted.completion_confirmed,false);
   await store.apply(writer,{version:1,batch_id:'receipt-reply',session_id:'ses_receipt',kind:'delta',from:10,through:20,session:state,messages:[{id:sent.message_id,role:'user',order:3,created_at:3,updated_at:3,text:'A new instruction'},{id:'receipt_new_answer',role:'assistant',order:4,created_at:4,updated_at:4,text:'The actual new reply'}],delete_ids:[]});
   const native={session_id:'ses_receipt',status:'done',reason:null,updated_at:4,can_message:true,last_user_message_id:'receipt_old_user'};
   await gate.setRuntime(await digest(writerToken),{available:true,partial:false,statuses:[native]});
   assert.equal((await receiptCall()).completion_confirmed,false,'an old completed snapshot is not completion of the new input');
   await gate.setRuntime(await digest(writerToken),{available:true,partial:false,statuses:[{...native,last_user_message_id:sent.message_id}]});
-  const completed=await receiptCall();assert.equal(completed.reply_available,true);assert.equal(completed.completion_confirmed,true);assert.equal(completed.reply_after,3);
+  const completed=await receiptCall();assert.equal(completed.reply_available,true);assert.equal(completed.completion_confirmed,true);assert.equal(completed.delivery_confirmed,true);assert.equal(completed.reply_after,3);
 });
 test('visibility tools require confirmation and a write grant, then report queued until native ACK',async()=>{
   await gateStorage.put('last_seen:device123|epoch123',Date.now()-120_000);

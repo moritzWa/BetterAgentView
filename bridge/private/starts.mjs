@@ -104,15 +104,15 @@ function publicReceipt(row) {
   };
 }
 
-export const START_RULE = 'Say say_to_owner. Never claim a session exists unless session_id is set. Queued means the start request is saved for your Mac. started means OpenCode accepted the task, not that the work is finished.';
+export const START_RULE = 'Say say_to_owner. Never claim a session exists unless session_id is set. Queued means the start request is saved for automatic pickup. started means OpenCode accepted the task for processing, not that a user turn appeared or the work finished.';
 
 const SAYS = {
   not_started: 'Not started. No session was created.',
-  queued: 'Start request saved. Your Mac will pick it up automatically.',
-  queued_offline: 'Start request saved. Your Mac will pick it up automatically when it reconnects.',
-  started: 'OpenCode created the session and accepted the task. That does not mean the work is finished.',
-  created_not_started: 'OpenCode created a session but did not accept the task. It is not working.',
-  failed: 'Not started. The Mac could not create it.',
+  queued: 'Start request saved for automatic pickup.',
+  queued_offline: 'Start request saved for automatic pickup when your Mac reconnects.',
+  started: 'OpenCode created the session and accepted the task for processing.',
+  created_not_started: 'OpenCode created the session, but I could not confirm it accepted the task.',
+  failed: 'The Mac reported a start failure. I could not confirm that a session was created.',
   uncertain: 'I cannot tell if a session was created. I will not start another one with this id.',
   cancelled: 'Cancelled. No session was created.',
 };

@@ -61,6 +61,15 @@ turn, without resending. Send and start need the write grant but no per-action
 approval. Cancellation and visibility changes still require confirmation.
 Stale context still stops delivery. Read-tool errors stay bare codes.
 
+`queued` means the bridge saved the message for automatic pickup. `accepted`
+means OpenCode accepted the message for processing in queue mode. It does not
+prove OpenCode wrote a user turn. In MCP results, `delivery_confirmed` is true
+only when the exact user turn is in synced history. The connector ACK keeps
+its legacy admission bit for compatibility. `message_status` mentions a
+running turn only if a fresh native snapshot identifies a different, earlier
+turn and the exact new input is not yet in synced history. Only
+`completion_confirmed` proves a completed native turn and a correlated reply.
+
 ### November 25–26 voice incident
 
 Some voice turns stopped before ChatGPT called BetterAgentView (then named AgentVoice). On November 25,

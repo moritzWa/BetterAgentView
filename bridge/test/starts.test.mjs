@@ -36,16 +36,20 @@ test('a queued start has no session id and cannot be described as started', () =
   assert.equal(view.claim_ceiling, 'none');
   assert.equal(view.session_id, null);
   assert.equal(view.started, false);
-  assert.equal(view.say_to_owner, 'Start request saved. Your Mac will pick it up automatically.');
+  assert.equal(view.say_to_owner, 'Start request saved for automatic pickup.');
   const offline=startView({status:'queued',session_id:null},{mac_seen_recently:false});
-  assert.equal(offline.say_to_owner,'Start request saved. Your Mac will pick it up automatically when it reconnects.');
+  assert.equal(offline.say_to_owner,'Start request saved for automatic pickup when your Mac reconnects.');
   assert.equal(offline.session_id,null);
   assert.equal(offline.started,false);
   assert.equal(view.report_rule, START_RULE);
-  assert.equal(startView({status:'started', session_id:'ses_real'}).session_id, 'ses_real');
+  const accepted=startView({status:'started', session_id:'ses_real'});
+  assert.equal(accepted.session_id, 'ses_real');
+  assert.equal(accepted.say_to_owner, 'OpenCode created the session and accepted the task for processing.');
   assert.equal(startView({status:'started', session_id:null}).delivery_state, 'uncertain');
   assert.equal(startView({status:'created_not_started', session_id:'ses_real'}).claim_ceiling, 'created');
-  assert.equal(startView({status:'created_not_started', session_id:'ses_real'}).started, false);
+  const unconfirmed=startView({status:'created_not_started', session_id:'ses_real'});
+  assert.equal(unconfirmed.started, false);
+  assert.equal(unconfirmed.say_to_owner, 'OpenCode created the session, but I could not confirm it accepted the task.');
 });
 
 test('cloud path checks reject traversal and system roots before a row exists', () => {
@@ -60,7 +64,7 @@ test('queueing a start does not invent a session, and the id appears only after 
   assert.equal(queued.status, 'queued');
   assert.equal(queued.session_id, null);
   assert.equal(queued.started, false);
-  assert.match(queued.say_to_owner, /^Start request saved[.].*automatically/);
+  assert.match(queued.say_to_owner, /^Start request saved for automatic pickup/);
   const again = body(await rpc('start_session', {operation_id:'start_queue_1', directory:'/Users/m/Code/agentview', text:'Add a health tool'}));
   assert.equal(again.operation_id, queued.operation_id);
   const conflict = await rpc('start_session', {operation_id:'start_queue_1', directory:'/Users/m/Code/other', text:'Add a health tool'});
@@ -74,7 +78,7 @@ test('queueing a start does not invent a session, and the id appears only after 
   assert.equal(done.delivery_state, 'started');
   assert.equal(done.session_id, 'ses_created_1');
   assert.equal(done.claim_ceiling, 'started');
-  assert.match(done.say_to_owner, /does not mean the work is finished/);
+  assert.match(done.say_to_owner, /accepted the task for processing/);
 });
 
 test('a rejected path does not create a start', async () => {

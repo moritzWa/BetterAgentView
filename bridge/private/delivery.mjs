@@ -1,21 +1,22 @@
 // Pure helpers: what the model may honestly say about one send. No I/O.
 // claim_ceiling is the strongest claim allowed: none < queued < accepted < completed.
 
-export const REPORT_RULE='Say say_to_owner. Never claim more than claim_ceiling. Queued means saved for the Mac. Say the session has it only after acceptance, and say it finished only after confirmed completion.';
+export const REPORT_RULE='Say say_to_owner. Never claim more than claim_ceiling. Queued means saved for automatic pickup. Accepted means OpenCode queued it for processing, not that it appeared as a user turn or finished. Only report a completed turn after confirmed completion.';
 
 const SAYS={
   not_sent:'Not sent. Nothing reached the session.',
-  queued_mac_offline:'Message saved. Your Mac will pick it up automatically when it reconnects.',
-  queued_waiting_for_mac:'Message saved. Your Mac will pick it up automatically.',
-  accepted_by_session:'The session has your message.',
+  queued_mac_offline:'Message saved for automatic pickup when your Mac reconnects.',
+  queued_waiting_for_mac:'Message saved for automatic pickup.',
+  accepted_by_session:'OpenCode queued your message for processing.',
+  accepted_behind_running_turn:'OpenCode accepted your message. At the last check it was queued behind the running turn.',
   completed_confirmed:'The session got it, finished, and replied.',
   needs_confirmation:'It is held. The session changed after you decided. I need your OK before it goes.',
   needs_confirmation_blocked:'It is waiting behind an earlier message that needs your OK.',
   rejected_stale_context:'Not sent. The session changed after I read it. I will re-read it and ask you once.',
   cancelled:'That message was cancelled. The session never got it.',
-  failed:'The Mac could not hand it to the session. Nothing ran. Want me to try again?',
+  failed:'The Mac reported it could not hand the message to OpenCode.',
   expired:'It waited a day and expired. The session never saw it.',
-  uncertain:'I cannot tell if the session got it yet. I will check before saying it arrived.',
+  uncertain:'I cannot confirm whether OpenCode accepted the message.',
 };
 
 const view=(delivery_state,claim_ceiling,owner_action='none',say=delivery_state)=>({
@@ -23,15 +24,16 @@ const view=(delivery_state,claim_ceiling,owner_action='none',say=delivery_state)
 
 /** @param receipt public outbox receipt (status, blocked_by?)
  *  @param freshness gate.activity result (mac_seen_recently)
- *  @param completion true only when a native completed state and a correlated reply are confirmed */
-export function deliveryView(receipt,freshness={},completion=false) {
+ *  @param completion true only when a native completed state and a correlated reply are confirmed
+ *  @param behindRunningTurn true only when the last check showed an earlier turn still running */
+export function deliveryView(receipt,freshness={},completion=false,behindRunningTurn=false) {
   switch(receipt?.status) {
     case 'queued':
     case 'leased': {
       if(['needs_confirmation','uncertain'].includes(receipt.blocked_by?.status))return view('needs_confirmation','none','reconfirm','needs_confirmation_blocked');
       return freshness.mac_seen_recently===false?view('queued_mac_offline','queued'):view('queued_waiting_for_mac','queued');
     }
-    case 'accepted':return completion?view('completed_confirmed','completed'):view('accepted_by_session','accepted');
+    case 'accepted':return completion?view('completed_confirmed','completed'):view('accepted_by_session','accepted','none',behindRunningTurn?'accepted_behind_running_turn':'accepted_by_session');
     case 'needs_confirmation':return view('needs_confirmation','none','reconfirm');
     case 'cancelled':return view('cancelled','none');
     case 'failed':return view('failed','none','retry');
@@ -55,7 +57,7 @@ const ERRORS={
   invalid_read_context:()=>err('not_sent','Not sent. My request was malformed.','Re-read the session and retry once.',{retry_same_operation:true}),
   unauthorized:()=>err('not_sent','Not sent. The connection needs a new sign-in.','Tell the owner.'),
   message_not_found:()=>err('not_sent','Nothing was sent with that id.','Do not claim a send. Ask the owner whether to send it now.'),
-  cannot_cancel_admitted_or_inflight_message:()=>err('uncertain','I could not cancel it. It may already be with the session.','Call message_status for this operation_id before saying anything else.',{sent:null}),
+  cannot_cancel_admitted_or_inflight_message:()=>err('uncertain','I could not cancel it. OpenCode may already have accepted it.','Call message_status for this operation_id before saying anything else.',{sent:null}),
   receipt_conflict:()=>err('uncertain','uncertain','Call message_status for this operation_id before saying anything else.',{sent:null}),
   invalid_directory:()=>err('not_sent','Not started. That path is not a usable directory.','Ask for a project directory, then retry once with the same operation_id.',{retry_same_operation:true}),
   directory_not_allowed:()=>err('not_sent','Not started. That directory is not allowed.','Ask for a project folder under the home directory, not a system or credential folder.'),
