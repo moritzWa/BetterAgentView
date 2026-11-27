@@ -1412,10 +1412,12 @@ fn main() -> Result<()> {
         }
         // One source reads the host list on every refresh, so /remote add and
         // /remote remove inside the dashboard change the next refresh.
-        engine.add_source(SshHostsSource::new(
-            ssh_target_list.clone(),
-            cli.ssh_bin.clone(),
-        ));
+        let ssh_source = SshHostsSource::new(ssh_target_list.clone(), cli.ssh_bin.clone());
+        engine.add_source(if cli.json {
+            ssh_source
+        } else {
+            ssh_source.in_background()
+        });
     }
     if cli.json {
         let mut snapshot = engine.discover(&request);
