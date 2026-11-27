@@ -377,7 +377,21 @@ impl OpenCodeSupervisor {
                 .unwrap_or_else(now_millis),
             sessions: previous.map(|p| p.sessions).unwrap_or_default(),
         };
-        self.verify_http_endpoint(&record)?;
+        // A registered service that is only slow (swapped out, collecting
+        // garbage, busy titling sessions) must not stop agentview from
+        // starting. Its PID and listener were already verified; the dashboard
+        // shows it as loading until it answers.
+        match self.verify_http_endpoint(&record) {
+            Ok(()) => {}
+            Err(error) if is_timeout_error(&error) => {
+                crate::perf!(
+                    "startup-health-timeout",
+                    "port={} continuing=true error={error:#}",
+                    record.port
+                );
+            }
+            Err(error) => return Err(error),
+        }
         save_record(&self.record_path, &record)
     }
 
@@ -3083,8 +3097,35 @@ fn request_http(
     )
     .into_bytes();
     request.extend_from_slice(&body);
-    stream.write_all(&request)?;
-    read_http_response(&mut stream)
+    stream
+        .write_all(&request)
+        .map_err(|error| explain_timeout(error.into(), record.port))?;
+    read_http_response(&mut stream).map_err(|error| explain_timeout(error, record.port))
+}
+
+fn is_timeout_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause.downcast_ref::<std::io::Error>().is_some_and(|error| {
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            )
+        })
+    })
+}
+
+/// A socket timeout surfaces as "Resource temporarily unavailable (os error
+/// 35)", which names no cause. Keep the io error in the chain so callers can
+/// still classify it.
+fn explain_timeout(error: anyhow::Error, port: u16) -> anyhow::Error {
+    if is_timeout_error(&error) {
+        error.context(format!(
+            "OpenCode on port {port} did not answer within {}s; it is busy or stalled",
+            HTTP_TIMEOUT.as_secs()
+        ))
+    } else {
+        error
+    }
 }
 
 fn read_http_response(stream: &mut TcpStream) -> Result<HttpResponse> {
@@ -4346,6 +4387,23 @@ pub(crate) fn start_test_server(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn socket_timeout_is_explained_and_still_classified() {
+        let timeout = anyhow::Error::from(std::io::Error::from_raw_os_error(libc::EAGAIN));
+        let explained = super::explain_timeout(timeout, 49888);
+        assert!(super::is_timeout_error(&explained));
+        let message = format!("{explained:#}");
+        assert!(message.contains("port 49888"), "{message}");
+        assert!(message.contains("busy or stalled"), "{message}");
+
+        let refused = anyhow::Error::from(std::io::Error::from(
+            std::io::ErrorKind::ConnectionRefused,
+        ));
+        let explained = super::explain_timeout(refused, 49888);
+        assert!(!super::is_timeout_error(&explained));
+        assert!(!format!("{explained:#}").contains("busy"));
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn listener_ownership_survives_unrelated_descriptors_closing() {
