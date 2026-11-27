@@ -1063,17 +1063,14 @@ impl App {
         if self.view_mode != ViewMode::Directory {
             return None;
         }
-        let session = self
-            .selected_session()
-            .cloned()
-            .or_else(|| {
-                self.selected_group().and_then(|group| {
-                    group
-                        .sessions
-                        .first()
-                        .map(|index| self.snapshot.sessions[*index].clone())
-                })
-            })?;
+        let session = self.selected_session().cloned().or_else(|| {
+            self.selected_group().and_then(|group| {
+                group
+                    .sessions
+                    .first()
+                    .map(|index| self.snapshot.sessions[*index].clone())
+            })
+        })?;
         let path = project_group_path(&session.cwd);
         Some(match &session.runtime {
             crate::domain::Runtime::Ssh { host } => LaunchDirectory::Remote {
@@ -3948,7 +3945,9 @@ impl App {
             .map(str::to_owned)
             .collect::<Vec<_>>();
         let matches_filter = |label: &str| {
-            terms.iter().all(|term| label.to_lowercase().contains(term.as_str()))
+            terms
+                .iter()
+                .all(|term| label.to_lowercase().contains(term.as_str()))
         };
         let mut choices = self
             .directory_candidates
@@ -4624,9 +4623,7 @@ mod tests {
 
     fn remote_session(id: &str, host: &str, cwd: &str, state: SessionState) -> AgentSession {
         AgentSession {
-            runtime: Runtime::Ssh {
-                host: host.into(),
-            },
+            runtime: Runtime::Ssh { host: host.into() },
             cwd: cwd.into(),
             id: format!("ssh:{host}:{id}"),
             ..session(id, state)
@@ -4649,11 +4646,13 @@ mod tests {
             .iter()
             .position(|choice| choice.host.as_deref() == Some("176"))
             .expect("remote folder in the picker");
-        assert_eq!(choices[remote_index].path, PathBuf::from("/home/bpang/mywork/ns3"));
+        assert_eq!(
+            choices[remote_index].path,
+            PathBuf::from("/home/bpang/mywork/ns3")
+        );
         assert!(choices[remote_index].label.starts_with("[176] "));
-        assert!(choices
-            .iter()
-            .all(|choice| choice.host.is_some() || choice.path != PathBuf::from("/home/bpang/mywork/ns3")));
+        assert!(choices.iter().all(|choice| choice.host.is_some()
+            || choice.path != PathBuf::from("/home/bpang/mywork/ns3")));
 
         app.directory_selection = remote_index;
         assert_eq!(app.activate(), AppAction::None);
@@ -4944,7 +4943,10 @@ mod tests {
 
         // Trailing slashes collapse and the root is accepted.
         app.directory_filter = "176:/".into();
-        assert_eq!(app.directory_choices().first().unwrap().path, PathBuf::from("/"));
+        assert_eq!(
+            app.directory_choices().first().unwrap().path,
+            PathBuf::from("/")
+        );
 
         // Unwatched hosts and relative paths get nothing.
         app.directory_filter = "999:/extra".into();
@@ -6855,7 +6857,10 @@ mod tests {
         app.start_new_session(None);
         app.input = "/cd fresh".into();
         app.activate();
-        assert_eq!(app.launch_directory(), Some(LaunchDirectory::Local(fresh.clone())));
+        assert_eq!(
+            app.launch_directory(),
+            Some(LaunchDirectory::Local(fresh.clone()))
+        );
 
         app.start_new_session(None);
         app.input = "task".into();
@@ -6919,12 +6924,22 @@ mod tests {
         for character in "picker-target".chars() {
             app.push_input(character);
         }
-        assert_eq!(app.directory_choices(), vec![DirectoryChoice { label: display_directory(&picked, None), path: picked.clone(), host: None }]);
+        assert_eq!(
+            app.directory_choices(),
+            vec![DirectoryChoice {
+                label: display_directory(&picked, None),
+                path: picked.clone(),
+                host: None
+            }]
+        );
         assert_eq!(app.activate(), AppAction::None);
 
         assert_eq!(app.overlay, Overlay::Composer(ComposerMode::NewSession));
         assert_eq!(app.input, "fix the bug");
-        assert_eq!(app.launch_directory(), Some(LaunchDirectory::Local(picked.clone())));
+        assert_eq!(
+            app.launch_directory(),
+            Some(LaunchDirectory::Local(picked.clone()))
+        );
         assert!(matches!(
             app.activate(),
             AppAction::Launch { cwd: Some(cwd), .. } if cwd == picked
@@ -6954,7 +6969,12 @@ mod tests {
         for character in typed.display().to_string().chars() {
             app.push_input(character);
         }
-        assert_eq!(app.directory_choices().first().map(|choice| choice.path.clone()), Some(typed.clone()));
+        assert_eq!(
+            app.directory_choices()
+                .first()
+                .map(|choice| choice.path.clone()),
+            Some(typed.clone())
+        );
         app.activate();
         assert_eq!(app.overlay, Overlay::Composer(ComposerMode::NewSession));
         assert_eq!(app.launch_directory(), Some(LaunchDirectory::Local(typed)));
@@ -8178,11 +8198,8 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(
-                directory.path(),
-                std::fs::Permissions::from_mode(0o700),
-            )
-            .unwrap();
+            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+                .unwrap();
         }
         let registry = directory.path().join("ssh-targets.json");
         app.ssh_targets = crate::adapters::SshTargetList::enabled(Vec::new(), registry.clone());
@@ -8196,7 +8213,9 @@ mod tests {
             .unwrap()
             .contains("177 (ssh) added; it appears on the next refresh"));
         assert_eq!(
-            crate::adapters::load_ssh_targets_at(&registry).unwrap().hosts,
+            crate::adapters::load_ssh_targets_at(&registry)
+                .unwrap()
+                .hosts,
             ["177".to_owned()].into_iter().collect()
         );
 

@@ -2147,6 +2147,7 @@ fn schedule_launch_job(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dispatch_foreground_launch<T: DashboardTerminal, C: DashboardControl>(
     terminal: &mut T,
     app: &mut App,
@@ -5004,7 +5005,7 @@ mod tests {
                 model: None,
                 prompt: "ship".into(),
                 cwd: None,
-                    host: None,
+                host: None,
             }]
         );
 
@@ -5030,7 +5031,7 @@ mod tests {
                 model: None,
                 prompt: "one\ntwo".into(),
                 cwd: None,
-                    host: None,
+                host: None,
             }]
         );
     }
@@ -6517,7 +6518,7 @@ mod tests {
                     model: None,
                     prompt: "x".into(),
                     cwd: None,
-                host: None,
+                    host: None,
                 },
                 "launch failed",
             ),

@@ -9,16 +9,16 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use agentview::adapters::{
     default_cursor_versions_dir, default_managed_docker_registry_path, default_pi_session_dir,
-    generate_managed_instance_id, AntigravityController, AntigravityOwnership, AntigravitySource,
-    ClaudeSource, CodexSource, CopilotController, CopilotOwnedSource, CopilotSource,
-    CopilotSupervisor, CursorController, CursorHistorySource, DiscoveryEngine, DiscoveryRequest,
-    DockerTarget, FixtureSource, KimiController, KimiOwnership, KimiSource,
-    load_ssh_targets, ManagedDockerCreateSpec, ManagedDockerService, ManagedDockerStatus,
-    MistralVibeController, MistralVibeOwnership, MistralVibeSource, MuseController, MuseOwnership,
-    MuseSource, OpenCodeController, OpenCodeSource, PiController, PiSource, QwenController,
-    QwenOwnership, QwenSource, REMOTE_GUARD_ENV, save_ssh_targets, SshHostsSource, SshTargetList,
+    default_ssh_targets_path, generate_managed_instance_id, load_ssh_targets, save_ssh_targets,
+    validate_host, AntigravityController, AntigravityOwnership, AntigravitySource, ClaudeSource,
+    CodexSource, CopilotController, CopilotOwnedSource, CopilotSource, CopilotSupervisor,
+    CursorController, CursorHistorySource, DiscoveryEngine, DiscoveryRequest, DockerTarget,
+    FixtureSource, KimiController, KimiOwnership, KimiSource, ManagedDockerCreateSpec,
+    ManagedDockerService, ManagedDockerStatus, MistralVibeController, MistralVibeOwnership,
+    MistralVibeSource, MuseController, MuseOwnership, MuseSource, OpenCodeController,
+    OpenCodeSource, PiController, PiSource, QwenController, QwenOwnership, QwenSource,
     SessionMigrateNativeController, SessionMigrateNativeOwnership, SessionMigrateNativeSource,
-    TerminalHarness, validate_host, default_ssh_targets_path,
+    SshHostsSource, SshTargetList, TerminalHarness, REMOTE_GUARD_ENV,
 };
 #[cfg(not(target_os = "linux"))]
 use agentview::adapters::{CursorOwnership, OpenCodeOwnership};
@@ -1583,8 +1583,11 @@ fn run_opencode_command(command: &OpenCodeCommand, cli: &Cli) -> Result<()> {
             Ok(())
         }
         OpenCodeCommand::Launch { prompt, cwd, model } => {
-            let session = OpenCodeSupervisor::host(cli.opencode_bin.clone())?
-                .launch_with_model(prompt, cwd, model.as_deref())?;
+            let session = OpenCodeSupervisor::host(cli.opencode_bin.clone())?.launch_with_model(
+                prompt,
+                cwd,
+                model.as_deref(),
+            )?;
             serde_json::to_writer_pretty(io::stdout().lock(), &session)?;
             println!();
             Ok(())
