@@ -2632,15 +2632,34 @@ fn render_hidden_picker(frame: &mut Frame<'_>, app: &App, area: Rect) {
     set_filter_cursor(frame, app, popup, 2);
 }
 
-/// A picker row's matching message text, indented under its name, dim with
-/// the match itself bold.
+/// `color` moved `amount` (0 to 1) of the way toward `toward`. Colors that are
+/// not RGB are returned unchanged.
+fn fade(color: Color, toward: Color, amount: f32) -> Color {
+    match (color, toward) {
+        (Color::Rgb(r, g, b), Color::Rgb(tr, tg, tb)) => {
+            let mix = |from: u8, to: u8| {
+                (f32::from(from) + (f32::from(to) - f32::from(from)) * amount).round() as u8
+            };
+            Color::Rgb(mix(r, tr), mix(g, tg), mix(b, tb))
+        }
+        _ => color,
+    }
+}
+
+/// A picker row's matching message text, indented under its name, faded well
+/// below the session names so the names can be skimmed, with the match itself
+/// bold.
 fn hidden_snippet_line(
     snippet: &str,
     range: Option<std::ops::Range<usize>>,
     width: usize,
     row_style: Style,
 ) -> Line<'static> {
-    let dim = Style::default().fg(palette().dim);
+    let dim = Style::default().fg(fade(
+        palette().dim,
+        row_style.bg.unwrap_or(palette().bg),
+        0.45,
+    ));
     let (before, matched, after) = match range {
         Some(range) => (
             &snippet[..range.start],
@@ -4514,6 +4533,50 @@ mod tests {
             .position(|line| line.contains("Bored games"))
             .expect("name match row");
         assert!(!lines[label_only + 1].contains("bored"), "{rendered}");
+    }
+
+    #[test]
+    fn match_text_is_fainter_than_the_dim_labels_and_the_match_stays_bold() {
+        let mut app = App::new(SessionSnapshot::default());
+        app.open_restore_picker(Vec::new());
+        app.add_restorable_sessions(
+            vec![crate::control::RestorableSession {
+                id: "opencode:host:a".into(),
+                provider_session_id: "a".into(),
+                provider: Provider::OpenCode,
+                name: "Worry books".into(),
+                cwd: "/work".into(),
+                updated_at_ms: 0,
+                transcript: "she said I'm bored of reading".into(),
+            }],
+            &[],
+        );
+        for character in "bored".chars() {
+            app.push_input(character);
+        }
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let rendered = buffer_text(&buffer);
+        let row = rendered
+            .lines()
+            .position(|line| line.contains("she said"))
+            .expect("snippet row") as u16;
+        let column = |needle: &str| {
+            rendered
+                .lines()
+                .nth(usize::from(row))
+                .unwrap()
+                .find(needle)
+                .unwrap() as u16
+        };
+        let plain = buffer.get(column("she said"), row);
+        let matched = buffer.get(column("bored"), row);
+        let dim = palette().dim;
+        assert_ne!(plain.fg, dim, "snippet text should be fainter than dim");
+        assert_ne!(plain.fg, matched.fg);
+        assert!(matched.modifier.contains(Modifier::BOLD));
     }
 
     #[test]
