@@ -104,6 +104,12 @@ own interface.
 - **Start in any folder** with `/cd` or `Ctrl+O`. Write multi-line drafts, paste
   long text, attach clipboard images with `Ctrl+V`, and select text with `Shift+arrow`
    or words with `Option+Shift+arrow`.
+- **Watch other machines in the same list** with `--ssh-host 176`: one refresh
+  runs agentview on that passwordless-SSH host and merges its sessions in,
+  tagged with the host name. `Enter` jumps into a remote session over SSH,
+  `Ctrl+O` starts a new one in any of its folders (typed task included), and
+  `/remote add` or `/remote remove` changes the set mid-session. Thanks to
+  [@BaoshanPang](https://github.com/BaoshanPang).
 - **Move or migrate a session:** `F6` changes folders; `/migrate` changes
   harnesses through [session-migrate](https://session-migrate.github.io/).
   OpenCode folder moves preserve the session ID and history.

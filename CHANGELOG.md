@@ -166,6 +166,9 @@ and released versions are intended to follow Semantic Versioning.
   export the per-user agent CLI homes into PATH and fall back to `~/.tmp`
   for `TMPDIR` on hosts where `/tmp` is mounted noexec.
 
+- SSH host support (the `--ssh-host` entries here, `/remote`, remote jump-in
+  and launch, and `agentview opencode attach` and `launch`) is contributed by
+  [@BaoshanPang](https://github.com/BaoshanPang).
 - `--ssh-host HOST` observes the sessions a passwordless SSH host runs through
   its own agentview: each refresh runs `agentview --json` on that host and
   merges the snapshot into the dashboard, with remote rows tagged with the

@@ -4689,7 +4689,7 @@ mod tests {
             warnings: vec![],
         });
         app.toggle_help();
-        let backend = TestBackend::new(120, 32);
+        let backend = TestBackend::new(120, 33);
         let mut terminal = Terminal::new(backend).unwrap();
 
         terminal.draw(|frame| render(frame, &app)).unwrap();

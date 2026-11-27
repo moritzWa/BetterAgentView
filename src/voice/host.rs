@@ -731,6 +731,7 @@ mod tests {
             claude_bin: String::new(),
             codex_bin: String::new(),
             docker_bin: String::new(),
+            ssh_bin: String::new(),
             launch_provider: Provider::OpenCode,
             launch_cwd: dir.clone(),
             provider_io_enabled: true,
