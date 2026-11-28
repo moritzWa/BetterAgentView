@@ -1,3 +1,17 @@
+# ChatGPT Voice false lookup failure, November 27, 2026
+
+A fresh ChatGPT web Voice chat called `list_visible_sessions` and then
+`send_session_message` with the correct ID of a disposable OpenCode session.
+The tool call returned in 2.4 seconds. About 3 seconds later, Voice said it
+couldn't find the session and offered to retry. The cloud receipt was accepted,
+and synced OpenCode history contained the exact canary input once.
+
+This reproduces the false spoken failure after a successful save. The saved
+ChatGPT transcript omits the payloads of both read and write tools. It cannot
+show whether the voice model saw the receipt or whether a silent final reply
+caused the failure. Retest on the actual Voice client after deployment; checking
+the MCP response alone cannot verify the spoken behavior.
+
 # Verification, November 16, 2026
 
 ## Deployed cloud and macOS VM

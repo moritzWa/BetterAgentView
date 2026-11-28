@@ -157,10 +157,11 @@ test('send and start descriptions tell the voice client not to announce or poll 
  const {SERVER_INSTRUCTIONS}=await import('../private/mcp.mjs');
  const response=await privateMcp(new Request('https://test.invalid/mcp',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list',params:{}})}),{db,store,principal:reader,outbox,gate});
  const {tools}=(await response.json()).result;
- for(const text of [SERVER_INSTRUCTIONS,...tools.filter(t=>['send_session_message','start_session'].includes(t.name)).map(t=>t.description)]) {
-  assert.match(text,/without a spoken or written acknowledgment/);
-  assert.match(text,/or call a status tool just to check a successful write/);
-  assert.match(text,/only if the save fails or a known problem needs/);
+ for(const text of [SERVER_INSTRUCTIONS.slice(0,512),...tools.filter(t=>['send_session_message','start_session'].includes(t.name)).map(t=>t.description)]) {
+  assert.match(text,/say_to_owner:null is a silent success/);
+  assert.match(text,/Do not announce, retry, or check status/);
+  assert.match(text,/Never infer an error from silence/);
+  assert.match(text,/the failed action for real errors/);
  }
 });
 
@@ -258,6 +259,10 @@ test('worker returns both enqueue receipts while its connector wake is still pen
    const result=JSON.parse(rpc.result.content[0].text);
    assert.equal(result.enqueued,true);assert.equal(result.say_to_owner,null);
    assert.equal(result.operation_id,args.operation_id);
+   assert.equal(result.write_action,name);
+   assert.match(result.report_rule,/Saved successfully\. No error occurred/);
+   assert.match(result.report_rule,/next requested step, or end silently/);
+   assert.match(result.report_rule,/Do not announce, retry, or check status/);
   }
   assert.deepEqual(gateCalls,['/signal','/call-log','/signal','/call-log']);
   assert.equal(pending.length,4,'the Worker keeps each wake and each timing write alive');
@@ -272,7 +277,9 @@ test('worker returns both enqueue receipts while its connector wake is still pen
    assert.equal(rpc.result.isError,true);
    const error=JSON.parse(rpc.result.content[0].text);
    assert.equal(error.error,'operation_failed');
-   assert.match(error.say_to_owner,/could not confirm the request was saved/);
+   assert.equal(error.write_action,name);
+   assert.equal(error.failure_stage,'save_request');
+   assert.equal(error.say_to_owner,`I could not confirm that the ${name==='start_session'?'start':'send'} request was saved.`);
    assert.equal(error.retry_same_operation,true);
    assert.equal((await db.query('SELECT 1 FROM '+table+' WHERE operation_id=$1',[operation_id])).rows.length,0);
   }

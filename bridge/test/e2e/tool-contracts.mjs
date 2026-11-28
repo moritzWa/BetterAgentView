@@ -44,7 +44,9 @@ try{
  assert.equal(send.enqueued,true);assert.equal(send.say_to_owner,null);
  assert.equal((await rpc('message_status',{operation_id:offlineSend})).delivery_state,'queued_mac_offline');
  const start=await rpc('start_session',{operation_id:offlineStart,directory:'/Users/m/OfflineFixture',text:'Cloud-only offline fixture. Never execute.'});
- assert.deepEqual(start,{enqueued:true,operation_id:offlineStart,say_to_owner:null});
+ const {report_rule,...startReceipt}=start;
+ assert.match(report_rule,/Saved successfully/);
+ assert.deepEqual(startReceipt,{write_action:'start_session',enqueued:true,operation_id:offlineStart,say_to_owner:null});
  assert.equal((await rpc('start_status',{operation_id:offlineStart})).delivery_state,'queued_offline');
  assert.equal((await rpc('cancel_message',{operation_id:offlineSend,confirmed:true})).status,'cancelled');
  assert.equal((await rpc('cancel_start',{operation_id:offlineStart,confirmed:true})).status,'cancelled');

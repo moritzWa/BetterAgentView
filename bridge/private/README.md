@@ -49,9 +49,13 @@ expire after 24 hours. Only `applied` means the Mac confirmed the change.
 
 `send_session_message` and `start_session` return once the database commits the
 request. A successful save returns `enqueued: true` and `say_to_owner: null`.
-Voice does not announce the save or poll delivery. The connector handles pickup,
+The `report_rule` marks this as a silent success, not a missing result. Voice
+continues the owner's next requested step or ends without announcing the save,
+retrying it, or polling delivery. The connector handles pickup,
 retries and receipts in the background, even if the Mac is offline at enqueue.
-A failed save returns a structured error. If the outcome is unknown, reuse the
+A write receipt names the tool in `write_action`. For a write error, use
+`say_to_owner` and `failure_stage`. A missing send target is a lookup failure;
+a failed save is not a delivery failure. If the outcome is unknown, reuse the
 same operation ID and arguments on retry. A retry never creates a second
 request and may surface a known failure that needs the owner's action.
 

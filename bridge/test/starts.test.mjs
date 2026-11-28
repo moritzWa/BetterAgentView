@@ -59,9 +59,22 @@ test('cloud path checks reject traversal and system roots before a row exists', 
   }
 });
 
+test('an unusable directory is reported as a start failure, not a session lookup',async()=>{
+  const raw=await rpc('start_session',{operation_id:'start_bad_dir_1',directory:'/etc',text:'No operation should be created'});
+  assert.equal(raw.result.isError,true);
+  const failure=body(raw);
+  assert.equal(failure.error,'directory_not_allowed');
+  assert.equal(failure.write_action,'start_session');
+  assert.equal(failure.failure_stage,'save_request');
+  assert.match(failure.say_to_owner,/^Not started. That directory is not allowed/);
+  assert.equal(await starts.lease(writer),null);
+});
+
 test('queueing a start does not invent a session, and the id appears only after the Mac ack', async () => {
   const queued = body(await rpc('start_session', {operation_id:'start_queue_1', directory:'/Users/m/Code/agentview', text:'Add a health tool'}));
-  assert.deepEqual(queued,{enqueued:true,operation_id:'start_queue_1',say_to_owner:null});
+  const {report_rule,...receipt}=queued;
+  assert.match(report_rule,/Saved successfully/);
+  assert.deepEqual(receipt,{write_action:'start_session',enqueued:true,operation_id:'start_queue_1',say_to_owner:null});
   const again = body(await rpc('start_session', {operation_id:'start_queue_1', directory:'/Users/m/Code/agentview', text:'Add a health tool'}));
   assert.deepEqual(again,queued);
   const conflict = await rpc('start_session', {operation_id:'start_queue_1', directory:'/Users/m/Code/other', text:'Add a health tool'});

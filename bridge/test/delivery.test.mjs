@@ -75,6 +75,12 @@ test('a stale-context error tells the model to ask the owner again before any ne
   assert(/ask/i.test(e.next_step)&&/NEW operation_id/.test(e.next_step)&&/clear yes/i.test(e.next_step));
 });
 
+test('a failed OpenCode handoff is described as delivery, not as lookup or saving',()=>{
+  const failure=deliveryView({status:'failed'});
+  assert.equal(failure.delivery_state,'failed');
+  assert.match(failure.say_to_owner,/could not hand the message to OpenCode/);
+});
+
 let db,store,outbox,reader,writer,macSeen=true;
 const gate={activity:async()=>({source_checked_at:Date.now(),mac_seen_recently:macSeen}),runtime:async()=>({available:true,partial:false,checked_at:0,statuses:[]}),signal:async()=>{},signalReceipt:async()=>{},waitReceipt:async()=>{}};
 before(async()=>{
@@ -92,12 +98,24 @@ async function rpcRaw(name,args,rpcGate=gate){
 const body=raw=>JSON.parse(raw.result.content[0].text);
 const input=id=>({operation_id:id,session_id:'ses_delivery',text:'Synthetic approved text',base_cursor:100});
 
+test('a missing target is a real lookup failure during a send',async()=>{
+  const raw=await rpcRaw('send_session_message',{...input('delivery_missing_1'),session_id:'missing_fixture'});
+  assert.equal(raw.result.isError,true);
+  const failure=body(raw);
+  assert.equal(failure.error,'session_not_found');
+  assert.equal(failure.write_action,'send_session_message');
+  assert.equal(failure.failure_stage,'target_lookup');
+  assert.match(failure.say_to_owner,/^Not sent. I cannot find that session/);
+});
+
 test('send with the Mac offline silently returns after a durable save',async()=>{
   macSeen=false;
   const args=input('delivery_offline_1');
   const raw=await rpcRaw('send_session_message',args);
   assert(!raw.result.isError);
-  assert.deepEqual(body(raw),{enqueued:true,operation_id:args.operation_id,session_id:args.session_id,message_id:'msg_agentvoice_'+args.operation_id,say_to_owner:null});
+  const {report_rule,...receipt}=body(raw);
+  assert.match(report_rule,/Saved successfully/);
+  assert.deepEqual(receipt,{write_action:'send_session_message',enqueued:true,operation_id:args.operation_id,session_id:args.session_id,message_id:'msg_agentvoice_'+args.operation_id,say_to_owner:null});
   const status=body(await rpcRaw('message_status',{operation_id:args.operation_id}));
   assert.equal(status.status,'queued');assert.equal(status.delivery_confirmed,false);
   macSeen=true;
@@ -167,6 +185,7 @@ test('retrying a send that needs reconfirmation surfaces the hold without requeu
   await outbox.ack(writer,{operation_id:args.operation_id,message_id:leased.message_id,status:'needs_confirmation'});
   const retried=body(await rpcRaw('send_session_message',args));
   assert.match(retried.say_to_owner,/need your OK/);
+  assert.equal(retried.report_rule,undefined);
   assert.equal(await outbox.lease(writer),null);
   await outbox.cancel(reader,args.operation_id);
 });

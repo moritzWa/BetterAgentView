@@ -1475,6 +1475,13 @@
           "null"
         ]
       },
+      "report_rule": {
+        "type": "string"
+      },
+      "write_action": {
+        "type": "string",
+        "const": "send_session_message"
+      },
       "session_id": {
         "type": "string",
         "minLength": 1,
@@ -1490,6 +1497,7 @@
       "enqueued",
       "operation_id",
       "say_to_owner",
+      "write_action",
       "session_id",
       "message_id"
     ],
@@ -1854,12 +1862,20 @@
           "string",
           "null"
         ]
+      },
+      "report_rule": {
+        "type": "string"
+      },
+      "write_action": {
+        "type": "string",
+        "const": "start_session"
       }
     },
     "required": [
       "enqueued",
       "operation_id",
-      "say_to_owner"
+      "say_to_owner",
+      "write_action"
     ],
     "additionalProperties": false
   },

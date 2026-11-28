@@ -65,9 +65,23 @@ const ERRORS={
   start_not_found:()=>err('not_sent','Nothing was started with that id.','Do not claim a session exists.'),
 };
 
-/** Structured body for a failed send, cancel or status call. Unknown codes are uncertain, never "not sent". */
-export function errorView(code,enqueue=false) {
-  if(enqueue&&!Object.hasOwn(ERRORS,code))return {error:code,...err('uncertain','I could not confirm the request was saved.','If retrying, reuse the exact operation_id and arguments. Do not submit a new operation.',{sent:null,retry_same_operation:true})};
+const START_WRITE_ERRORS={
+  device_disconnected:()=>err('not_sent','Not started. Your Mac connector is not connected.','Tell the owner. Do not retry.'),
+  write_permission_required:()=>err('not_sent','Not started. This connection cannot start sessions.','Tell the owner to check the BetterAgentView connection.'),
+  operation_id_conflict:()=>err('not_sent','Not started. That request ID belongs to a different start.','Ask once if the owner still wants to start a session, then use a NEW operation_id.'),
+  unauthorized:()=>err('not_sent','Not started. The connection needs a new sign-in.','Tell the owner.'),
+};
+
+/** A failed write must identify what was attempted. A save error is not a delivery failure. */
+export function errorView(code,write_action) {
+  if(write_action) {
+    const starting=write_action==='start_session';
+    const build=(starting&&Object.hasOwn(START_WRITE_ERRORS,code)?START_WRITE_ERRORS[code]:null)
+      ??(Object.hasOwn(ERRORS,code)?ERRORS[code]:null);
+    const failure_stage=!starting&&code==='session_not_found'?'target_lookup':'save_request';
+    const details=build?build():err('uncertain',starting?'I could not confirm that the start request was saved.':'I could not confirm that the send request was saved.','If retrying, reuse the exact operation_id and arguments. Do not submit a new operation.',{sent:null,retry_same_operation:true});
+    return {error:code,write_action,failure_stage,...details,report_rule:'Use say_to_owner for this write error. Call it a lookup failure only for target_lookup. Do not claim a delivery failure from a save error.'};
+  }
   const build=ERRORS[code]??(()=>err('uncertain','Something failed and I do not know if it was sent.','Call message_status for this operation_id before saying anything else.',{sent:null}));
   return {error:code,...build(),report_rule:REPORT_RULE};
 }

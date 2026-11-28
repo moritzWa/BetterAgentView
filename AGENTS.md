@@ -5,6 +5,10 @@
 - Small changes go straight to `main`; larger ones get a branch and PR. Either
   way, push as soon as it builds and the unit tests pass. If the push is rejected,
   rebase onto `origin/main` and push again.
+- For this personal dev tool, test and deploy routine bug fixes as soon as checks
+  pass, without waiting for confirmation. Use the documented deployment path for
+  the changed component, verify it live, and report the results or a concrete
+  blocker. This does not authorize unrelated production changes.
 - After a change that affects the app, push it, then reinstall with
   `~/.claude/scripts/install-latest.sh agentview`. It fetches and builds
   `origin/main` in a temporary worktree. Never `cargo install` from a checkout:
