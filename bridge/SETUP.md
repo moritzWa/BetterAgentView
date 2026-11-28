@@ -89,6 +89,12 @@ private-bridge pass.
 Do this after every BetterAgentView MCP deployment. The installed-connector gate and
 raw MCP tests do not exercise ChatGPT's tools or approval UI.
 
+Use the dedicated BetterAgentView test ChatGPT account, not the owner's main
+account. Keep the test pairing separate from the production owner and data.
+The production gate still checks the production pairing. If an isolated ChatGPT
+test connector for the same build is unavailable, report that blocker instead
+of using the owner's account.
+
 1. Create a disposable native OpenCode session in an empty test directory and
    wait for it to appear in the dashboard and history mirror. Open a fresh,
    authenticated ChatGPT web or desktop chat with the deployed BetterAgentView app.
@@ -103,7 +109,12 @@ raw MCP tests do not exercise ChatGPT's tools or approval UI.
    ChatGPT should not announce a successful save. The enqueue receipt is not
    proof of delivery. If checking completion, require a new reply tied to that input.
 4. Repeat with a different marker in voice if the client offers BetterAgentView in
-   voice mode. Check that no on-screen approval is required. If blocked, record the client,
+   voice mode. Check both what Voice says and what reached OpenCode. Send and
+   start should not show an approval screen. A successful write must not sound
+   like a failure or invite a retry. A neutral continuation
+   is fine; it must not imply delivery. When changing write error handling, also
+   test a safe rejection such as a start request in a disallowed directory. Check
+   that Voice names the actual action and reason. If blocked, record the client,
    what was tried, and what prevented verification. Record the deployed Worker
    version and the text and voice results separately. Remove only your fixture.
 

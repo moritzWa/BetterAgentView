@@ -12,6 +12,21 @@ show whether the voice model saw the receipt or whether a silent final reply
 caused the failure. Retest on the actual Voice client after deployment; checking
 the MCP response alone cannot verify the spoken behavior.
 
+Worker c35718da added action-specific receipts. Voice correctly reported a
+rejected start as a directory error, but still called a successful send and a
+successful start failures. In a control run that requested a neutral reply
+instead of silence, the send reached OpenCode once and Voice reported no error.
+
+Worker 3d9996eb adds a neutral final handoff for standalone Voice writes, not a
+delivery announcement. Fresh Voice send and start tests both said “Ready for the
+next instruction” without reporting a failure or inviting a retry. Each exact
+instruction appeared once in native OpenCode history. A disallowed-directory
+start correctly reported a start failure, not a lookup failure, and did not
+retry or create a queued start. A fresh text chat sent its exact test input
+once and left the final reply empty. The installed bridge gate and 184
+automated tests passed. This verifies the workaround, not the internal cause
+in ChatGPT.
+
 # Verification, November 16, 2026
 
 ## Deployed cloud and macOS VM

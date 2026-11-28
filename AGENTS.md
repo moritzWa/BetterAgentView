@@ -14,3 +14,7 @@
   `origin/main` in a temporary worktree. Never `cargo install` from a checkout:
   one that hasn't pulled drops whatever `main` has that it lacks.
 - After every BetterAgentView MCP deployment, test the actual deployed connector in a fresh authenticated ChatGPT web or desktop chat. Follow the [ChatGPT release check](bridge/SETUP.md#required-chatgpt-client-check) and verify the exact test input reached native history. Run it in voice too if the client exposes BetterAgentView there. Direct MCP and automated gates do not replace this check.
+- Never run ChatGPT release or repro prompts in the owner's main ChatGPT
+  account. Use the dedicated BetterAgentView test account and an isolated
+  connector with disposable sessions. Do not give the test account access
+  to the owner's production history or sessions.
