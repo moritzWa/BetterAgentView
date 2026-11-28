@@ -13,7 +13,7 @@
   `~/.claude/scripts/install-latest.sh agentview`. It fetches and builds
   `origin/main` in a temporary worktree. Never `cargo install` from a checkout:
   one that hasn't pulled drops whatever `main` has that it lacks.
-- After every BetterAgentView MCP deployment, test the actual deployed connector in a fresh authenticated ChatGPT web or desktop chat. Follow the [ChatGPT release check](bridge/SETUP.md#required-chatgpt-client-check) and verify the exact test input reached native history. Run it in voice too if the client exposes BetterAgentView there. Direct MCP and automated gates do not replace this check.
+- After a BetterAgentView MCP deployment, use the [OpenCode MCP smoke skill](.agents/skills/bav-mcp-smoke/SKILL.md). Keep the installed bridge gate. ChatGPT Voice is not a routine release gate.
 - Never run ChatGPT release or repro prompts in the owner's main ChatGPT
   account. Use the dedicated BetterAgentView test account and an isolated
   connector with disposable sessions. Do not give the test account access

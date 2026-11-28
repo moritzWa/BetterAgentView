@@ -84,10 +84,18 @@ This is an operator gate for the private bridge. Public GitHub release jobs do n
 have the owner's Mac or account credentials; their synthetic tests are not a live
 private-bridge pass.
 
-## Required ChatGPT client check
+## MCP client smoke test
 
-Do this after every BetterAgentView MCP deployment. The installed-connector gate and
-raw MCP tests do not exercise ChatGPT's tools or approval UI.
+Use [the OpenCode MCP smoke skill](../.agents/skills/bav-mcp-smoke/SKILL.md)
+after deployment. The deployed contract probe is in
+`test/e2e/tool-contracts.mjs`. It tests the Worker with synthetic data, not
+native delivery. The installed bridge gate checks the production bridge
+separately.
+
+## Optional ChatGPT client check
+
+Use this only for a ChatGPT-specific investigation. OpenCode and direct MCP
+checks do not verify the approval UI or what ChatGPT Voice says.
 
 Use the dedicated BetterAgentView test ChatGPT account, not the owner's main
 account. Keep the test pairing separate from the production owner and data.
