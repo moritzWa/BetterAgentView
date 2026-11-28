@@ -2538,11 +2538,29 @@ fn running_shell_entries(listed: &Value) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The marker must lead the real command. Agents usually write
+/// `cd <dir> && AGENTVIEW_SHELL_PURPOSE=service cmd`, so leading `cd` steps
+/// and other env assignments are skipped; anything else ends the search.
 fn is_service_shell(command: &str) -> bool {
-    command
-        .trim_start()
-        .strip_prefix("AGENTVIEW_SHELL_PURPOSE=service")
-        .is_some_and(|rest| rest.starts_with(char::is_whitespace))
+    for segment in command.split("&&") {
+        let mut words = segment.split_whitespace().peekable();
+        if words.peek() == Some(&"cd") {
+            continue;
+        }
+        while let Some(word) = words.next() {
+            if word == "AGENTVIEW_SHELL_PURPOSE=service" {
+                return words.peek().is_some();
+            }
+            let is_assignment = word.split_once('=').is_some_and(|(name, _)| {
+                !name.is_empty() && name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
+            });
+            if !is_assignment {
+                break;
+            }
+        }
+        return false;
+    }
+    false
 }
 
 /// Services remain live and inspectable, but do not hold a row as Background.
@@ -4454,6 +4472,15 @@ mod tests {
         ));
         assert!(!is_service_shell(
             "AGENTVIEW_SHELL_PURPOSE=service-extra cmd"
+        ));
+        assert!(is_service_shell(
+            "cd /Users/m/Code/data-leads && AGENTVIEW_SHELL_PURPOSE=service python3 tools/x.py"
+        ));
+        assert!(is_service_shell(
+            "cd /a && cd b && FOO=1 AGENTVIEW_SHELL_PURPOSE=service npm run dev"
+        ));
+        assert!(!is_service_shell(
+            "cd /a && make build && AGENTVIEW_SHELL_PURPOSE=service serve"
         ));
         assert!(!is_service_shell("echo AGENTVIEW_SHELL_PURPOSE=service"));
         assert!(!is_service_shell("python3 browser/serve.py"));

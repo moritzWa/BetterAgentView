@@ -909,7 +909,8 @@ cannot clear a defer. Reminder and plain rows share the same column widths.
 A native OpenCode background shell prefixed with
 `AGENTVIEW_SHELL_PURPOSE=service ` keeps an app available without holding the
 session as Background, for example
-`AGENTVIEW_SHELL_PURPOSE=service python3 browser/serve.py`. This is explicit
+`AGENTVIEW_SHELL_PURPOSE=service python3 browser/serve.py`. The marker may follow
+leading `cd dir &&` steps and other `NAME=value` assignments. This is explicit
 launch metadata, not a command-name or runtime heuristic. Unmarked shells
 remain tasks; a real job still counts when a service runs in the same session.
 Services remain in shell inspection and retain their normal exit notifications.
