@@ -113,7 +113,8 @@ test('send with the Mac offline silently returns after a durable save',async()=>
   const args=input('delivery_offline_1');
   const raw=await rpcRaw('send_session_message',args);
   assert(!raw.result.isError);
-  const {report_rule,...receipt}=body(raw);
+  const {report_rule,voice_handoff,...receipt}=body(raw);
+  assert.equal(voice_handoff,'Ready.');
   assert.match(report_rule,/Saved successfully/);
   assert.deepEqual(receipt,{write_action:'send_session_message',enqueued:true,operation_id:args.operation_id,session_id:args.session_id,message_id:'msg_agentvoice_'+args.operation_id,say_to_owner:null});
   const status=body(await rpcRaw('message_status',{operation_id:args.operation_id}));
@@ -186,6 +187,7 @@ test('retrying a send that needs reconfirmation surfaces the hold without requeu
   const retried=body(await rpcRaw('send_session_message',args));
   assert.match(retried.say_to_owner,/need your OK/);
   assert.equal(retried.report_rule,undefined);
+  assert.equal(retried.voice_handoff,undefined);
   assert.equal(await outbox.lease(writer),null);
   await outbox.cancel(reader,args.operation_id);
 });

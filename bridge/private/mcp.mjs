@@ -26,9 +26,9 @@ const visible = "s.cursor IS NOT NULL AND (s.state->>'deleted')::boolean=false";
 const active = "((s.state->>'visible_before') IS NULL OR m.message_order<(s.state->>'visible_before')::bigint)";
 const scope = (p) => [p.owner_id, p.device_id, p.database_epoch];
 const safeRead = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
-const ENQUEUE_GUIDE = 'enqueued:true and say_to_owner:null is a silent success. Do not announce, retry, or check status. Continue the owner’s next requested step or end silently. Never infer an error from silence. Use say_to_owner and the failed action for real errors.';
-const ENQUEUE_REPORT_RULE = 'Saved successfully. No error occurred. Continue with the owner’s next requested step, or end silently. Do not announce, retry, or check status for this success.';
-const enqueueGuidance = (say_to_owner) => say_to_owner === null ? { say_to_owner, report_rule: ENQUEUE_REPORT_RULE } : { say_to_owner };
+const ENQUEUE_GUIDE = 'enqueued:true with say_to_owner:null means saved. Never announce, retry, or check status. In Voice, give a nonempty final reply: continue the requested task or use voice_handoff. In text, end silently unless there is a follow-up.';
+const ENQUEUE_REPORT_RULE = 'Saved successfully. No error occurred. Do not announce, retry, or check status. In Voice, make the final reply nonempty: continue the requested task, or use voice_handoff exactly. Do not turn a quiet success into an error. In text, end silently unless there is a follow-up.';
+const enqueueGuidance = (say_to_owner) => say_to_owner === null ? { say_to_owner, voice_handoff: 'Ready.', report_rule: ENQUEUE_REPORT_RULE } : { say_to_owner };
 export const isEnqueueTool = (name) => name === 'send_session_message' || name === 'start_session';
 // ChatGPT reads the first 512 characters most reliably, so the mode rules come first.
 export const SERVER_INSTRUCTIONS = 'Use list_visible_sessions FIRST for current sessions/counts, not history. Review one at a time: Needs Input, Task Done, Project Done last. Be brief; use session_brief for one session. Only use send_session_message or start_session on the owner\'s instruction. ' + ENQUEUE_GUIDE + ' Skip Working unless stalled or needing a decision. Leave unfinished projects visible; do not ask to close after each review. ' + REVIEW_RULES + ' If data_age.caveat is set, say how old the data is. For "is my Mac online?" call mac_presence; a queued message is not the Mac being online. '

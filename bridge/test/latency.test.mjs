@@ -158,10 +158,10 @@ test('send and start descriptions tell the voice client not to announce or poll 
  const response=await privateMcp(new Request('https://test.invalid/mcp',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list',params:{}})}),{db,store,principal:reader,outbox,gate});
  const {tools}=(await response.json()).result;
  for(const text of [SERVER_INSTRUCTIONS.slice(0,512),...tools.filter(t=>['send_session_message','start_session'].includes(t.name)).map(t=>t.description)]) {
-  assert.match(text,/say_to_owner:null is a silent success/);
-  assert.match(text,/Do not announce, retry, or check status/);
-  assert.match(text,/Never infer an error from silence/);
-  assert.match(text,/the failed action for real errors/);
+  assert.match(text,/say_to_owner:null means saved/);
+  assert.match(text,/Never announce, retry, or check status/);
+  assert.match(text,/In Voice, give a nonempty final reply: continue the requested task or use voice_handoff/);
+  assert.match(text,/In text, end silently/);
  }
 });
 
@@ -261,7 +261,8 @@ test('worker returns both enqueue receipts while its connector wake is still pen
    assert.equal(result.operation_id,args.operation_id);
    assert.equal(result.write_action,name);
    assert.match(result.report_rule,/Saved successfully\. No error occurred/);
-   assert.match(result.report_rule,/next requested step, or end silently/);
+   assert.equal(result.voice_handoff,'Ready.');
+   assert.match(result.report_rule,/continue the requested task, or use voice_handoff exactly/);
    assert.match(result.report_rule,/Do not announce, retry, or check status/);
   }
   assert.deepEqual(gateCalls,['/signal','/call-log','/signal','/call-log']);
@@ -279,6 +280,7 @@ test('worker returns both enqueue receipts while its connector wake is still pen
    assert.equal(error.error,'operation_failed');
    assert.equal(error.write_action,name);
    assert.equal(error.failure_stage,'save_request');
+   assert.equal(error.voice_handoff,undefined);
    assert.equal(error.say_to_owner,`I could not confirm that the ${name==='start_session'?'start':'send'} request was saved.`);
    assert.equal(error.retry_same_operation,true);
    assert.equal((await db.query('SELECT 1 FROM '+table+' WHERE operation_id=$1',[operation_id])).rows.length,0);

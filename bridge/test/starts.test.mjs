@@ -72,7 +72,8 @@ test('an unusable directory is reported as a start failure, not a session lookup
 
 test('queueing a start does not invent a session, and the id appears only after the Mac ack', async () => {
   const queued = body(await rpc('start_session', {operation_id:'start_queue_1', directory:'/Users/m/Code/agentview', text:'Add a health tool'}));
-  const {report_rule,...receipt}=queued;
+  const {report_rule,voice_handoff,...receipt}=queued;
+  assert.equal(voice_handoff,'Ready.');
   assert.match(report_rule,/Saved successfully/);
   assert.deepEqual(receipt,{write_action:'start_session',enqueued:true,operation_id:'start_queue_1',say_to_owner:null});
   const again = body(await rpc('start_session', {operation_id:'start_queue_1', directory:'/Users/m/Code/agentview', text:'Add a health tool'}));

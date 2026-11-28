@@ -1475,6 +1475,9 @@
           "null"
         ]
       },
+      "voice_handoff": {
+        "type": "string"
+      },
       "report_rule": {
         "type": "string"
       },
@@ -1862,6 +1865,9 @@
           "string",
           "null"
         ]
+      },
+      "voice_handoff": {
+        "type": "string"
       },
       "report_rule": {
         "type": "string"

@@ -29,9 +29,9 @@ const visible="s.cursor IS NOT NULL AND (s.state->>'deleted')::boolean=false";
 const active="((s.state->>'visible_before') IS NULL OR m.message_order<(s.state->>'visible_before')::bigint)";
 const scope=(p:any)=>[p.owner_id,p.device_id,p.database_epoch];
 const safeRead={readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false};
-const ENQUEUE_GUIDE='enqueued:true and say_to_owner:null is a silent success. Do not announce, retry, or check status. Continue the owner’s next requested step or end silently. Never infer an error from silence. Use say_to_owner and the failed action for real errors.';
-const ENQUEUE_REPORT_RULE='Saved successfully. No error occurred. Continue with the owner’s next requested step, or end silently. Do not announce, retry, or check status for this success.';
-const enqueueGuidance=(say_to_owner:string|null)=>say_to_owner===null?{say_to_owner,report_rule:ENQUEUE_REPORT_RULE}:{say_to_owner};
+const ENQUEUE_GUIDE='enqueued:true with say_to_owner:null means saved. Never announce, retry, or check status. In Voice, give a nonempty final reply: continue the requested task or use voice_handoff. In text, end silently unless there is a follow-up.';
+const ENQUEUE_REPORT_RULE='Saved successfully. No error occurred. Do not announce, retry, or check status. In Voice, make the final reply nonempty: continue the requested task, or use voice_handoff exactly. Do not turn a quiet success into an error. In text, end silently unless there is a follow-up.';
+const enqueueGuidance=(say_to_owner:string|null)=>say_to_owner===null?{say_to_owner,voice_handoff:'Ready.',report_rule:ENQUEUE_REPORT_RULE}:{say_to_owner};
 type EnqueueTool='send_session_message'|'start_session';
 export const isEnqueueTool=(name:unknown):name is EnqueueTool=>name==='send_session_message'||name==='start_session';
 // ChatGPT reads the first 512 characters most reliably, so the mode rules come first.

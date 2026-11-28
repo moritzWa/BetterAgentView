@@ -49,9 +49,10 @@ expire after 24 hours. Only `applied` means the Mac confirmed the change.
 
 `send_session_message` and `start_session` return once the database commits the
 request. A successful save returns `enqueued: true` and `say_to_owner: null`.
-The `report_rule` marks this as a silent success, not a missing result. Voice
-continues the owner's next requested step or ends without announcing the save,
-retrying it, or polling delivery. The connector handles pickup,
+The `report_rule` marks this as a silent success, not a missing result. ChatGPT
+Voice continues with the next requested step or uses the neutral `voice_handoff`
+as its final reply. Text can end silently. Neither mode announces the save,
+retries it, or polls delivery. The connector handles pickup,
 retries and receipts in the background, even if the Mac is offline at enqueue.
 A write receipt names the tool in `write_action`. For a write error, use
 `say_to_owner` and `failure_stage`. A missing send target is a lookup failure;
