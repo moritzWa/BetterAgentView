@@ -39,7 +39,8 @@ pub const SESSION_PAGE_SIZE: usize = 25;
 pub const MODEL_PICKER_PAGE_SIZE: usize = 10;
 pub const MIGRATION_PICKER_PAGE_SIZE: usize = 10;
 pub const HIDDEN_PICKER_PAGE_SIZE: usize = 10;
-/// A result that shows its matching text takes a name line and a text line.
+/// A result that shows its matching text takes a name line and a text line,
+/// so a name-only list shows twice as many rows to keep the popup the same height.
 const HIDDEN_PICKER_LINES_PER_TEXT_RESULT: usize = 2;
 const HIDDEN_PICKER_MAX_LINES: usize =
     HIDDEN_PICKER_PAGE_SIZE * HIDDEN_PICKER_LINES_PER_TEXT_RESULT;
@@ -3435,7 +3436,7 @@ impl App {
         if self.hidden_filter_searches_text() {
             (lines / HIDDEN_PICKER_LINES_PER_TEXT_RESULT).clamp(1, HIDDEN_PICKER_PAGE_SIZE)
         } else {
-            lines.clamp(1, HIDDEN_PICKER_PAGE_SIZE)
+            lines.clamp(1, HIDDEN_PICKER_MAX_LINES)
         }
     }
 
@@ -5964,6 +5965,22 @@ mod tests {
         app.push_input('\r');
         assert_eq!(app.hidden_filter, "a");
         assert_eq!(app.hidden_choices().len(), 1);
+    }
+
+    #[test]
+    fn hidden_picker_name_only_list_is_as_tall_as_a_text_search() {
+        let mut app = app_with(vec![]);
+        app.open_hidden_picker(
+            (0..30)
+                .map(|index| hidden(&format!("id-{index}"), "row", Provider::Claude, index))
+                .collect(),
+        );
+        let lines = hidden_picker_rows_for_height(60);
+        assert_eq!(app.hidden_rows_per_page(lines), 20);
+        for character in "row".chars() {
+            app.push_input(character);
+        }
+        assert_eq!(app.hidden_rows_per_page(lines) * 2, 20);
     }
 
     #[test]
